@@ -1,0 +1,9 @@
+[package]
+name = "moderate_workspace_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+moderate_workspace_math = { path = "../math" }
+moderate_workspace_text = { path = "../text" }

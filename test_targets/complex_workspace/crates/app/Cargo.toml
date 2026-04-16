@@ -1,0 +1,12 @@
+[package]
+name = "complex_workspace_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+complex_workspace_common = { path = "../common" }
+complex_workspace_worker = { path = "../worker" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

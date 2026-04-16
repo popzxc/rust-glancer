@@ -1,0 +1,27 @@
+[workspace]
+members = ["crates/rust-glimpser"]
+exclude = [
+  "test_targets/simple_crate",
+  "test_targets/moderate_crate",
+  "test_targets/complex_crate",
+  "test_targets/moderate_workspace",
+  "test_targets/complex_workspace",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Igor Aleksanov <popzxc@yandex.ru>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/popzxc/rust-glimpser"
+homepage = "https://github.com/popzxc/rust-glimpser"
+readme = "README.md"
+description = "A Rust workspace for rust-glimpser."
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+clap = "4.5.50"
+cargo_metadata = "0.23"
+ra_syntax = { package = "syntax", git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca"}

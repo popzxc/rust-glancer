@@ -1,0 +1,5 @@
+[package]
+name = "complex_workspace_common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true

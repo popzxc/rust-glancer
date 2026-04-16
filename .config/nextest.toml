@@ -1,0 +1,3 @@
+[profile.default]
+fail-fast = true
+status-level = "skip"

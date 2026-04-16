@@ -1,0 +1,5 @@
+target
+.DS_Store
+
+# This folder is for extra repos I want to check out as a reference / local documentation only
+reference/

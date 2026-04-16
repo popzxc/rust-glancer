@@ -1,0 +1,11 @@
+[package]
+name = "moderate_crate"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "moderate_crate"
+path = "src/main.rs"
