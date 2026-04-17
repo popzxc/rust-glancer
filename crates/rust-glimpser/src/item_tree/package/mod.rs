@@ -3,14 +3,10 @@ use anyhow::Context as _;
 use std::{fmt, path::Path};
 
 use crate::item_tree::{
-    file::{FileId, FileRecord},
+    file::{FileId, FileRecord, ParseDb},
     item::ItemNode,
-    target::{TargetId, TargetIndex, TargetInput},
+    target::{TargetBuilder, TargetId, TargetIndex, TargetInput},
 };
-
-use self::builder::PackageBuilder;
-
-mod builder;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageIndex {
@@ -25,22 +21,18 @@ impl PackageIndex {
     }
 
     pub fn build(package_name: String, targets: Vec<TargetInput>) -> anyhow::Result<Self> {
-        let mut builder = PackageBuilder::default();
+        let mut parse_db = ParseDb::default();
         let mut target_indexes = Vec::new();
 
         for (ordinal, target_input) in targets.into_iter().enumerate() {
             let target_id = TargetId(ordinal);
-            let target_index = builder
-                .build_target(target_id, target_input)
+            let target_index = TargetBuilder::new(&mut parse_db)
+                .build(target_id, target_input)
                 .with_context(|| format!("while attempting to build target index {ordinal}"))?;
             target_indexes.push(target_index);
         }
 
-        let files = builder
-            .parsed_files
-            .into_iter()
-            .map(|parsed_file| parsed_file.record)
-            .collect();
+        let files = parse_db.into_file_records();
 
         Ok(Self {
             package_name,
