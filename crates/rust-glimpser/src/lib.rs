@@ -28,15 +28,24 @@ pub fn analyze(path: PathBuf) -> anyhow::Result<()> {
         .expect("No packages");
     println!("Analyzing {}", package.name);
 
-    let target = package.targets.get(0).cloned().expect("No targets");
-    println!(
-        "Target name {} | type {:?} | path {}",
-        target.name, target.crate_types, target.src_path
-    );
+    if package.targets.is_empty() {
+        anyhow::bail!("package {} has no targets", package.name);
+    }
+    println!("Found {} targets", package.targets.len());
 
-    let item_tree = item_tree::build_crate_item_tree(target.src_path.into_std_path_buf())
-        .context("while attempting to build crate item tree")?;
-    item_tree::print_tree(&item_tree);
+    let target_inputs = package
+        .targets
+        .iter()
+        .map(|target| item_tree::target::TargetInput {
+            name: target.name.clone(),
+            kinds: target.kind.iter().map(ToString::to_string).collect(),
+            root_file: target.src_path.clone().into_std_path_buf(),
+        })
+        .collect();
+    let package_index =
+        item_tree::package::PackageIndex::build(package.name.to_string(), target_inputs)
+            .context("while attempting to build package index")?;
+    println!("{package_index}");
 
     Ok(())
 }
