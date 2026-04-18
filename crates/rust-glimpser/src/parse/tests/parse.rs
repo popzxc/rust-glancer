@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use crate::test_utils::test_file;
 
-use super::{
+use crate::parse::{
     item::{ItemKind, ItemNode, VisibilityLevel},
-    package::PackageIndex,
+    package::index::PackageIndex,
 };
 
 fn flatten<'a>(items: &'a [ItemNode], output: &mut Vec<&'a ItemNode>) {

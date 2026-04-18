@@ -1,4 +1,4 @@
-use crate::item_tree::{file::FileId, span::Span};
+use crate::parse::{file::FileId, span::Span};
 
 /// A parse diagnostic attached to a specific source file and span.
 #[derive(Debug, Clone, PartialEq, Eq)]

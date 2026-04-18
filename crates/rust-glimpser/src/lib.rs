@@ -2,8 +2,7 @@
 use anyhow::Context as _;
 use std::path::PathBuf;
 
-mod item_tree;
-pub(crate) mod project;
+pub(crate) mod parse;
 
 #[cfg(test)]
 mod test_utils;
@@ -24,7 +23,7 @@ pub fn analyze(path: PathBuf) -> anyhow::Result<()> {
         .exec()
         .context("cargo metadata failed")?;
 
-    let project_analysis = project::ProjectAnalysis::build(metadata)
+    let project_analysis = parse::ProjectAnalysis::build(metadata)
         .context("while attempting to build project analysis")?;
     println!("{project_analysis}");
 

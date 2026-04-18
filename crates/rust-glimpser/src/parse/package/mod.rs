@@ -1,6 +1,8 @@
 use anyhow::Context as _;
 
-use crate::item_tree::package::PackageIndex;
+use self::index::PackageIndex;
+
+pub(crate) mod index;
 
 /// Parsed package view enriched with graph metadata from Cargo.
 #[derive(Debug, Clone, PartialEq, Eq)]

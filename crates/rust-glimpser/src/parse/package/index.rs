@@ -2,7 +2,7 @@ use anyhow::Context as _;
 
 use std::{fmt, path::Path};
 
-use crate::item_tree::{
+use crate::parse::{
     file::{FileId, FileRecord, ParseDb},
     item::ItemNode,
     target::{TargetBuilder, TargetId, TargetIndex},

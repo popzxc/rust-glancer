@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::item_tree::{
+use crate::parse::{
     file::{FileId, ParseDb},
     item::ItemNode,
     span::LineIndex,

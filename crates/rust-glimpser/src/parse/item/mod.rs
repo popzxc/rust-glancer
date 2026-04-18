@@ -5,7 +5,7 @@ use ra_syntax::{
     ast::{self, AstNode, HasName, HasVisibility},
 };
 
-use crate::item_tree::{
+use crate::parse::{
     file::FileId,
     span::{LineIndex, Span},
 };

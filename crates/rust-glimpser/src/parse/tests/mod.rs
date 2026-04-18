@@ -1,4 +1,6 @@
-use crate::{project::ProjectAnalysis, test_utils::test_file};
+use crate::{parse::ProjectAnalysis, test_utils::test_file};
+
+mod parse;
 
 fn test_metadata(path: &str) -> cargo_metadata::Metadata {
     cargo_metadata::MetadataCommand::new()
