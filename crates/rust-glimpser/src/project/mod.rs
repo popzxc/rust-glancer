@@ -1,5 +1,7 @@
-use anyhow::Context as _;
 use std::{collections::HashMap, fmt};
+
+use anyhow::Context as _;
+use rayon::prelude::*;
 
 use self::package::PackageAnalysis;
 
@@ -22,16 +24,18 @@ pub struct ProjectAnalysis {
 impl ProjectAnalysis {
     /// Builds analyses for workspace members only.
     pub fn build(metadata: cargo_metadata::Metadata) -> anyhow::Result<Self> {
-        let mut slots = Vec::new();
-        for package in metadata.packages.iter() {
-            let slot = PackageAnalysis::build(package).with_context(|| {
-                format!(
-                    "while attempting to build package analysis for {}",
-                    package.id
-                )
-            })?;
-            slots.push(slot);
-        }
+        let slots = metadata
+            .packages
+            .par_iter()
+            .map(|package| -> anyhow::Result<PackageAnalysis> {
+                Ok(PackageAnalysis::build(package).with_context(|| {
+                    format!(
+                        "while attempting to build package analysis for {}",
+                        package.id
+                    )
+                })?)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         let slot_by_package = slots
             .iter()

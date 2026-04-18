@@ -15,3 +15,4 @@ anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
 cargo_metadata.workspace = true
 ra_syntax.workspace = true
+rayon.workspace = true
