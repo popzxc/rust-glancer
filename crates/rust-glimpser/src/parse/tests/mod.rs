@@ -20,7 +20,7 @@ fn analyzes_all_workspace_members() {
         "all workspace members should be represented"
     );
     assert_eq!(
-        analysis.slots.len(),
+        analysis.packages.len(),
         3,
         "workspace fixture should not include external dependencies"
     );
@@ -33,7 +33,7 @@ fn resolves_project() {
     let analysis = ProjectAnalysis::build(metadata).expect("workspace fixture should parse");
 
     assert_eq!(
-        analysis.slots.len(),
+        analysis.packages.len(),
         3,
         "full scope should keep all reachable packages in this fixture"
     );

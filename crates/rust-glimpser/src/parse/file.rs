@@ -14,21 +14,15 @@ use crate::parse::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FileId(pub usize);
 
-/// Persistent metadata kept for every parsed source file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileRecord {
+/// Internal parsed representation used by the parser cache.
+#[derive(Debug, Clone)]
+pub(crate) struct ParsedFile {
     /// Numeric id assigned by `ParseDb`.
     pub id: FileId,
     /// Canonical filesystem path for this source file.
     pub path: PathBuf,
     /// Parse diagnostics produced while parsing the file.
     pub parse_errors: Vec<ParseError>,
-}
-
-/// Internal parsed representation used by the parser cache.
-pub(crate) struct ParsedFile {
-    /// Public-facing file metadata for this parsed file.
-    pub(crate) record: FileRecord,
     /// Line-start index used to convert byte offsets into line/column coordinates.
     pub(crate) line_index: LineIndex,
     /// Parsed Rust syntax tree produced by `ra_syntax`.
@@ -39,9 +33,10 @@ pub(crate) struct ParsedFile {
 ///
 /// `ParseDb` deduplicates parsing across targets, so shared modules are parsed once
 /// and reused during multiple target traversals.
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub(crate) struct ParseDb {
-    parsed_files: Vec<ParsedFile>,
+    // TODO: `pub(crate)` only for tests, should be locked down
+    pub(crate) parsed_files: Vec<ParsedFile>,
     file_ids_by_path: HashMap<PathBuf, FileId>,
 }
 
@@ -73,13 +68,10 @@ impl ParseDb {
             })
             .collect();
 
-        let record = FileRecord {
+        self.parsed_files.push(ParsedFile {
             id: file_id,
             path: canonical_file_path.clone(),
             parse_errors,
-        };
-        self.parsed_files.push(ParsedFile {
-            record,
             line_index,
             tree: parsed_file.tree(),
         });
@@ -89,25 +81,14 @@ impl ParseDb {
     }
 
     /// Returns the cached parsed file for a previously known `FileId`.
-    pub(crate) fn parsed_file(&self, file_id: FileId) -> anyhow::Result<&ParsedFile> {
-        self.parsed_files
-            .get(file_id.0)
-            .with_context(|| format!("while attempting to look up parsed file {:?}", file_id))
+    pub(crate) fn parsed_file(&self, file_id: FileId) -> Option<&ParsedFile> {
+        self.parsed_files.get(file_id.0)
     }
 
     /// Returns the canonical path associated with `file_id`.
-    pub(crate) fn file_path(&self, file_id: FileId) -> anyhow::Result<&Path> {
+    pub(crate) fn file_path(&self, file_id: FileId) -> Option<&Path> {
         self.parsed_files
             .get(file_id.0)
-            .map(|parsed_file| parsed_file.record.path.as_path())
-            .with_context(|| format!("while attempting to look up path for file {:?}", file_id))
-    }
-
-    /// Consumes the cache and returns serializable file records for the final index.
-    pub(crate) fn into_file_records(self) -> Vec<FileRecord> {
-        self.parsed_files
-            .into_iter()
-            .map(|parsed_file| parsed_file.record)
-            .collect()
+            .map(|parsed_file| parsed_file.path.as_path())
     }
 }

@@ -135,7 +135,11 @@ fn parses_shared_files_once_across_targets() {
     )
     .expect("fixture crate should parse");
 
-    assert_eq!(index.files.len(), 1, "shared file should be parsed once");
+    assert_eq!(
+        index.db.parsed_files.len(),
+        1,
+        "shared file should be parsed once"
+    );
     assert_eq!(index.targets.len(), 2, "all targets should be indexed");
 }
 

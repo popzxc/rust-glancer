@@ -3,27 +3,27 @@ use anyhow::Context as _;
 use std::{fmt, path::Path};
 
 use crate::parse::{
-    file::{FileId, FileRecord, ParseDb},
+    file::{FileId, ParseDb},
     item::ItemNode,
     target::{TargetBuilder, TargetId, TargetIndex},
 };
 
 /// Parsed package, e.g. all the files, targets (lib.rs, main.rs, examples, integration
 /// tests, etc), and parsed target representations.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct PackageIndex {
     /// Package name from `Cargo.toml`
     pub package_name: String,
     /// All parsed files known to this package index.
-    pub files: Vec<FileRecord>,
+    pub db: ParseDb,
     /// Per-target item trees built from target entrypoints.
     pub targets: Vec<TargetIndex>,
 }
 
 impl PackageIndex {
     /// Returns the path associated with a file id, if the id is valid.
-    pub fn file_path(&self, file_id: FileId) -> Option<&Path> {
-        self.files.get(file_id.0).map(|file| file.path.as_path())
+    fn file_path(&self, file_id: FileId) -> Option<&Path> {
+        self.db.file_path(file_id)
     }
 
     /// Traverses each target and builds a package index.
@@ -48,11 +48,9 @@ impl PackageIndex {
             target_indexes.push(target_index);
         }
 
-        let files = parse_db.into_file_records();
-
         Ok(Self {
             package_name,
-            files,
+            db: parse_db,
             targets: target_indexes,
         })
     }
@@ -114,11 +112,15 @@ impl fmt::Display for PackageIndex {
             }
         }
 
-        let has_errors = self.files.iter().any(|file| !file.parse_errors.is_empty());
+        let has_errors = self
+            .db
+            .parsed_files
+            .iter()
+            .any(|file| !file.parse_errors.is_empty());
         if has_errors {
             writeln!(f)?;
             writeln!(f, "Parser errors:")?;
-            for file in &self.files {
+            for file in &self.db.parsed_files {
                 for parse_error in &file.parse_errors {
                     writeln!(
                         f,

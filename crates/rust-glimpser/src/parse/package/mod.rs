@@ -5,7 +5,7 @@ use self::index::PackageIndex;
 pub(crate) mod index;
 
 /// Parsed package view enriched with graph metadata from Cargo.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct PackageAnalysis {
     /// Stable package id from Cargo metadata.
     pub package_id: cargo_metadata::PackageId,
