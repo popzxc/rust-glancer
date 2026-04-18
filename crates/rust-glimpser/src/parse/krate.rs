@@ -13,13 +13,17 @@ use crate::parse::{
 
 /// Stable identifier of a target within a package index build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TargetId(pub usize);
+pub struct CrateId(pub usize);
 
-/// Final tree output for a single Cargo target.
+/// Crate index.
+///
+/// A single `Cargo.toml` may define multiple targtes, e.g. `lib.rs`,
+/// `main.rs`, integration tests, etc. Each of these ends up compiled
+/// as a crate, and this index is build for every of these.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TargetIndex {
+pub struct CrateIndex {
     /// Stable target id assigned during package build.
-    pub id: TargetId,
+    pub id: CrateId,
     /// `cargo metadata` description of the target
     pub metadata: cargo_metadata::Target,
     /// Entrypoint file id for this target.
@@ -28,33 +32,27 @@ pub struct TargetIndex {
     pub root_items: Vec<ItemNode>,
 }
 
-/// Mutable traversal state used while building one target tree.
-#[derive(Default)]
-struct TargetBuildState {
+/// Target-local tree builder that traverses module/item structure using `ParseDb`.
+pub(crate) struct CrateIndexBuilder<'db> {
+    parse_db: &'db mut ParseDb,
     active_stack: HashSet<FileId>,
 }
 
-/// Target-local tree builder that traverses module/item structure using `ParseDb`.
-pub(crate) struct TargetBuilder<'db> {
-    parse_db: &'db mut ParseDb,
-    state: TargetBuildState,
-}
-
-impl<'db> TargetBuilder<'db> {
+impl<'db> CrateIndexBuilder<'db> {
     /// Creates a target builder that reuses the shared parse database.
     pub(crate) fn new(parse_db: &'db mut ParseDb) -> Self {
         Self {
             parse_db,
-            state: TargetBuildState::default(),
+            active_stack: HashSet::default(),
         }
     }
 
     /// Builds the item tree for one target entrypoint.
     pub(crate) fn build(
         mut self,
-        target_id: TargetId,
+        target_id: CrateId,
         target: cargo_metadata::Target,
-    ) -> anyhow::Result<TargetIndex> {
+    ) -> anyhow::Result<CrateIndex> {
         let root_path = target.src_path.as_path().as_std_path();
         let root_file = self
             .parse_db
@@ -73,7 +71,7 @@ impl<'db> TargetBuilder<'db> {
             )
         })?;
 
-        Ok(TargetIndex {
+        Ok(CrateIndex {
             id: target_id,
             metadata: target,
             root_file,
@@ -83,7 +81,7 @@ impl<'db> TargetBuilder<'db> {
 
     /// Collects all top-level items from a file, with cycle protection.
     fn collect_file_items(&mut self, current_file_id: FileId) -> anyhow::Result<Vec<ItemNode>> {
-        if !self.state.active_stack.insert(current_file_id) {
+        if !self.active_stack.insert(current_file_id) {
             return Ok(Vec::new());
         }
 
@@ -112,7 +110,7 @@ impl<'db> TargetBuilder<'db> {
                 )
             })?;
 
-        self.state.active_stack.remove(&current_file_id);
+        self.active_stack.remove(&current_file_id);
         Ok(nodes)
     }
 

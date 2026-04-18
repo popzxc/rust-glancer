@@ -1,5 +1,3 @@
-//! Item-node construction helpers used by the target traversal.
-
 use ra_syntax::{
     TextRange,
     ast::{self, AstNode, HasName, HasVisibility},
@@ -14,6 +12,7 @@ pub(crate) use self::types::{ItemKind, VisibilityLevel};
 
 mod types;
 
+/// AST-based module items (impl block, struct, etc) representation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemNode {
     pub kind: ItemKind,

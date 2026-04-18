@@ -5,7 +5,7 @@ use std::{fmt, path::Path};
 use crate::parse::{
     file::{FileId, ParseDb},
     item::ItemNode,
-    target::{TargetBuilder, TargetId, TargetIndex},
+    krate::{CrateId, CrateIndex, CrateIndexBuilder},
 };
 
 /// Parsed package, e.g. all the files, targets (lib.rs, main.rs, examples, integration
@@ -17,7 +17,7 @@ pub struct PackageIndex {
     /// All parsed files known to this package index.
     pub db: ParseDb,
     /// Per-target item trees built from target entrypoints.
-    pub targets: Vec<TargetIndex>,
+    pub targets: Vec<CrateIndex>,
 }
 
 impl PackageIndex {
@@ -41,8 +41,8 @@ impl PackageIndex {
         let mut target_indexes = Vec::new();
 
         for (idx, target_input) in targets.into_iter().enumerate() {
-            let target_id = TargetId(idx);
-            let target_index = TargetBuilder::new(&mut parse_db)
+            let target_id = CrateId(idx);
+            let target_index = CrateIndexBuilder::new(&mut parse_db)
                 .build(target_id, target_input)
                 .with_context(|| format!("while attempting to build target index {idx}"))?;
             target_indexes.push(target_index);
