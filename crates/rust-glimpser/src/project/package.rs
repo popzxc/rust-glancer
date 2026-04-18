@@ -7,6 +7,8 @@ use crate::item_tree::package::PackageIndex;
 pub struct PackageAnalysis {
     /// Stable package id from Cargo metadata.
     pub package_id: cargo_metadata::PackageId,
+    /// Whether the package is a part of workspace being analyzed
+    pub is_workspace: bool,
     /// Metadata package
     metadata: cargo_metadata::Package,
     /// Parsed item tree index for this package.
@@ -15,12 +17,27 @@ pub struct PackageAnalysis {
 
 impl PackageAnalysis {
     /// Builds one package analysis from Cargo package metadata.
-    pub(super) fn build(package: cargo_metadata::Package) -> anyhow::Result<Self> {
+    pub(super) fn build(
+        package: cargo_metadata::Package,
+        is_workspace: bool,
+    ) -> anyhow::Result<Self> {
         let package_name = package.name.to_string();
         let package_id = package.id.clone();
 
-        let package_index = PackageIndex::build(package_name.clone(), package.targets.clone())
-            .with_context(|| {
+        // Outside of the workspace we're working with, we don't want to analyze any tests/examples/binaries/etc.
+        let targets = if is_workspace {
+            package.targets.clone()
+        } else {
+            package
+                .targets
+                .iter()
+                .filter(|t| t.is_kind(cargo_metadata::TargetKind::Lib))
+                .cloned()
+                .collect()
+        };
+
+        let package_index =
+            PackageIndex::build(package_name.clone(), targets).with_context(|| {
                 format!(
                     "while attempting to build package index for {}",
                     package_name
@@ -29,6 +46,7 @@ impl PackageAnalysis {
 
         Ok(Self {
             package_id,
+            is_workspace,
             metadata: package,
             package_index,
         })

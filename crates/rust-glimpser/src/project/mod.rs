@@ -1,4 +1,7 @@
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use anyhow::Context as _;
 use rayon::prelude::*;
@@ -24,15 +27,25 @@ pub struct ProjectAnalysis {
 impl ProjectAnalysis {
     /// Builds analyses for workspace members only.
     pub fn build(metadata: cargo_metadata::Metadata) -> anyhow::Result<Self> {
+        let workspace_ids: HashSet<cargo_metadata::PackageId> = metadata
+            .workspace_packages()
+            .into_iter()
+            .map(|p| p.id.clone())
+            .collect();
+
         let slots = metadata
             .packages
             .clone()
             .into_par_iter()
             .map(|package| -> anyhow::Result<PackageAnalysis> {
                 let id = package.id.clone();
-                Ok(PackageAnalysis::build(package).with_context(|| {
-                    format!("while attempting to build package analysis for {id}",)
-                })?)
+                let is_workspace = workspace_ids.contains(&id);
+
+                Ok(
+                    PackageAnalysis::build(package, is_workspace).with_context(|| {
+                        format!("while attempting to build package analysis for {id}",)
+                    })?,
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
 
