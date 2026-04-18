@@ -5,6 +5,7 @@ use std::fmt;
 
 use ra_syntax::{AstNode as _, ast};
 
+/// Normalized item kinds, serves as tag for otherwise generic `ItemNode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
     AsmExpr,

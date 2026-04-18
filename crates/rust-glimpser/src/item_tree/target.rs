@@ -11,36 +11,50 @@ use crate::item_tree::{
     span::LineIndex,
 };
 
+/// Stable identifier of a target within a package index build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TargetId(pub usize);
 
+/// Input metadata needed to build one target tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetInput {
+    /// Cargo target name.
     pub name: String,
+    /// Cargo target kinds (`lib`, `bin`, `test`, ...).
     pub kinds: Vec<String>,
+    /// Entrypoint source file for this target.
     pub root_file: PathBuf,
 }
 
+/// Final tree output for a single Cargo target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetIndex {
+    /// Stable target id assigned during package build.
     pub id: TargetId,
+    /// Cargo target name.
     pub name: String,
+    /// Cargo target kinds (`lib`, `bin`, `test`, ...).
     pub kinds: Vec<String>,
+    /// Entrypoint file id for this target.
     pub root_file: FileId,
+    /// Collected root-level items for this target.
     pub root_items: Vec<ItemNode>,
 }
 
+/// Mutable traversal state used while building one target tree.
 #[derive(Default)]
 struct TargetBuildState {
     active_stack: HashSet<FileId>,
 }
 
+/// Target-local tree builder that traverses module/item structure using `ParseDb`.
 pub(crate) struct TargetBuilder<'db> {
     parse_db: &'db mut ParseDb,
     state: TargetBuildState,
 }
 
 impl<'db> TargetBuilder<'db> {
+    /// Creates a target builder that reuses the shared parse database.
     pub(crate) fn new(parse_db: &'db mut ParseDb) -> Self {
         Self {
             parse_db,
@@ -48,6 +62,7 @@ impl<'db> TargetBuilder<'db> {
         }
     }
 
+    /// Builds the item tree for one target entrypoint.
     pub(crate) fn build(
         mut self,
         target_id: TargetId,
@@ -79,6 +94,7 @@ impl<'db> TargetBuilder<'db> {
         })
     }
 
+    /// Collects all top-level items from a file, with cycle protection.
     fn collect_file_items(&mut self, current_file_id: FileId) -> anyhow::Result<Vec<ItemNode>> {
         if !self.state.active_stack.insert(current_file_id) {
             return Ok(Vec::new());
@@ -113,6 +129,7 @@ impl<'db> TargetBuilder<'db> {
         Ok(nodes)
     }
 
+    /// Maps syntax items from one file into normalized `ItemNode` values.
     fn collect_items(
         &mut self,
         items: Vec<ast::Item>,
@@ -196,6 +213,7 @@ impl<'db> TargetBuilder<'db> {
         Ok(nodes)
     }
 
+    /// Collects module children from inline blocks or resolved module files.
     fn collect_module_children(
         &mut self,
         item: &ast::Module,
@@ -243,6 +261,7 @@ impl<'db> TargetBuilder<'db> {
         })
     }
 
+    /// Resolves `mod foo;` according to conventional Rust module file rules.
     fn resolve_module_file(current_file_path: &Path, module_name: &str) -> Option<PathBuf> {
         let parent_dir = current_file_path.parent()?;
         let file_name = current_file_path.file_name()?.to_str()?;

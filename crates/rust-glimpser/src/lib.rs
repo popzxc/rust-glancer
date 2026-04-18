@@ -2,10 +2,13 @@
 use anyhow::Context as _;
 use std::path::PathBuf;
 
-use cargo_metadata::{Metadata, MetadataCommand};
-
 mod item_tree;
+pub(crate) mod project;
 
+#[cfg(test)]
+mod test_utils;
+
+/// Runs project analysis for the Cargo manifest at `path` and prints extracted item trees.
 pub fn analyze(path: PathBuf) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("folder {} does not exist", path.display());
@@ -16,36 +19,14 @@ pub fn analyze(path: PathBuf) -> anyhow::Result<()> {
         anyhow::bail!("folder {} does not have Cargo.toml in it", path.display());
     }
 
-    let metadata: Metadata = MetadataCommand::new()
+    let metadata: cargo_metadata::Metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(cargo_manifest)
         .exec()
         .context("cargo metadata failed")?;
 
-    let package = metadata
-        .workspace_packages()
-        .get(0)
-        .cloned()
-        .expect("No packages");
-    println!("Analyzing {}", package.name);
-
-    if package.targets.is_empty() {
-        anyhow::bail!("package {} has no targets", package.name);
-    }
-    println!("Found {} targets", package.targets.len());
-
-    let target_inputs = package
-        .targets
-        .iter()
-        .map(|target| item_tree::target::TargetInput {
-            name: target.name.clone(),
-            kinds: target.kind.iter().map(ToString::to_string).collect(),
-            root_file: target.src_path.clone().into_std_path_buf(),
-        })
-        .collect();
-    let package_index =
-        item_tree::package::PackageIndex::build(package.name.to_string(), target_inputs)
-            .context("while attempting to build package index")?;
-    println!("{package_index}");
+    let project_analysis = project::ProjectAnalysis::build(metadata)
+        .context("while attempting to build project analysis")?;
+    println!("{project_analysis}");
 
     Ok(())
 }

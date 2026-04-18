@@ -1,15 +1,10 @@
+use crate::test_utils::test_file;
+
 use super::{
     item::{ItemKind, ItemNode, VisibilityLevel},
     package::PackageIndex,
     target::TargetInput,
 };
-use std::path::PathBuf;
-
-fn test_file(path: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../test_targets")
-        .join(path)
-}
 
 fn flatten<'a>(items: &'a [ItemNode], output: &mut Vec<&'a ItemNode>) {
     for item in items {

@@ -32,3 +32,8 @@ Good:
 // Ensure that all the whitespaces are normal " ".
 text = text.split_whitespace().collect::<Vec<_>>().join(" ")
 ```
+
+
+For `cargo_metadata` items, always use fully qualified paths.
+
+This software is heavily WIP, we don't care about backward compatibility.

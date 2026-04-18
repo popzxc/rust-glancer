@@ -1,3 +1,5 @@
+//! Item-tree extraction pipeline.
+
 pub(crate) mod error;
 pub(crate) mod file;
 pub(crate) mod item;
