@@ -16,3 +16,6 @@ clap = { workspace = true, features = ["derive"] }
 cargo_metadata.workspace = true
 ra_syntax.workspace = true
 rayon.workspace = true
+
+[dev-dependencies]
+cargo_metadata = { workspace = true, features = ["builder"]}

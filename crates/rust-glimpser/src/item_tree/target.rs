@@ -15,26 +15,13 @@ use crate::item_tree::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TargetId(pub usize);
 
-/// Input metadata needed to build one target tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TargetInput {
-    /// Cargo target name.
-    pub name: String,
-    /// Cargo target kinds (`lib`, `bin`, `test`, ...).
-    pub kinds: Vec<String>,
-    /// Entrypoint source file for this target.
-    pub root_file: PathBuf,
-}
-
 /// Final tree output for a single Cargo target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetIndex {
     /// Stable target id assigned during package build.
     pub id: TargetId,
-    /// Cargo target name.
-    pub name: String,
-    /// Cargo target kinds (`lib`, `bin`, `test`, ...).
-    pub kinds: Vec<String>,
+    /// `cargo metadata` description of the target
+    pub metadata: cargo_metadata::Target,
     /// Entrypoint file id for this target.
     pub root_file: FileId,
     /// Collected root-level items for this target.
@@ -66,29 +53,29 @@ impl<'db> TargetBuilder<'db> {
     pub(crate) fn build(
         mut self,
         target_id: TargetId,
-        target_input: TargetInput,
+        target: cargo_metadata::Target,
     ) -> anyhow::Result<TargetIndex> {
+        let root_path = target.src_path.as_path().as_std_path();
         let root_file = self
             .parse_db
-            .get_or_parse_file(&target_input.root_file)
+            .get_or_parse_file(&root_path)
             .with_context(|| {
                 format!(
                     "while attempting to parse target root {}",
-                    target_input.root_file.display()
+                    root_path.display()
                 )
             })?;
 
         let root_items = self.collect_file_items(root_file).with_context(|| {
             format!(
                 "while attempting to collect root items for target {}",
-                target_input.name
+                target.name
             )
         })?;
 
         Ok(TargetIndex {
             id: target_id,
-            name: target_input.name,
-            kinds: target_input.kinds,
+            metadata: target,
             root_file,
             root_items,
         })

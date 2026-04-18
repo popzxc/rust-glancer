@@ -1,9 +1,10 @@
+use std::path::PathBuf;
+
 use crate::test_utils::test_file;
 
 use super::{
     item::{ItemKind, ItemNode, VisibilityLevel},
     package::PackageIndex,
-    target::TargetInput,
 };
 
 fn flatten<'a>(items: &'a [ItemNode], output: &mut Vec<&'a ItemNode>) {
@@ -16,11 +17,7 @@ fn flatten<'a>(items: &'a [ItemNode], output: &mut Vec<&'a ItemNode>) {
 fn single_target_index(path: &str) -> PackageIndex {
     PackageIndex::build(
         "fixture".to_string(),
-        vec![TargetInput {
-            name: "fixture".to_string(),
-            kinds: vec!["lib".to_string()],
-            root_file: test_file(path),
-        }],
+        vec![mock_target("fixture", &["lib"], test_file(path))],
     )
     .expect("fixture crate should parse")
 }
@@ -108,22 +105,32 @@ fn shows_import_paths_for_use_items() {
     );
 }
 
+fn mock_target(name: &str, kind: &[&str], root_file: PathBuf) -> cargo_metadata::Target {
+    cargo_metadata::TargetBuilder::default()
+        .name(name)
+        .kind(
+            kind.into_iter()
+                .map(|&k| cargo_metadata::TargetKind::from(k))
+                .collect::<Vec<_>>(),
+        )
+        .crate_types(
+            kind.into_iter()
+                .map(|&k| cargo_metadata::CrateType::from(k))
+                .collect::<Vec<_>>(),
+        )
+        .src_path(root_file.to_str().unwrap())
+        .build()
+        .unwrap()
+}
+
 #[test]
 fn parses_shared_files_once_across_targets() {
     let root_file = test_file("simple_crate/src/lib.rs");
     let index = PackageIndex::build(
         "fixture".to_string(),
         vec![
-            TargetInput {
-                name: "a".to_string(),
-                kinds: vec!["lib".to_string()],
-                root_file: root_file.clone(),
-            },
-            TargetInput {
-                name: "b".to_string(),
-                kinds: vec!["bin".to_string()],
-                root_file,
-            },
+            mock_target("a", &["lib"], root_file.clone()),
+            mock_target("b", &["bin"], root_file),
         ],
     )
     .expect("fixture crate should parse");
@@ -137,16 +144,16 @@ fn builds_independent_trees_for_lib_and_bin_targets() {
     let index = PackageIndex::build(
         "moderate_crate".to_string(),
         vec![
-            TargetInput {
-                name: "moderate_crate".to_string(),
-                kinds: vec!["lib".to_string()],
-                root_file: test_file("moderate_crate/src/lib.rs"),
-            },
-            TargetInput {
-                name: "moderate_crate".to_string(),
-                kinds: vec!["bin".to_string()],
-                root_file: test_file("moderate_crate/src/main.rs"),
-            },
+            mock_target(
+                "moderate_crate",
+                &["lib"],
+                test_file("moderate_crate/src/lib.rs"),
+            ),
+            mock_target(
+                "moderate_crate",
+                &["bin"],
+                test_file("moderate_crate/src/main.rs"),
+            ),
         ],
     )
     .expect("fixture crate should parse");
@@ -154,12 +161,24 @@ fn builds_independent_trees_for_lib_and_bin_targets() {
     let lib_target = index
         .targets
         .iter()
-        .find(|target| target.kinds.iter().any(|kind| kind == "lib"))
+        .find(|target| {
+            target
+                .metadata
+                .kind
+                .iter()
+                .any(|kind| kind == &cargo_metadata::TargetKind::Lib)
+        })
         .expect("lib target should exist");
     let bin_target = index
         .targets
         .iter()
-        .find(|target| target.kinds.iter().any(|kind| kind == "bin"))
+        .find(|target| {
+            target
+                .metadata
+                .kind
+                .iter()
+                .any(|kind| kind == &cargo_metadata::TargetKind::Bin)
+        })
         .expect("bin target should exist");
 
     let mut lib_items = Vec::new();

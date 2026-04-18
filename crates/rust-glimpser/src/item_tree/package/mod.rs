@@ -5,7 +5,7 @@ use std::{fmt, path::Path};
 use crate::item_tree::{
     file::{FileId, FileRecord, ParseDb},
     item::ItemNode,
-    target::{TargetBuilder, TargetId, TargetIndex, TargetInput},
+    target::{TargetBuilder, TargetId, TargetIndex},
 };
 
 /// Parsed package, e.g. all the files, targets (lib.rs, main.rs, examples, integration
@@ -33,7 +33,10 @@ impl PackageIndex {
     ///
     // Note: the same file in theory can be a module for multiple targets, e.g. if two
     // integration test will declare `mod utils`, both will have it.
-    pub fn build(package_name: String, targets: Vec<TargetInput>) -> anyhow::Result<Self> {
+    pub fn build(
+        package_name: String,
+        targets: Vec<cargo_metadata::Target>,
+    ) -> anyhow::Result<Self> {
         let mut parse_db = ParseDb::default();
         let mut target_indexes = Vec::new();
 
@@ -94,14 +97,18 @@ impl fmt::Display for PackageIndex {
                 .file_path(target.root_file)
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "<unknown>".to_string());
-            let kinds = if target.kinds.is_empty() {
-                "<unknown>".to_string()
+            let kinds = if !target.metadata.kind.is_empty() {
+                format!("{:?}", target.metadata.kind)
             } else {
-                target.kinds.join(",")
+                "<unknown>".to_string()
             };
 
             writeln!(f)?;
-            writeln!(f, "Target {} ({kinds}) | root {}", target.name, root_path)?;
+            writeln!(
+                f,
+                "Target {} ({kinds}) | root {}",
+                target.metadata.name, root_path
+            )?;
             for item in &target.root_items {
                 self.fmt_item(f, item, 0)?;
             }

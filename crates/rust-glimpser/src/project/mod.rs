@@ -26,13 +26,12 @@ impl ProjectAnalysis {
     pub fn build(metadata: cargo_metadata::Metadata) -> anyhow::Result<Self> {
         let slots = metadata
             .packages
-            .par_iter()
+            .clone()
+            .into_par_iter()
             .map(|package| -> anyhow::Result<PackageAnalysis> {
+                let id = package.id.clone();
                 Ok(PackageAnalysis::build(package).with_context(|| {
-                    format!(
-                        "while attempting to build package analysis for {}",
-                        package.id
-                    )
+                    format!("while attempting to build package analysis for {id}",)
                 })?)
             })
             .collect::<Result<Vec<_>, _>>()?;
