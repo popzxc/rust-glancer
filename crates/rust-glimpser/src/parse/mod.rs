@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context as _;
 
-use self::package::PackageAnalysis;
+use self::package::PackageIndex;
 
 pub(crate) mod error;
 pub(crate) mod file;
@@ -23,7 +23,7 @@ pub struct ProjectAnalysis {
     /// Original metadata payload used to produce this analysis.
     metadata: cargo_metadata::Metadata,
     /// Parsed packages.
-    packages: Vec<PackageAnalysis>,
+    packages: Vec<PackageIndex>,
     /// PackageId -> Package
     package_by_id: HashMap<cargo_metadata::PackageId, usize>,
 }
@@ -41,22 +41,20 @@ impl ProjectAnalysis {
             .packages
             .clone()
             .into_iter()
-            .map(|package| -> anyhow::Result<PackageAnalysis> {
+            .map(|package| -> anyhow::Result<PackageIndex> {
                 let id = package.id.clone();
                 let is_workspace = workspace_ids.contains(&id);
 
-                Ok(
-                    PackageAnalysis::build(package, is_workspace).with_context(|| {
-                        format!("while attempting to build package analysis for {id}",)
-                    })?,
-                )
+                Ok(PackageIndex::build(package, is_workspace).with_context(|| {
+                    format!("while attempting to build package analysis for {id}",)
+                })?)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
         let slot_by_package = slots
             .iter()
             .enumerate()
-            .map(|(idx, package)| (package.package_id.clone(), idx))
+            .map(|(idx, package)| (package.id().clone(), idx))
             .collect::<HashMap<_, _>>();
 
         Ok(Self {
@@ -67,13 +65,13 @@ impl ProjectAnalysis {
     }
 
     /// Returns analysis for a specific package id, if this project contains it.
-    pub fn package(&self, package_id: &cargo_metadata::PackageId) -> Option<&PackageAnalysis> {
+    pub fn package(&self, package_id: &cargo_metadata::PackageId) -> Option<&PackageIndex> {
         let slot_index = self.package_by_id.get(package_id).copied()?;
         self.packages.get(slot_index)
     }
 
     /// Iterates over analyzed packages that belong to the workspace members set.
-    pub fn workspace_packages(&self) -> impl Iterator<Item = &PackageAnalysis> + '_ {
+    pub fn workspace_packages(&self) -> impl Iterator<Item = &PackageIndex> + '_ {
         self.metadata
             .packages
             .iter()
@@ -104,14 +102,9 @@ impl fmt::Display for ProjectAnalysis {
 
         for package in &self.packages {
             writeln!(f)?;
-            writeln!(
-                f,
-                "Package {} [{}]",
-                package.package_name(),
-                package.package_id,
-            )?;
+            writeln!(f, "Package {} [{}]", package.package_name(), package.id(),)?;
             writeln!(f)?;
-            write!(f, "{}", package.package_index)?;
+            write!(f, "{}", package)?;
         }
 
         Ok(())

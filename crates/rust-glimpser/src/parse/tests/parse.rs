@@ -4,7 +4,7 @@ use crate::test_utils::test_file;
 
 use crate::parse::{
     item::{ItemKind, ItemNode, VisibilityLevel},
-    package::index::PackageIndex,
+    package::PackageIndex,
 };
 
 fn flatten<'a>(items: &'a [ItemNode], output: &mut Vec<&'a ItemNode>) {
