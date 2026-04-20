@@ -5,7 +5,7 @@ use anyhow::Context as _;
 use crate::parse::{
     file::{FileId, ParseDb},
     item::ItemNode,
-    krate::{CrateId, CrateIndex, CrateIndexBuilder},
+    target::{TargetId, TargetIndex, TargetIndexBuilder},
 };
 
 /// Parsed package, e.g. all the files, targets (lib.rs, main.rs, examples, integration
@@ -21,7 +21,7 @@ pub struct PackageIndex {
     /// Metadata package
     metadata: cargo_metadata::Package,
     /// Per-target item trees built from target entrypoints.
-    pub(crate) targets: Vec<CrateIndex>,
+    pub(crate) targets: Vec<TargetIndex>,
 }
 
 impl PackageIndex {
@@ -69,8 +69,8 @@ impl PackageIndex {
         let mut target_indexes = Vec::new();
 
         for (idx, target_input) in targets.into_iter().enumerate() {
-            let target_id = CrateId(idx);
-            let target_index = CrateIndexBuilder::new(&mut parse_db)
+            let target_id = TargetId(idx);
+            let target_index = TargetIndexBuilder::new(&mut parse_db)
                 .build(target_id, target_input)
                 .with_context(|| format!("while attempting to build target index {idx}"))?;
             target_indexes.push(target_index);

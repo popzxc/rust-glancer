@@ -10,9 +10,9 @@ use self::package::PackageIndex;
 pub(crate) mod error;
 pub(crate) mod file;
 pub(crate) mod item;
-pub(crate) mod krate;
 pub(crate) mod package;
 pub(crate) mod span;
+pub(crate) mod target;
 
 #[cfg(test)]
 mod tests;
@@ -25,7 +25,7 @@ pub struct ProjectAnalysis {
     /// Parsed packages.
     packages: Vec<PackageIndex>,
     /// PackageId -> Package
-    package_by_id: HashMap<cargo_metadata::PackageId, usize>,
+    package_by_id: HashMap<cargo_metadata::PackageId, usize>, // TODO: maybe remove though probably we will need it.
 }
 
 impl ProjectAnalysis {

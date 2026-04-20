@@ -13,17 +13,17 @@ use crate::parse::{
 
 /// Stable identifier of a target within a package index build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CrateId(pub usize);
+pub struct TargetId(pub usize);
 
-/// Crate index.
+/// Parsed target index.
 ///
-/// A single `Cargo.toml` may define multiple targtes, e.g. `lib.rs`,
+/// A single `Cargo.toml` may define multiple targets, e.g. `lib.rs`,
 /// `main.rs`, integration tests, etc. Each of these ends up compiled
-/// as a crate, and this index is build for every of these.
+/// as a separate compilation target, and this index is built for each of them.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CrateIndex {
+pub struct TargetIndex {
     /// Stable target id assigned during package build.
-    pub id: CrateId,
+    pub id: TargetId,
     /// `cargo metadata` description of the target
     pub metadata: cargo_metadata::Target,
     /// Entrypoint file id for this target.
@@ -33,12 +33,12 @@ pub struct CrateIndex {
 }
 
 /// Target-local tree builder that traverses module/item structure using `ParseDb`.
-pub(crate) struct CrateIndexBuilder<'db> {
+pub(crate) struct TargetIndexBuilder<'db> {
     parse_db: &'db mut ParseDb,
     active_stack: HashSet<FileId>,
 }
 
-impl<'db> CrateIndexBuilder<'db> {
+impl<'db> TargetIndexBuilder<'db> {
     /// Creates a target builder that reuses the shared parse database.
     pub(crate) fn new(parse_db: &'db mut ParseDb) -> Self {
         Self {
@@ -50,9 +50,9 @@ impl<'db> CrateIndexBuilder<'db> {
     /// Builds the item tree for one target entrypoint.
     pub(crate) fn build(
         mut self,
-        target_id: CrateId,
+        target_id: TargetId,
         target: cargo_metadata::Target,
-    ) -> anyhow::Result<CrateIndex> {
+    ) -> anyhow::Result<TargetIndex> {
         let root_path = target.src_path.as_path().as_std_path();
         let root_file = self
             .parse_db
@@ -71,7 +71,7 @@ impl<'db> CrateIndexBuilder<'db> {
             )
         })?;
 
-        Ok(CrateIndex {
+        Ok(TargetIndex {
             id: target_id,
             metadata: target,
             root_file,

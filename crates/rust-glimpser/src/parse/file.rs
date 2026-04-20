@@ -18,7 +18,7 @@ pub struct FileId(pub usize);
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedFile {
     /// Numeric id assigned by `ParseDb`.
-    pub id: FileId,
+    pub id: FileId, // TODO: maybe remove if not proven useful.
     /// Canonical filesystem path for this source file.
     pub path: PathBuf,
     /// Parse diagnostics produced while parsing the file.
