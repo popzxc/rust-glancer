@@ -5,6 +5,9 @@ use std::path::PathBuf;
 pub(crate) mod parse;
 
 #[cfg(test)]
+mod test_fixture;
+
+#[cfg(test)]
 mod test_utils;
 
 /// Runs project analysis for the Cargo manifest at `path` and prints extracted item trees.

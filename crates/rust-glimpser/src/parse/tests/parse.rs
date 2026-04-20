@@ -1,11 +1,11 @@
+// Human note: this file must not grow into a big mess. If you anticipate that it will
+// get too big to be readable, propose splitting it instead of blindly
+// adding more tests here.
+
 use std::path::PathBuf;
 
-use crate::test_utils::test_file;
-
-use crate::parse::{
-    item::{ItemKind, ItemNode, VisibilityLevel},
-    package::PackageIndex,
-};
+use crate::parse::item::{ItemKind, ItemNode, VisibilityLevel};
+use crate::test_fixture::{CrateFixture, fixture_crate};
 
 fn flatten<'a>(items: &'a [ItemNode], output: &mut Vec<&'a ItemNode>) {
     for item in items {
@@ -14,17 +14,91 @@ fn flatten<'a>(items: &'a [ItemNode], output: &mut Vec<&'a ItemNode>) {
     }
 }
 
-fn single_target_index(path: &str) -> PackageIndex {
-    PackageIndex::build(
-        "fixture".to_string(),
-        vec![mock_target("fixture", &["lib"], test_file(path))],
-    )
-    .expect("fixture crate should parse")
+fn moderate_fixture() -> CrateFixture {
+    fixture_crate! {
+        "Cargo.toml" => r#"
+[package]
+name = "moderate_crate"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "moderate_crate"
+path = "src/main.rs"
+"#,
+        "src/lib.rs" => r#"
+pub mod cli;
+pub mod model;
+"#,
+        "src/model.rs" => r#"
+pub struct Model;
+
+impl Model {
+    pub fn new() -> Self {
+        Self
+    }
+}
+"#,
+        "src/cli.rs" => r#"
+pub fn run() {}
+"#,
+        "src/main.rs" => r#"
+use std::path::PathBuf;
+use moderate_crate::cli::run;
+
+fn main() {
+    let _path = PathBuf::new();
+    run();
+}
+"#,
+    }
+}
+
+fn simple_fixture() -> CrateFixture {
+    fixture_crate! {
+        "Cargo.toml" => r#"
+[package]
+name = "simple_crate"
+version = "0.1.0"
+edition = "2024"
+"#,
+        "src/lib.rs" => r#"
+pub fn add_two_numbers(left: i32, right: i32) -> i32 {
+    left + right
+}
+"#,
+    }
+}
+
+fn macro_fixture() -> CrateFixture {
+    fixture_crate! {
+        "Cargo.toml" => r#"
+[package]
+name = "complex_crate"
+version = "0.1.0"
+edition = "2024"
+"#,
+        "src/lib.rs" => r#"
+macro_rules! label_result {
+    ($value:expr) => {
+        $value
+    };
+}
+
+pub fn decorate(input: &str) -> &str {
+    label_result!(input)
+}
+"#,
+    }
 }
 
 #[test]
 fn parses_module_tree_and_impl_items() {
-    let index = single_target_index("moderate_crate/src/lib.rs");
+    let fixture = moderate_fixture();
+    let index = fixture.package_index_for_target("src/lib.rs");
     let target = index.targets.first().expect("target should exist");
     let mut all_items = Vec::new();
     flatten(&target.root_items, &mut all_items);
@@ -46,7 +120,8 @@ fn parses_module_tree_and_impl_items() {
 
 #[test]
 fn keeps_macro_definitions_only() {
-    let index = single_target_index("complex_crate/src/lib.rs");
+    let fixture = macro_fixture();
+    let index = fixture.package_index_for_target("src/lib.rs");
     let target = index.targets.first().expect("target should exist");
     let mut all_items = Vec::new();
     flatten(&target.root_items, &mut all_items);
@@ -62,7 +137,8 @@ fn keeps_macro_definitions_only() {
 
 #[test]
 fn stores_offset_and_line_column_spans() {
-    let index = single_target_index("simple_crate/src/lib.rs");
+    let fixture = simple_fixture();
+    let index = fixture.package_index_for_target("src/lib.rs");
     let target = index.targets.first().expect("target should exist");
     let mut all_items = Vec::new();
     flatten(&target.root_items, &mut all_items);
@@ -82,7 +158,8 @@ fn stores_offset_and_line_column_spans() {
 
 #[test]
 fn shows_import_paths_for_use_items() {
-    let index = single_target_index("moderate_crate/src/main.rs");
+    let fixture = moderate_fixture();
+    let index = fixture.package_index_for_target("src/main.rs");
     let target = index.targets.first().expect("target should exist");
     let mut all_items = Vec::new();
     flatten(&target.root_items, &mut all_items);
@@ -118,22 +195,19 @@ fn mock_target(name: &str, kind: &[&str], root_file: PathBuf) -> cargo_metadata:
                 .map(|&k| cargo_metadata::CrateType::from(k))
                 .collect::<Vec<_>>(),
         )
-        .src_path(root_file.to_str().unwrap())
+        .src_path(root_file.to_str().expect("fixture path should be UTF-8"))
         .build()
-        .unwrap()
+        .expect("target fixture should be valid")
 }
 
 #[test]
 fn parses_shared_files_once_across_targets() {
-    let root_file = test_file("simple_crate/src/lib.rs");
-    let index = PackageIndex::build(
-        "fixture".to_string(),
-        vec![
-            mock_target("a", &["lib"], root_file.clone()),
-            mock_target("b", &["bin"], root_file),
-        ],
-    )
-    .expect("fixture crate should parse");
+    let fixture = simple_fixture();
+    let root_file = fixture.path("src/lib.rs");
+    let index = fixture.package_index_with_targets(vec![
+        mock_target("a", &["lib"], root_file.clone()),
+        mock_target("b", &["bin"], root_file),
+    ]);
 
     assert_eq!(
         index.db.parsed_files.len(),
@@ -145,22 +219,8 @@ fn parses_shared_files_once_across_targets() {
 
 #[test]
 fn builds_independent_trees_for_lib_and_bin_targets() {
-    let index = PackageIndex::build(
-        "moderate_crate".to_string(),
-        vec![
-            mock_target(
-                "moderate_crate",
-                &["lib"],
-                test_file("moderate_crate/src/lib.rs"),
-            ),
-            mock_target(
-                "moderate_crate",
-                &["bin"],
-                test_file("moderate_crate/src/main.rs"),
-            ),
-        ],
-    )
-    .expect("fixture crate should parse");
+    let fixture = moderate_fixture();
+    let index = fixture.package_index();
 
     let lib_target = index
         .targets
