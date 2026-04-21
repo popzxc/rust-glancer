@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::parse::{
+    def_map::{DefMap, ModuleData, ModuleId},
     file::{FileId, ParseDb},
     item::ItemNode,
     span::LineIndex,
@@ -25,11 +26,20 @@ pub struct TargetIndex {
     /// Stable target id assigned during package build.
     pub id: TargetId,
     /// `cargo metadata` description of the target
-    pub metadata: cargo_metadata::Target,
+    pub cargo_target: cargo_metadata::Target,
     /// Entrypoint file id for this target.
     pub root_file: FileId,
     /// Collected root-level items for this target.
     pub root_items: Vec<ItemNode>,
+    /// Frozen target namespace map.
+    pub def_map: DefMap,
+}
+
+impl TargetIndex {
+    /// Returns module data by id.
+    pub fn module(&self, module_id: ModuleId) -> Option<&ModuleData> {
+        self.def_map.module(module_id)
+    }
 }
 
 /// Target-local tree builder that traverses module/item structure using `ParseDb`.
@@ -73,9 +83,10 @@ impl<'db> TargetIndexBuilder<'db> {
 
         Ok(TargetIndex {
             id: target_id,
-            metadata: target,
+            cargo_target: target,
             root_file,
             root_items,
+            def_map: DefMap::default(),
         })
     }
 
@@ -248,25 +259,30 @@ impl<'db> TargetIndexBuilder<'db> {
 
     /// Resolves `mod foo;` according to conventional Rust module file rules.
     fn resolve_module_file(current_file_path: &Path, module_name: &str) -> Option<PathBuf> {
-        let parent_dir = current_file_path.parent()?;
-        let file_name = current_file_path.file_name()?.to_str()?;
-        let file_stem = current_file_path.file_stem()?.to_str()?;
-
-        let module_parent = match file_name {
-            "lib.rs" | "main.rs" | "mod.rs" => parent_dir.to_path_buf(),
-            _ => parent_dir.join(file_stem),
-        };
-
-        let flat_file = module_parent.join(format!("{module_name}.rs"));
-        if flat_file.exists() {
-            return Some(flat_file);
-        }
-
-        let nested_file = module_parent.join(module_name).join("mod.rs");
-        if nested_file.exists() {
-            return Some(nested_file);
-        }
-
-        None
+        crate::parse::target::resolve_module_file(current_file_path, module_name)
     }
+}
+
+/// Resolves `mod foo;` according to conventional Rust module file rules.
+pub(crate) fn resolve_module_file(current_file_path: &Path, module_name: &str) -> Option<PathBuf> {
+    let parent_dir = current_file_path.parent()?;
+    let file_name = current_file_path.file_name()?.to_str()?;
+    let file_stem = current_file_path.file_stem()?.to_str()?;
+
+    let module_parent = match file_name {
+        "lib.rs" | "main.rs" | "mod.rs" => parent_dir.to_path_buf(),
+        _ => parent_dir.join(file_stem),
+    };
+
+    let flat_file = module_parent.join(format!("{module_name}.rs"));
+    if flat_file.exists() {
+        return Some(flat_file);
+    }
+
+    let nested_file = module_parent.join(module_name).join("mod.rs");
+    if nested_file.exists() {
+        return Some(nested_file);
+    }
+
+    None
 }

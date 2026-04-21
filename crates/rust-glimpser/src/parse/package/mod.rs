@@ -125,8 +125,8 @@ impl fmt::Display for PackageIndex {
                 .file_path(target.root_file)
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "<unknown>".to_string());
-            let kinds = if !target.metadata.kind.is_empty() {
-                format!("{:?}", target.metadata.kind)
+            let kinds = if !target.cargo_target.kind.is_empty() {
+                format!("{:?}", target.cargo_target.kind)
             } else {
                 "<unknown>".to_string()
             };
@@ -135,7 +135,7 @@ impl fmt::Display for PackageIndex {
             writeln!(
                 f,
                 "Target {} ({kinds}) | root {}",
-                target.metadata.name, root_path
+                target.cargo_target.name, root_path
             )?;
             for item in &target.root_items {
                 self.fmt_item(f, item, 0)?;

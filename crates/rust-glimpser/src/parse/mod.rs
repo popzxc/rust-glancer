@@ -5,8 +5,9 @@ use std::{
 
 use anyhow::Context as _;
 
-use self::package::PackageIndex;
+use self::{def_map::populate_project_scopes, package::PackageIndex};
 
+pub(crate) mod def_map;
 pub(crate) mod error;
 pub(crate) mod file;
 pub(crate) mod item;
@@ -37,7 +38,7 @@ impl ProjectAnalysis {
             .map(|p| p.id.clone())
             .collect();
 
-        let slots = metadata
+        let mut slots = metadata
             .packages
             .clone()
             .into_iter()
@@ -56,6 +57,9 @@ impl ProjectAnalysis {
             .enumerate()
             .map(|(idx, package)| (package.id().clone(), idx))
             .collect::<HashMap<_, _>>();
+
+        populate_project_scopes(&metadata, &mut slots, &slot_by_package)
+            .context("while attempting to build target namespace maps")?;
 
         Ok(Self {
             metadata,

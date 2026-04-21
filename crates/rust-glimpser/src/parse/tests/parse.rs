@@ -227,7 +227,7 @@ fn builds_independent_trees_for_lib_and_bin_targets() {
         .iter()
         .find(|target| {
             target
-                .metadata
+                .cargo_target
                 .kind
                 .iter()
                 .any(|kind| kind == &cargo_metadata::TargetKind::Lib)
@@ -238,7 +238,7 @@ fn builds_independent_trees_for_lib_and_bin_targets() {
         .iter()
         .find(|target| {
             target
-                .metadata
+                .cargo_target
                 .kind
                 .iter()
                 .any(|kind| kind == &cargo_metadata::TargetKind::Bin)
