@@ -18,3 +18,4 @@ ra_syntax.workspace = true
 
 [dev-dependencies]
 cargo_metadata = { workspace = true, features = ["builder"]}
+expect-test.workspace = true

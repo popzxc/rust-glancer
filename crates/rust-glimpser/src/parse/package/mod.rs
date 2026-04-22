@@ -40,6 +40,18 @@ impl PackageIndex {
         &self.metadata.id
     }
 
+    /// Returns all analyzed targets for this package.
+    #[cfg(test)]
+    pub(crate) fn targets(&self) -> &[TargetIndex] {
+        &self.targets
+    }
+
+    /// Returns one analyzed target by stable id.
+    #[cfg(test)]
+    pub(crate) fn target(&self, target_id: TargetId) -> Option<&TargetIndex> {
+        self.targets.iter().find(|target| target.id == target_id)
+    }
+
     /// Traverses each target and builds a package index.
     ///
     /// Each "root entrypoint" (e.g. `main.rs`, `lib.rs`, etc) is served as a root and all

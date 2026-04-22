@@ -15,8 +15,9 @@ fn flatten<'a>(items: &'a [ItemNode], output: &mut Vec<&'a ItemNode>) {
 }
 
 fn moderate_fixture() -> CrateFixture {
-    fixture_crate! {
-        "Cargo.toml" => r#"
+    fixture_crate!(
+        r#"
+//- /Cargo.toml
 [package]
 name = "moderate_crate"
 version = "0.1.0"
@@ -28,12 +29,12 @@ path = "src/lib.rs"
 [[bin]]
 name = "moderate_crate"
 path = "src/main.rs"
-"#,
-        "src/lib.rs" => r#"
+
+//- /src/lib.rs
 pub mod cli;
 pub mod model;
-"#,
-        "src/model.rs" => r#"
+
+//- /src/model.rs
 pub struct Model;
 
 impl Model {
@@ -41,11 +42,11 @@ impl Model {
         Self
     }
 }
-"#,
-        "src/cli.rs" => r#"
+
+//- /src/cli.rs
 pub fn run() {}
-"#,
-        "src/main.rs" => r#"
+
+//- /src/main.rs
 use std::path::PathBuf;
 use moderate_crate::cli::run;
 
@@ -53,35 +54,37 @@ fn main() {
     let _path = PathBuf::new();
     run();
 }
-"#,
-    }
+"#
+    )
 }
 
 fn simple_fixture() -> CrateFixture {
-    fixture_crate! {
-        "Cargo.toml" => r#"
+    fixture_crate!(
+        r#"
+//- /Cargo.toml
 [package]
 name = "simple_crate"
 version = "0.1.0"
 edition = "2024"
-"#,
-        "src/lib.rs" => r#"
+
+//- /src/lib.rs
 pub fn add_two_numbers(left: i32, right: i32) -> i32 {
     left + right
 }
-"#,
-    }
+"#
+    )
 }
 
 fn macro_fixture() -> CrateFixture {
-    fixture_crate! {
-        "Cargo.toml" => r#"
+    fixture_crate!(
+        r#"
+//- /Cargo.toml
 [package]
 name = "complex_crate"
 version = "0.1.0"
 edition = "2024"
-"#,
-        "src/lib.rs" => r#"
+
+//- /src/lib.rs
 macro_rules! label_result {
     ($value:expr) => {
         $value
@@ -91,8 +94,8 @@ macro_rules! label_result {
 pub fn decorate(input: &str) -> &str {
     label_result!(input)
 }
-"#,
-    }
+"#
+    )
 }
 
 #[test]

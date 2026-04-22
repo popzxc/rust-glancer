@@ -88,6 +88,12 @@ impl ProjectAnalysis {
                 &self.packages[slot]
             })
     }
+
+    /// Returns all analyzed packages.
+    #[cfg(test)]
+    pub(crate) fn packages(&self) -> &[PackageIndex] {
+        &self.packages
+    }
 }
 
 /// Renders a project-level report that includes all analyzed packages.

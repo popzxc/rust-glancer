@@ -6,11 +6,14 @@ use std::{
 };
 
 use crate::parse::{
-    def_map::{DefMap, ModuleData, ModuleId},
+    def_map::DefMap,
     file::{FileId, ParseDb},
     item::ItemNode,
     span::LineIndex,
 };
+
+#[cfg(test)]
+use crate::parse::def_map::{ModuleData, ModuleId, ScopeEntry};
 
 /// Stable identifier of a target within a package index build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,8 +40,16 @@ pub struct TargetIndex {
 
 impl TargetIndex {
     /// Returns module data by id.
+    #[cfg(test)]
     pub fn module(&self, module_id: ModuleId) -> Option<&ModuleData> {
         self.def_map.module(module_id)
+    }
+
+    /// Returns a root-module scope entry by textual name.
+    #[cfg(test)]
+    pub(crate) fn root_scope_entry(&self, name: &str) -> Option<&ScopeEntry> {
+        let root_module = self.def_map.root_module()?;
+        self.module(root_module)?.scope.entry(name)
     }
 }
 
