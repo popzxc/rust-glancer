@@ -1,6 +1,6 @@
 use ra_syntax::ast::{self, HasName};
 
-use crate::parse::item::VisibilityLevel;
+use crate::item_tree::VisibilityLevel;
 
 use super::ModuleId;
 

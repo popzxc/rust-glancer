@@ -1,6 +1,4 @@
-use crate::{parse::ProjectAnalysis, test_utils::test_file};
-
-mod parse;
+use crate::{parse::ParseDb, test_utils::test_file};
 
 fn test_metadata(path: &str) -> cargo_metadata::Metadata {
     cargo_metadata::MetadataCommand::new()
@@ -11,7 +9,7 @@ fn test_metadata(path: &str) -> cargo_metadata::Metadata {
 
 #[test]
 fn analyzes_all_workspace_members() {
-    let analysis = ProjectAnalysis::build(test_metadata("moderate_workspace"))
+    let analysis = ParseDb::build(test_metadata("moderate_workspace"))
         .expect("workspace fixture should parse");
 
     assert_eq!(
@@ -20,7 +18,7 @@ fn analyzes_all_workspace_members() {
         "all workspace members should be represented"
     );
     assert_eq!(
-        analysis.packages.len(),
+        analysis.packages().len(),
         3,
         "workspace fixture should not include external dependencies"
     );
@@ -30,10 +28,10 @@ fn analyzes_all_workspace_members() {
 fn resolves_project() {
     let metadata = test_metadata("moderate_workspace");
 
-    let analysis = ProjectAnalysis::build(metadata).expect("workspace fixture should parse");
+    let analysis = ParseDb::build(metadata).expect("workspace fixture should parse");
 
     assert_eq!(
-        analysis.packages.len(),
+        analysis.packages().len(),
         3,
         "full scope should keep all reachable packages in this fixture"
     );

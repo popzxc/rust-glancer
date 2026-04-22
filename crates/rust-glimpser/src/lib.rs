@@ -2,13 +2,15 @@
 use anyhow::Context as _;
 use std::path::PathBuf;
 
+pub(crate) mod def_map;
+pub(crate) mod item_tree;
 pub(crate) mod parse;
-
-#[cfg(test)]
-mod test_fixture;
+mod project;
 
 #[cfg(test)]
 mod test_utils;
+
+pub use self::project::Project;
 
 /// Runs project analysis for the Cargo manifest at `path` and prints extracted item trees.
 pub fn analyze(path: PathBuf) -> anyhow::Result<()> {
@@ -26,9 +28,8 @@ pub fn analyze(path: PathBuf) -> anyhow::Result<()> {
         .exec()
         .context("cargo metadata failed")?;
 
-    let project_analysis = parse::ProjectAnalysis::build(metadata)
-        .context("while attempting to build project analysis")?;
-    println!("{project_analysis}");
+    let project = Project::build(metadata).context("while attempting to build project")?;
+    println!("{project}");
 
     Ok(())
 }

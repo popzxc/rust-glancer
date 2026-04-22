@@ -4,7 +4,7 @@ use ra_syntax::{
 };
 
 use crate::parse::{
-    file::FileId,
+    FileId,
     span::{LineIndex, Span},
 };
 
@@ -260,6 +260,7 @@ impl ItemNode {
         fn use_name(use_item: &ast::Use) -> Option<String> {
             let use_tree = use_item.use_tree()?;
             let text = use_tree.syntax().text().to_string();
+
             // Normalize all whitespace in an extracted syntax fragment to single spaces.
             let name = text.split_whitespace().collect::<Vec<_>>().join(" ");
             Some(name)

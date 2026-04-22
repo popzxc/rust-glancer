@@ -6,12 +6,11 @@ use ra_syntax::{
     ast::{self, HasModuleItem, HasName, HasVisibility},
 };
 
+use crate::item_tree::{ItemKind, VisibilityLevel, resolve_module_file};
 use crate::parse::{
-    file::{FileId, ParseDb},
-    item::{ItemKind, VisibilityLevel},
-    package::PackageIndex,
+    FileDb, FileId, Package,
     span::{LineIndex, Span},
-    target::{TargetIndex, resolve_module_file},
+    target::Target,
 };
 
 use super::{
@@ -30,7 +29,7 @@ pub(super) struct TargetState {
 }
 
 pub(super) fn collect_target_states(
-    packages: &mut [PackageIndex],
+    packages: &mut [Package],
     implicit_roots: &[Vec<HashMap<String, ModuleRef>>],
 ) -> anyhow::Result<Vec<Vec<TargetState>>> {
     let mut states = Vec::with_capacity(packages.len());
@@ -48,7 +47,7 @@ pub(super) fn collect_target_states(
                 .and_then(|package_roots| package_roots.get(target.id.0))
                 .expect("implicit roots should exist for every parsed target");
 
-            let collector = TargetScopeCollector::new(target_ref, &mut package.db, target_roots);
+            let collector = TargetScopeCollector::new(target_ref, &mut package.files, target_roots);
             let state = collector.collect(target).with_context(|| {
                 format!(
                     "while attempting to collect target scope for {}",
@@ -66,7 +65,7 @@ pub(super) fn collect_target_states(
 
 struct TargetScopeCollector<'db> {
     target: TargetRef,
-    parse_db: &'db mut ParseDb,
+    parse_db: &'db mut FileDb,
     implicit_roots: &'db HashMap<String, ModuleRef>,
     active_files: HashSet<FileId>,
     def_map: DefMap,
@@ -76,7 +75,7 @@ struct TargetScopeCollector<'db> {
 impl<'db> TargetScopeCollector<'db> {
     fn new(
         target: TargetRef,
-        parse_db: &'db mut ParseDb,
+        parse_db: &'db mut FileDb,
         implicit_roots: &'db HashMap<String, ModuleRef>,
     ) -> Self {
         Self {
@@ -89,7 +88,7 @@ impl<'db> TargetScopeCollector<'db> {
         }
     }
 
-    fn collect(mut self, target: &TargetIndex) -> anyhow::Result<TargetState> {
+    fn collect(mut self, target: &Target) -> anyhow::Result<TargetState> {
         let root_module = self.alloc_module(
             None,
             None,

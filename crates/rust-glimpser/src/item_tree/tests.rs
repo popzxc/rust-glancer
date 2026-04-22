@@ -4,14 +4,47 @@
 
 use std::path::PathBuf;
 
-use crate::parse::item::{ItemKind, ItemNode, VisibilityLevel};
-use crate::test_fixture::{CrateFixture, fixture_crate};
+use crate::{
+    Project,
+    item_tree::{self, ItemKind, ItemNode, VisibilityLevel},
+    test_utils::{CrateFixture, fixture_crate},
+};
 
 fn flatten<'a>(items: &'a [ItemNode], output: &mut Vec<&'a ItemNode>) {
     for item in items {
         output.push(item);
         flatten(&item.children, output);
     }
+}
+
+fn only_package(project: &Project) -> (&crate::parse::Package, &item_tree::Package) {
+    let package = project
+        .packages()
+        .first()
+        .expect("fixture package should exist");
+    let package_trees = project
+        .item_tree
+        .package(0)
+        .expect("item tree package should exist");
+
+    (package, package_trees)
+}
+
+fn target_tree(
+    project: &Project,
+    expected_kind: cargo_metadata::TargetKind,
+) -> (&crate::parse::Target, &item_tree::Target) {
+    let (package, package_trees) = only_package(project);
+    let parse_target = package
+        .targets()
+        .iter()
+        .find(|target| target.cargo_target.is_kind(expected_kind.clone()))
+        .unwrap_or_else(|| panic!("fixture target {:?} should exist", expected_kind));
+    let tree_target = package_trees
+        .target(parse_target.id)
+        .expect("item tree target should exist");
+
+    (parse_target, tree_target)
 }
 
 fn moderate_fixture() -> CrateFixture {
@@ -101,8 +134,8 @@ pub fn decorate(input: &str) -> &str {
 #[test]
 fn parses_module_tree_and_impl_items() {
     let fixture = moderate_fixture();
-    let index = fixture.package_index_for_target("src/lib.rs");
-    let target = index.targets.first().expect("target should exist");
+    let project = fixture.project_for_target("src/lib.rs");
+    let (_, target) = target_tree(&project, cargo_metadata::TargetKind::Lib);
     let mut all_items = Vec::new();
     flatten(&target.root_items, &mut all_items);
 
@@ -124,8 +157,8 @@ fn parses_module_tree_and_impl_items() {
 #[test]
 fn keeps_macro_definitions_only() {
     let fixture = macro_fixture();
-    let index = fixture.package_index_for_target("src/lib.rs");
-    let target = index.targets.first().expect("target should exist");
+    let project = fixture.project_for_target("src/lib.rs");
+    let (_, target) = target_tree(&project, cargo_metadata::TargetKind::Lib);
     let mut all_items = Vec::new();
     flatten(&target.root_items, &mut all_items);
 
@@ -141,8 +174,8 @@ fn keeps_macro_definitions_only() {
 #[test]
 fn stores_offset_and_line_column_spans() {
     let fixture = simple_fixture();
-    let index = fixture.package_index_for_target("src/lib.rs");
-    let target = index.targets.first().expect("target should exist");
+    let project = fixture.project_for_target("src/lib.rs");
+    let (_, target) = target_tree(&project, cargo_metadata::TargetKind::Lib);
     let mut all_items = Vec::new();
     flatten(&target.root_items, &mut all_items);
 
@@ -162,8 +195,8 @@ fn stores_offset_and_line_column_spans() {
 #[test]
 fn shows_import_paths_for_use_items() {
     let fixture = moderate_fixture();
-    let index = fixture.package_index_for_target("src/main.rs");
-    let target = index.targets.first().expect("target should exist");
+    let project = fixture.project_for_target("src/main.rs");
+    let (_, target) = target_tree(&project, cargo_metadata::TargetKind::Bin);
     let mut all_items = Vec::new();
     flatten(&target.root_items, &mut all_items);
 
@@ -207,46 +240,26 @@ fn mock_target(name: &str, kind: &[&str], root_file: PathBuf) -> cargo_metadata:
 fn parses_shared_files_once_across_targets() {
     let fixture = simple_fixture();
     let root_file = fixture.path("src/lib.rs");
-    let index = fixture.package_index_with_targets(vec![
+    let project = fixture.project_with_targets(vec![
         mock_target("a", &["lib"], root_file.clone()),
         mock_target("b", &["bin"], root_file),
     ]);
+    let (package, _) = only_package(&project);
 
     assert_eq!(
-        index.db.parsed_files.len(),
+        package.files.parsed_files.len(),
         1,
         "shared file should be parsed once"
     );
-    assert_eq!(index.targets.len(), 2, "all targets should be indexed");
+    assert_eq!(package.targets().len(), 2, "all targets should be indexed");
 }
 
 #[test]
 fn builds_independent_trees_for_lib_and_bin_targets() {
     let fixture = moderate_fixture();
-    let index = fixture.package_index();
-
-    let lib_target = index
-        .targets
-        .iter()
-        .find(|target| {
-            target
-                .cargo_target
-                .kind
-                .iter()
-                .any(|kind| kind == &cargo_metadata::TargetKind::Lib)
-        })
-        .expect("lib target should exist");
-    let bin_target = index
-        .targets
-        .iter()
-        .find(|target| {
-            target
-                .cargo_target
-                .kind
-                .iter()
-                .any(|kind| kind == &cargo_metadata::TargetKind::Bin)
-        })
-        .expect("bin target should exist");
+    let project = fixture.project();
+    let (_, lib_target) = target_tree(&project, cargo_metadata::TargetKind::Lib);
+    let (_, bin_target) = target_tree(&project, cargo_metadata::TargetKind::Bin);
 
     let mut lib_items = Vec::new();
     flatten(&lib_target.root_items, &mut lib_items);

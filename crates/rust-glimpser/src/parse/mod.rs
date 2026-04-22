@@ -5,12 +5,14 @@ use std::{
 
 use anyhow::Context as _;
 
-use self::{def_map::populate_project_scopes, package::PackageIndex};
+pub(crate) use self::file::{FileDb, FileId};
+pub use self::{
+    package::Package,
+    target::{Target, TargetId},
+};
 
-pub(crate) mod def_map;
 pub(crate) mod error;
 pub(crate) mod file;
-pub(crate) mod item;
 pub(crate) mod package;
 pub(crate) mod span;
 pub(crate) mod target;
@@ -18,86 +20,96 @@ pub(crate) mod target;
 #[cfg(test)]
 mod tests;
 
-/// Analysis result for one Cargo metadata graph, including workspace members and dependencies.
+/// Parsed project metadata, packages, and source files.
 #[derive(Debug, Clone)]
-pub struct ProjectAnalysis {
-    /// Original metadata payload used to produce this analysis.
+pub struct ParseDb {
+    /// Original metadata payload used to produce this parse database.
     metadata: cargo_metadata::Metadata,
     /// Parsed packages.
-    packages: Vec<PackageIndex>,
-    /// PackageId -> Package
-    package_by_id: HashMap<cargo_metadata::PackageId, usize>, // TODO: maybe remove though probably we will need it.
+    packages: Vec<Package>,
+    /// PackageId -> package slot.
+    package_by_id: HashMap<cargo_metadata::PackageId, usize>,
 }
 
-impl ProjectAnalysis {
-    /// Builds analyses for workspace members only.
+impl ParseDb {
+    /// Builds parsed packages for one Cargo metadata graph.
     pub fn build(metadata: cargo_metadata::Metadata) -> anyhow::Result<Self> {
         let workspace_ids: HashSet<cargo_metadata::PackageId> = metadata
             .workspace_packages()
             .into_iter()
-            .map(|p| p.id.clone())
+            .map(|package| package.id.clone())
             .collect();
 
-        let mut slots = metadata
+        let packages = metadata
             .packages
             .clone()
             .into_iter()
-            .map(|package| -> anyhow::Result<PackageIndex> {
+            .map(|package| -> anyhow::Result<Package> {
                 let id = package.id.clone();
                 let is_workspace = workspace_ids.contains(&id);
 
-                Ok(PackageIndex::build(package, is_workspace).with_context(|| {
-                    format!("while attempting to build package analysis for {id}",)
-                })?)
+                Package::build(package, is_workspace)
+                    .with_context(|| format!("while attempting to build parsed package for {id}"))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let slot_by_package = slots
+        let package_by_id = packages
             .iter()
             .enumerate()
             .map(|(idx, package)| (package.id().clone(), idx))
             .collect::<HashMap<_, _>>();
 
-        populate_project_scopes(&metadata, &mut slots, &slot_by_package)
-            .context("while attempting to build target namespace maps")?;
-
         Ok(Self {
             metadata,
-            packages: slots,
-            package_by_id: slot_by_package,
+            packages,
+            package_by_id,
         })
     }
 
-    /// Returns analysis for a specific package id, if this project contains it.
-    pub fn package(&self, package_id: &cargo_metadata::PackageId) -> Option<&PackageIndex> {
+    /// Returns the parsed package for a specific package id, if present.
+    pub fn package(&self, package_id: &cargo_metadata::PackageId) -> Option<&Package> {
         let slot_index = self.package_by_id.get(package_id).copied()?;
         self.packages.get(slot_index)
     }
 
-    /// Iterates over analyzed packages that belong to the workspace members set.
-    pub fn workspace_packages(&self) -> impl Iterator<Item = &PackageIndex> + '_ {
+    /// Iterates over parsed packages that belong to the workspace members set.
+    pub fn workspace_packages(&self) -> impl Iterator<Item = &Package> + '_ {
         self.metadata
             .packages
             .iter()
-            .filter(|&p| self.metadata.workspace_members.contains(&p.id))
-            .map(|p| {
+            .filter(|package| self.metadata.workspace_members.contains(&package.id))
+            .map(|package| {
                 let slot = *self
                     .package_by_id
-                    .get(&p.id)
-                    .expect("Workspace member must be known");
+                    .get(&package.id)
+                    .expect("workspace member must be known");
                 &self.packages[slot]
             })
     }
 
-    /// Returns all analyzed packages.
-    #[cfg(test)]
-    pub(crate) fn packages(&self) -> &[PackageIndex] {
+    /// Returns all parsed packages.
+    pub(crate) fn packages(&self) -> &[Package] {
         &self.packages
+    }
+
+    /// Returns mutable parsed packages for later phases that enrich the same source data.
+    pub(crate) fn packages_mut(&mut self) -> &mut [Package] {
+        &mut self.packages
+    }
+
+    /// Returns the package slot lookup used by later phases.
+    pub(crate) fn package_by_id(&self) -> &HashMap<cargo_metadata::PackageId, usize> {
+        &self.package_by_id
+    }
+
+    /// Returns the original cargo metadata.
+    pub(crate) fn metadata(&self) -> &cargo_metadata::Metadata {
+        &self.metadata
     }
 }
 
-/// Renders a project-level report that includes all analyzed packages.
-impl fmt::Display for ProjectAnalysis {
+/// Renders a project-level report of parsed packages and diagnostics.
+impl fmt::Display for ParseDb {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let workspace_member_count = self.metadata.workspace_packages().len();
         let dependency_count = self.packages.len().saturating_sub(workspace_member_count);
@@ -112,9 +124,7 @@ impl fmt::Display for ProjectAnalysis {
 
         for package in &self.packages {
             writeln!(f)?;
-            writeln!(f, "Package {} [{}]", package.package_name(), package.id(),)?;
-            writeln!(f)?;
-            write!(f, "{}", package)?;
+            writeln!(f, "Package {} [{}]", package.package_name(), package.id())?;
         }
 
         Ok(())

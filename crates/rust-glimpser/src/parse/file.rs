@@ -10,14 +10,14 @@ use crate::parse::{
     span::{LineIndex, Span},
 };
 
-/// Stable identifier for a parsed source file inside `ParseDb`.
+/// Stable identifier for a parsed source file inside `FileDb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FileId(pub usize);
 
 /// Internal parsed representation used by the parser cache.
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedFile {
-    /// Numeric id assigned by `ParseDb`.
+    /// Numeric id assigned by `FileDb`.
     pub id: FileId, // TODO: maybe remove if not proven useful.
     /// Canonical filesystem path for this source file.
     pub path: PathBuf,
@@ -31,16 +31,16 @@ pub(crate) struct ParsedFile {
 
 /// Shared parse cache that owns filesystem-backed source files and syntax trees.
 ///
-/// `ParseDb` deduplicates parsing across targets, so shared modules are parsed once
+/// `FileDb` deduplicates parsing across targets, so shared modules are parsed once
 /// and reused during multiple target traversals.
 #[derive(Default, Debug, Clone)]
-pub(crate) struct ParseDb {
+pub(crate) struct FileDb {
     // TODO: `pub(crate)` only for tests, should be locked down
     pub(crate) parsed_files: Vec<ParsedFile>,
     file_ids_by_path: HashMap<PathBuf, FileId>,
 }
 
-impl ParseDb {
+impl FileDb {
     /// Returns an existing `FileId` for `file_path` or parses and caches the file.
     pub(crate) fn get_or_parse_file(&mut self, file_path: &Path) -> anyhow::Result<FileId> {
         let canonical_file_path = file_path

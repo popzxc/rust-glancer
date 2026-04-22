@@ -1,4 +1,4 @@
-use crate::parse::target::TargetId;
+use crate::parse::TargetId;
 
 /// Stable identifier of one module inside a target map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

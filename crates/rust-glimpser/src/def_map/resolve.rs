@@ -2,43 +2,44 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
-use crate::parse::{item::VisibilityLevel, package::PackageIndex};
+use crate::{
+    item_tree::VisibilityLevel,
+    parse::{self, package::Package},
+};
 
 use super::{
-    DefId, ModuleId, ModuleRef, ModuleScope, PackageSlot, ScopeBinding, ScopeEntry, TargetRef,
+    DefId, DefMapDb, ModuleId, ModuleRef, ModuleScope, PackageSlot, ScopeBinding, ScopeEntry,
+    TargetRef,
     collect::{TargetState, collect_target_states},
     data::{Namespace, namespace_for_local_kind},
 };
 
-pub(crate) fn populate_project_scopes(
-    metadata: &cargo_metadata::Metadata,
-    packages: &mut [PackageIndex],
-    package_by_id: &HashMap<cargo_metadata::PackageId, usize>,
-) -> anyhow::Result<()> {
-    let implicit_roots = build_implicit_roots(metadata, packages, package_by_id)
-        .context("while attempting to build implicit target roots")?;
+pub(crate) fn build_db(parse: &mut parse::ParseDb) -> anyhow::Result<DefMapDb> {
+    let implicit_roots =
+        build_implicit_roots(parse.metadata(), parse.packages(), parse.package_by_id())
+            .context("while attempting to build implicit target roots")?;
 
-    let mut target_states = collect_target_states(packages, &implicit_roots)
+    let mut target_states = collect_target_states(parse.packages_mut(), &implicit_roots)
         .context("while attempting to collect target definitions and imports")?;
 
     finalize_scopes(&mut target_states).context("while attempting to resolve target scopes")?;
 
-    for (package_slot, package) in packages.iter_mut().enumerate() {
-        for (target_slot, target) in package.targets.iter_mut().enumerate() {
-            let state = target_states
-                .get_mut(package_slot)
-                .and_then(|package_states| package_states.get_mut(target_slot))
-                .expect("target state should exist for every parsed target");
-            target.def_map = std::mem::take(&mut state.def_map);
-        }
-    }
+    let packages = target_states
+        .into_iter()
+        .map(|package_states| super::Package {
+            targets: package_states
+                .into_iter()
+                .map(|state| state.def_map)
+                .collect::<Vec<_>>(),
+        })
+        .collect::<Vec<_>>();
 
-    Ok(())
+    Ok(DefMapDb { packages })
 }
 
 fn build_implicit_roots(
     metadata: &cargo_metadata::Metadata,
-    packages: &[PackageIndex],
+    packages: &[Package],
     package_by_id: &HashMap<cargo_metadata::PackageId, usize>,
 ) -> anyhow::Result<Vec<Vec<HashMap<String, ModuleRef>>>> {
     let lib_targets = packages

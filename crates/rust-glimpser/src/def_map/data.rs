@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use crate::parse::{
-    file::FileId,
-    item::{ItemKind, VisibilityLevel},
-    span::Span,
+use crate::{
+    item_tree::{ItemKind, VisibilityLevel},
+    parse::{file::FileId, span::Span},
 };
 
 use super::{DefId, ImportData, ImportId, LocalDefId, ModuleId};

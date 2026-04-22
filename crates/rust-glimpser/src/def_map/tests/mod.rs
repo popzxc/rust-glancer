@@ -1,16 +1,12 @@
-use expect_test::{Expect, expect};
+mod utils;
 
-use crate::test_fixture::fixture_crate;
+use expect_test::expect;
 
-fn check_project_def_map(fixture: &str, expect: Expect) {
-    let actual = fixture_crate!(fixture).analyze().def_map_dump();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
-}
+use crate::test_utils::fixture_crate;
 
 #[test]
 fn dumps_workspace_resolution_flow() {
-    check_project_def_map(
+    utils::check_project_def_map(
         r#"
 //- /Cargo.toml
 [workspace]
