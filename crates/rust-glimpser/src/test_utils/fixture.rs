@@ -93,51 +93,6 @@ impl CrateFixture {
         Project::build(self.metadata()).expect("fixture project should build")
     }
 
-    /// Builds the project pipeline after keeping only one target root.
-    pub(crate) fn project_for_target(&self, relative_path: &str) -> Project {
-        let root_file = self
-            .path(relative_path)
-            .canonicalize()
-            .expect("fixture target path should resolve");
-
-        self.project_matching_targets(|target| {
-            target
-                .src_path
-                .as_std_path()
-                .canonicalize()
-                .expect("metadata target path should resolve")
-                == root_file
-        })
-    }
-
-    /// Builds the project pipeline after filtering the manifest target set.
-    pub(crate) fn project_matching_targets(
-        &self,
-        keep_target: impl FnMut(&cargo_metadata::Target) -> bool,
-    ) -> Project {
-        let mut package = self.package();
-        package.targets.retain(keep_target);
-
-        self.project_with_package(package)
-    }
-
-    /// Builds the project pipeline with a caller-provided target list.
-    pub(crate) fn project_with_targets(&self, targets: Vec<cargo_metadata::Target>) -> Project {
-        let mut package = self.package();
-        package.targets = targets;
-
-        self.project_with_package(package)
-    }
-
-    fn project_with_package(&self, package: cargo_metadata::Package) -> Project {
-        let mut metadata = self.metadata();
-        if let Some(metadata_package) = metadata.packages.iter_mut().find(|it| it.id == package.id)
-        {
-            *metadata_package = package;
-        }
-        Project::build(metadata).expect("fixture project should build")
-    }
-
     fn manifest_path(&self) -> PathBuf {
         self.path("Cargo.toml")
     }

@@ -65,14 +65,6 @@ impl Package {
     pub(crate) fn targets(&self) -> &[Target] {
         &self.targets
     }
-
-    /// Returns one target tree by target id.
-    #[cfg(test)]
-    pub(crate) fn target(&self, target_id: TargetId) -> Option<&Target> {
-        self.targets
-            .iter()
-            .find(|target| target.target == target_id)
-    }
 }
 
 /// Target-local lowered item tree rooted at one target entrypoint.

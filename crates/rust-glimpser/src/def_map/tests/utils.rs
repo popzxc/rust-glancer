@@ -5,7 +5,7 @@ use crate::{
     def_map::{DefId, ModuleId, ScopeBinding, ScopeEntry, TargetRef},
     item_tree::VisibilityLevel,
     parse::{Package, Target},
-    test_utils::fixture_crate,
+    test_utils::{TestTargetExt, fixture_crate},
 };
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
@@ -24,12 +24,12 @@ fn render_project_def_map(project: &Project) -> String {
             let mut targets = package.targets().iter().collect::<Vec<_>>();
             targets.sort_by(|left, right| {
                 (
-                    target_kind_sort_order(left),
+                    left.cargo_target.sort_order(),
                     left.cargo_target.name.as_str(),
                     left.cargo_target.src_path.as_str(),
                 )
                     .cmp(&(
-                        target_kind_sort_order(right),
+                        right.cargo_target.sort_order(),
                         right.cargo_target.name.as_str(),
                         right.cargo_target.src_path.as_str(),
                     ))
@@ -86,7 +86,7 @@ fn render_target_def_map(
         format_args!(
             "{} [{}]\n",
             package.package_name(),
-            target_kind_label(target)
+            target.cargo_target.kind_label()
         ),
     )
     .expect("string writes should not fail");
@@ -224,7 +224,7 @@ impl<'a> BindingOrigin<'a> {
         format!(
             "{}[{}]::{}",
             package.package_name(),
-            target_kind_label(target),
+            target.cargo_target.kind_label(),
             module_path(self.project, module_ref.target, module_ref.module),
         )
     }
@@ -254,65 +254,5 @@ fn module_path(project: &Project, target_ref: TargetRef, module_id: ModuleId) ->
             format!("{parent_path}::{name}")
         }
         None => "crate".to_string(),
-    }
-}
-
-fn target_kind_label(target: &Target) -> &'static str {
-    if target.cargo_target.is_kind(cargo_metadata::TargetKind::Lib) {
-        "lib"
-    } else if target.cargo_target.is_kind(cargo_metadata::TargetKind::Bin) {
-        "bin"
-    } else if target
-        .cargo_target
-        .is_kind(cargo_metadata::TargetKind::Example)
-    {
-        "example"
-    } else if target
-        .cargo_target
-        .is_kind(cargo_metadata::TargetKind::Test)
-    {
-        "test"
-    } else if target
-        .cargo_target
-        .is_kind(cargo_metadata::TargetKind::Bench)
-    {
-        "bench"
-    } else if target
-        .cargo_target
-        .is_kind(cargo_metadata::TargetKind::CustomBuild)
-    {
-        "custom-build"
-    } else {
-        "unknown"
-    }
-}
-
-fn target_kind_sort_order(target: &Target) -> u8 {
-    if target.cargo_target.is_kind(cargo_metadata::TargetKind::Lib) {
-        0
-    } else if target.cargo_target.is_kind(cargo_metadata::TargetKind::Bin) {
-        1
-    } else if target
-        .cargo_target
-        .is_kind(cargo_metadata::TargetKind::Example)
-    {
-        2
-    } else if target
-        .cargo_target
-        .is_kind(cargo_metadata::TargetKind::Test)
-    {
-        3
-    } else if target
-        .cargo_target
-        .is_kind(cargo_metadata::TargetKind::Bench)
-    {
-        4
-    } else if target
-        .cargo_target
-        .is_kind(cargo_metadata::TargetKind::CustomBuild)
-    {
-        5
-    } else {
-        6
     }
 }
