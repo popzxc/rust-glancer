@@ -33,9 +33,6 @@ pub struct ItemNode {
     pub file_id: FileId,
     /// Source span of the declaration.
     pub span: Span,
-    /// Direct children
-    // Note: currently used for modules and impl blocks.
-    pub children: Vec<ItemNode>,
 }
 
 impl ItemNode {
@@ -52,7 +49,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -65,7 +61,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -78,7 +73,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -95,7 +89,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -114,7 +107,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -127,13 +119,14 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
-    /// Builds an item node for an `impl` block and collects its associated items.
+    /// Builds an item node for an `impl` block.
+    ///
+    /// Associated items are intentionally not lowered here yet; they are not module-scope
+    /// definitions, and should become a separate item-tree concept once we need them.
     pub(crate) fn new_impl_block(item: ast::Impl, file_id: FileId, line_index: &LineIndex) -> Self {
-        let children = Self::collect_impl_items(&item, file_id, line_index);
         Self::from_parts(
             ItemKind::Impl,
             None,
@@ -141,7 +134,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            children,
         )
     }
 
@@ -158,7 +150,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -175,15 +166,13 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
-    /// Builds an item node for a module declaration with already-collected children.
+    /// Builds an item node for a module declaration.
     pub(crate) fn new_module(
         item: ast::Module,
         module_item: ModuleItem,
-        children: Vec<ItemNode>,
         file_id: FileId,
         line_index: &LineIndex,
     ) -> Self {
@@ -194,7 +183,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            children,
         )
     }
 
@@ -207,7 +195,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -220,7 +207,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -233,7 +219,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -250,7 +235,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -263,7 +247,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -286,7 +269,6 @@ impl ItemNode {
             item.syntax().text_range(),
             file_id,
             line_index,
-            Vec::new(),
         )
     }
 
@@ -298,7 +280,6 @@ impl ItemNode {
         text_range: TextRange,
         file_id: FileId,
         line_index: &LineIndex,
-        children: Vec<ItemNode>,
     ) -> Self {
         Self {
             kind,
@@ -306,77 +287,6 @@ impl ItemNode {
             visibility,
             file_id,
             span: Span::from_text_range(text_range, line_index),
-            children,
         }
-    }
-
-    /// Collects associated items from an `impl` block as child item nodes.
-    fn collect_impl_items(
-        item: &ast::Impl,
-        file_id: FileId,
-        line_index: &LineIndex,
-    ) -> Vec<ItemNode> {
-        let Some(assoc_item_list) = item.assoc_item_list() else {
-            return Vec::new();
-        };
-
-        let mut children = Vec::new();
-        for assoc_item in assoc_item_list.assoc_items() {
-            let node = match assoc_item {
-                ast::AssocItem::Const(item) => {
-                    Some(Self::new_assoc_const(item, file_id, line_index))
-                }
-                ast::AssocItem::Fn(item) => Some(Self::new_assoc_fn(item, file_id, line_index)),
-                ast::AssocItem::TypeAlias(item) => {
-                    Some(Self::new_assoc_type_alias(item, file_id, line_index))
-                }
-                ast::AssocItem::MacroCall(_) => None,
-            };
-
-            if let Some(node) = node {
-                children.push(node);
-            }
-        }
-
-        children
-    }
-
-    /// Builds a child item node for an associated `const` declaration.
-    fn new_assoc_const(item: ast::Const, file_id: FileId, line_index: &LineIndex) -> Self {
-        Self::from_parts(
-            ItemKind::AssociatedConst,
-            item.name().map(|name| name.text().to_string()),
-            VisibilityLevel::from_ast(item.visibility()),
-            item.syntax().text_range(),
-            file_id,
-            line_index,
-            Vec::new(),
-        )
-    }
-
-    /// Builds a child item node for an associated function declaration.
-    fn new_assoc_fn(item: ast::Fn, file_id: FileId, line_index: &LineIndex) -> Self {
-        Self::from_parts(
-            ItemKind::AssociatedFunction,
-            item.name().map(|name| name.text().to_string()),
-            VisibilityLevel::from_ast(item.visibility()),
-            item.syntax().text_range(),
-            file_id,
-            line_index,
-            Vec::new(),
-        )
-    }
-
-    /// Builds a child item node for an associated type alias declaration.
-    fn new_assoc_type_alias(item: ast::TypeAlias, file_id: FileId, line_index: &LineIndex) -> Self {
-        Self::from_parts(
-            ItemKind::AssociatedTypeAlias,
-            item.name().map(|name| name.text().to_string()),
-            VisibilityLevel::from_ast(item.visibility()),
-            item.syntax().text_range(),
-            file_id,
-            line_index,
-            Vec::new(),
-        )
     }
 }

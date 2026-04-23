@@ -98,7 +98,7 @@ fn parses_shared_files_once_across_targets() {
         .expect("fixture package should exist");
 
     assert_eq!(
-        package.files.parsed_files.len(),
+        package.files.parsed_files().len(),
         1,
         "shared file should be parsed once"
     );

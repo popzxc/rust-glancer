@@ -5,7 +5,10 @@ mod import;
 mod resolve;
 
 pub use self::{
-    data::{DefMap, LocalDefData, ModuleData, ModuleOrigin, ModuleScope, ScopeBinding, ScopeEntry},
+    data::{
+        DefMap, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin, ModuleScope, ScopeBinding,
+        ScopeEntry,
+    },
     ids::{DefId, ImportId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, PackageSlot, TargetRef},
     import::{ImportBinding, ImportData, ImportKind, ImportPath, PathSegment},
 };

@@ -17,8 +17,6 @@ pub struct FileId(pub usize);
 /// Internal parsed representation used by the parser cache.
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedFile {
-    /// Numeric id assigned by `FileDb`.
-    pub id: FileId, // TODO: maybe remove if not proven useful.
     /// Canonical filesystem path for this source file.
     pub path: PathBuf,
     /// Parse diagnostics produced while parsing the file.
@@ -35,8 +33,7 @@ pub(crate) struct ParsedFile {
 /// and reused during multiple target traversals.
 #[derive(Default, Debug, Clone)]
 pub(crate) struct FileDb {
-    // TODO: `pub(crate)` only for tests, should be locked down
-    pub(crate) parsed_files: Vec<ParsedFile>,
+    parsed_files: Vec<ParsedFile>,
     file_ids_by_path: HashMap<PathBuf, FileId>,
 }
 
@@ -69,7 +66,6 @@ impl FileDb {
             .collect();
 
         self.parsed_files.push(ParsedFile {
-            id: file_id,
             path: canonical_file_path.clone(),
             parse_errors,
             line_index,
@@ -83,6 +79,11 @@ impl FileDb {
     /// Returns the cached parsed file for a previously known `FileId`.
     pub(crate) fn parsed_file(&self, file_id: FileId) -> Option<&ParsedFile> {
         self.parsed_files.get(file_id.0)
+    }
+
+    /// Returns all cached parsed files.
+    pub(crate) fn parsed_files(&self) -> &[ParsedFile] {
+        &self.parsed_files
     }
 
     /// Returns the canonical path associated with `file_id`.

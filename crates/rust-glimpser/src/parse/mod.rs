@@ -66,12 +66,6 @@ impl ParseDb {
         })
     }
 
-    /// Returns the parsed package for a specific package id, if present.
-    pub fn package(&self, package_id: &cargo_metadata::PackageId) -> Option<&Package> {
-        let slot_index = self.package_by_id.get(package_id).copied()?;
-        self.packages.get(slot_index)
-    }
-
     /// Iterates over parsed packages that belong to the workspace members set.
     pub fn workspace_packages(&self) -> impl Iterator<Item = &Package> + '_ {
         self.metadata

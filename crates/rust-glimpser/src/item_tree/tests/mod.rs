@@ -47,20 +47,29 @@ fn main() {
         expect![[r#"
             package moderate_crate
 
-            target moderate_crate [lib]
-            - pub module cli [out_of_line cli.rs]
-              - pub fn run
-            - pub module model [out_of_line model.rs]
-              - pub struct Model
-              - impl
-                - pub associated_fn new
+            targets
+            - moderate_crate [lib] -> lib.rs
 
-            target moderate_crate [bin]
+            - moderate_crate [bin] -> main.rs
+
+            files
+            file cli.rs
+            - pub fn run
+
+            file lib.rs
+            - pub module cli [out_of_line cli.rs]
+            - pub module model [out_of_line model.rs]
+
+            file main.rs
             - use std::path::PathBuf
               - import named std::path::PathBuf
             - use moderate_crate::cli::run
               - import named moderate_crate::cli::run
             - fn main
+
+            file model.rs
+            - pub struct Model
+            - impl
         "#]],
     );
 }
@@ -90,7 +99,11 @@ use ::bar::foo;
         expect![[r#"
             package import_crate
 
-            target import_crate [lib]
+            targets
+            - import_crate [lib] -> lib.rs
+
+            files
+            file lib.rs
             - pub module bar [inline]
               - pub module foo [inline]
             - extern_crate self [self as current]
@@ -132,7 +145,11 @@ pub fn decorate(input: &str) -> &str {
         expect![[r#"
             package complex_crate
 
-            target complex_crate [lib]
+            targets
+            - complex_crate [lib] -> lib.rs
+
+            files
+            file lib.rs
             - macro_definition label_result
             - pub fn decorate
         "#]],
@@ -157,7 +174,11 @@ pub fn add_two_numbers(left: i32, right: i32) -> i32 {
         expect![[r#"
             package simple_crate
 
-            target simple_crate [lib]
+            targets
+            - simple_crate [lib] -> lib.rs
+
+            files
+            file lib.rs
             - pub fn add_two_numbers [lib.rs 1:1-3:2 (0..73)]
         "#]],
     );

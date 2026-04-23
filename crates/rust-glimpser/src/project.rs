@@ -6,7 +6,7 @@ use anyhow::Context as _;
 use crate::def_map::{DefMap, TargetRef};
 use crate::{
     def_map::DefMapDb,
-    item_tree::{ItemNode, ItemTreeDb},
+    item_tree::{ItemKind, ItemNode, ItemTreeDb, ModuleSource},
     parse::{self, ParseDb},
 };
 
@@ -73,8 +73,12 @@ impl Project {
             item.span.text.end,
         )?;
 
-        for child in &item.children {
-            self.fmt_item(f, package, child, depth + 1)?;
+        if let ItemKind::Module(module) = &item.kind {
+            if let ModuleSource::Inline { items } = &module.source {
+                for child in items {
+                    self.fmt_item(f, package, child, depth + 1)?;
+                }
+            }
         }
 
         Ok(())
@@ -106,14 +110,9 @@ impl fmt::Display for Project {
                 continue;
             };
 
-            for target in package_trees.targets() {
+            for target in package_trees.target_roots() {
                 let root_path = package
-                    .file_path(
-                        package
-                            .target(target.target)
-                            .expect("target should exist while rendering project")
-                            .root_file,
-                    )
+                    .file_path(target.root_file)
                     .map(|path| path.display().to_string())
                     .unwrap_or_else(|| "<unknown>".to_string());
                 let parsed_target = package
@@ -131,20 +130,29 @@ impl fmt::Display for Project {
                     "Target {} ({kinds}) | root {}",
                     parsed_target.cargo_target.name, root_path
                 )?;
-                for item in &target.root_items {
+            }
+
+            for file_tree in package_trees.files() {
+                let file_path = package
+                    .file_path(file_tree.file)
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                writeln!(f)?;
+                writeln!(f, "File {file_path}")?;
+                for item in &file_tree.items {
                     self.fmt_item(f, package, item, 0)?;
                 }
             }
 
             let has_errors = package
                 .files
-                .parsed_files
+                .parsed_files()
                 .iter()
                 .any(|file| !file.parse_errors.is_empty());
             if has_errors {
                 writeln!(f)?;
                 writeln!(f, "Parser errors:")?;
-                for file in &package.files.parsed_files {
+                for file in package.files.parsed_files() {
                     for parse_error in &file.parse_errors {
                         writeln!(
                             f,

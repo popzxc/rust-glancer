@@ -32,8 +32,8 @@ fn render_project_item_tree(project: &Project, include_spans: bool) -> String {
                 .item_tree
                 .package(package_slot)
                 .expect("package item trees should exist while rendering snapshot");
-            let mut targets = item_trees.targets().iter().collect::<Vec<_>>();
-            targets.sort_by(|left, right| {
+            let mut target_roots = item_trees.target_roots().iter().collect::<Vec<_>>();
+            target_roots.sort_by(|left, right| {
                 let left_target = package
                     .target(left.target)
                     .expect("parsed target should exist while sorting");
@@ -53,40 +53,78 @@ fn render_project_item_tree(project: &Project, include_spans: bool) -> String {
                     ))
             });
 
-            let target_dumps = targets
+            let target_dumps = target_roots
                 .into_iter()
-                .map(|target_tree| {
+                .map(|target_root| {
                     let target = package
-                        .target(target_tree.target)
+                        .target(target_root.target)
                         .expect("parsed target should exist while rendering snapshot");
-                    render_target_item_tree(package, target, &target_tree.root_items, include_spans)
+                    render_target_root(package, target, target_root.root_file)
                         .trim_end()
                         .to_string()
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");
 
-            format!("package {}\n\n{target_dumps}", package.package_name())
+            let mut files = item_trees.files().collect::<Vec<_>>();
+            files.sort_by(|left, right| {
+                let left_path = package
+                    .file_path(left.file)
+                    .expect("item-tree file should exist while sorting");
+                let right_path = package
+                    .file_path(right.file)
+                    .expect("item-tree file should exist while sorting");
+                left_path.cmp(right_path)
+            });
+
+            let file_dumps = files
+                .into_iter()
+                .map(|file_tree| {
+                    render_file_item_tree(package, file_tree.file, &file_tree.items, include_spans)
+                        .trim_end()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+
+            format!(
+                "package {}\n\ntargets\n{target_dumps}\n\nfiles\n{file_dumps}",
+                package.package_name()
+            )
         })
         .collect::<Vec<_>>();
 
     package_dumps.join("\n\n")
 }
 
-fn render_target_item_tree(
+fn render_target_root(
     package: &Package,
     target: &Target,
+    root_file: crate::parse::FileId,
+) -> String {
+    let mut dump = String::new();
+    let root_label = file_label(package, root_file);
+    writeln!(
+        &mut dump,
+        "- {} [{}] -> {}",
+        target.cargo_target.name,
+        target.cargo_target.kind_label(),
+        root_label
+    )
+    .expect("string writes should not fail");
+
+    dump
+}
+
+fn render_file_item_tree(
+    package: &Package,
+    file_id: crate::parse::FileId,
     items: &[ItemNode],
     include_spans: bool,
 ) -> String {
     let mut dump = String::new();
-    writeln!(
-        &mut dump,
-        "target {} [{}]",
-        target.cargo_target.name,
-        target.cargo_target.kind_label()
-    )
-    .expect("string writes should not fail");
+    writeln!(&mut dump, "file {}", file_label(package, file_id))
+        .expect("string writes should not fail");
 
     for item in items {
         render_item(package, item, 0, include_spans, &mut dump);
@@ -129,16 +167,9 @@ fn render_item(
     }
 
     if include_spans {
-        let file_path = package
-            .file_path(item.file_id)
-            .expect("item file should exist while rendering spans");
-        let file_label = file_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("<unknown>");
         line.push_str(&format!(
             " [{} {}:{}-{}:{} ({}..{})]",
-            file_label,
+            file_label(package, item.file_id),
             item.span.line_column.start.line + 1,
             item.span.line_column.start.column + 1,
             item.span.line_column.end.line + 1,
@@ -168,28 +199,34 @@ fn render_item(
         }
     }
 
-    for child in &item.children {
-        render_item(package, child, depth + 1, include_spans, dump);
+    if let ItemKind::Module(module) = &item.kind {
+        if let ModuleSource::Inline { items } = &module.source {
+            for child in items {
+                render_item(package, child, depth + 1, include_spans, dump);
+            }
+        }
     }
 }
 
 fn render_module_source(package: &Package, source: &ModuleSource) -> String {
     match source {
-        ModuleSource::Inline => "inline".to_string(),
+        ModuleSource::Inline { .. } => "inline".to_string(),
         ModuleSource::OutOfLine {
             definition_file: Some(file_id),
         } => {
-            let file_path = package
-                .file_path(*file_id)
-                .expect("out-of-line module file should exist while rendering snapshot");
-            let file_label = file_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("<unknown>");
-            format!("out_of_line {file_label}")
+            format!("out_of_line {}", file_label(package, *file_id))
         }
         ModuleSource::OutOfLine {
             definition_file: None,
         } => "out_of_line <missing>".to_string(),
     }
+}
+
+fn file_label(package: &Package, file_id: crate::parse::FileId) -> String {
+    package
+        .file_path(file_id)
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or("<unknown>")
+        .to_string()
 }

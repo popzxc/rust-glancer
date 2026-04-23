@@ -4,16 +4,16 @@ use anyhow::Context as _;
 
 use crate::{
     item_tree::{
-        ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ModuleSource, UseImport, UseItem,
+        ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ModuleSource, Package as ItemTreePackage,
+        UseImport, UseItem,
     },
     parse::{Package, Target},
 };
 
 use super::{
     DefId, DefMap, ImportBinding, ImportData, ImportId, ImportKind, ImportPath, LocalDefData,
-    LocalDefId, LocalDefRef, ModuleData, ModuleId, ModuleOrigin, ModuleRef, ModuleScope,
-    PackageSlot, ScopeBinding, TargetRef,
-    data::{Namespace, namespace_for_local_kind},
+    LocalDefId, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleOrigin, ModuleRef,
+    ModuleScope, PackageSlot, ScopeBinding, TargetRef, data::Namespace,
 };
 
 pub(super) struct TargetState {
@@ -49,15 +49,22 @@ pub(super) fn collect_target_states(
                 .get(package_slot)
                 .and_then(|package_roots| package_roots.get(target.id.0))
                 .expect("implicit roots should exist for every parsed target");
-            let target_tree = item_tree_package.target(target.id).with_context(|| {
+            let target_root = item_tree_package.target_root(target.id).with_context(|| {
                 format!(
-                    "while attempting to fetch item tree target for {}",
+                    "while attempting to fetch item tree target root for {}",
                     target.cargo_target.name
                 )
             })?;
 
             let collector = TargetScopeCollector::new(target_ref, target_roots);
-            let state = collector.collect(target, &target_tree.root_items);
+            let state = collector
+                .collect(item_tree_package, target, target_root.root_file)
+                .with_context(|| {
+                    format!(
+                        "while attempting to collect target scope for {}",
+                        target.cargo_target.name
+                    )
+                })?;
             package_states.push(state);
         }
 
@@ -84,7 +91,12 @@ impl<'db> TargetScopeCollector<'db> {
         }
     }
 
-    fn collect(mut self, target: &Target, root_items: &[ItemNode]) -> TargetState {
+    fn collect(
+        mut self,
+        item_tree: &ItemTreePackage,
+        target: &Target,
+        root_file: crate::parse::FileId,
+    ) -> anyhow::Result<TargetState> {
         let root_module = self.alloc_module(
             None,
             None,
@@ -94,15 +106,22 @@ impl<'db> TargetScopeCollector<'db> {
         );
         self.def_map.set_root_module(root_module);
 
-        self.collect_items(root_module, root_items);
+        let root_file_tree = item_tree.file(root_file).with_context(|| {
+            format!(
+                "while attempting to fetch root item tree for {:?}",
+                root_file
+            )
+        })?;
+        self.collect_items(item_tree, root_module, &root_file_tree.items)
+            .context("while attempting to collect root file items")?;
 
-        TargetState {
+        Ok(TargetState {
             target: self.target,
             target_name: target.cargo_target.name.clone(),
             def_map: self.def_map,
             base_scopes: self.base_scopes,
             implicit_roots: self.implicit_roots.clone(),
-        }
+        })
     }
 
     fn alloc_module(
@@ -125,14 +144,25 @@ impl<'db> TargetScopeCollector<'db> {
         module_id
     }
 
-    fn collect_items(&mut self, module_id: ModuleId, items: &[ItemNode]) {
+    fn collect_items(
+        &mut self,
+        item_tree: &ItemTreePackage,
+        module_id: ModuleId,
+        items: &[ItemNode],
+    ) -> anyhow::Result<()> {
         for item in items {
             match &item.kind {
                 ItemKind::ExternCrate(extern_crate) => {
                     self.collect_extern_crate(module_id, item, extern_crate);
                 }
                 ItemKind::Module(module_item) => {
-                    self.collect_module(module_id, item, &module_item.source);
+                    self.collect_module(item_tree, module_id, item, &module_item.source)
+                        .with_context(|| {
+                            format!(
+                                "while attempting to collect module {}",
+                                item.name.as_deref().unwrap_or("<unnamed>")
+                            )
+                        })?;
                 }
                 ItemKind::Use(use_item) => {
                     self.collect_use(module_id, item, use_item);
@@ -140,13 +170,15 @@ impl<'db> TargetScopeCollector<'db> {
                 _ => self.collect_local_def(module_id, item),
             }
         }
+
+        Ok(())
     }
 
     fn collect_local_def(&mut self, module_id: ModuleId, item: &ItemNode) {
-        let kind = item.kind.tag();
-        let Some(namespace) = namespace_for_local_kind(kind) else {
+        let Some(kind) = LocalDefKind::from_item_tag(item.kind.tag()) else {
             return;
         };
+        let namespace = kind.namespace();
         let Some(name) = item.name.clone() else {
             return;
         };
@@ -182,13 +214,19 @@ impl<'db> TargetScopeCollector<'db> {
             );
     }
 
-    fn collect_module(&mut self, parent_module: ModuleId, item: &ItemNode, source: &ModuleSource) {
+    fn collect_module(
+        &mut self,
+        item_tree: &ItemTreePackage,
+        parent_module: ModuleId,
+        item: &ItemNode,
+        source: &ModuleSource,
+    ) -> anyhow::Result<()> {
         let Some(module_name) = item.name.clone() else {
-            return;
+            return Ok(());
         };
 
         let origin = match source {
-            ModuleSource::Inline => ModuleOrigin::Inline {
+            ModuleSource::Inline { .. } => ModuleOrigin::Inline {
                 declaration_file: item.file_id,
                 declaration_span: item.span,
             },
@@ -206,7 +244,30 @@ impl<'db> TargetScopeCollector<'db> {
             &module_name,
             item.visibility.clone(),
         );
-        self.collect_items(child_module, &item.children);
+
+        match source {
+            ModuleSource::Inline { items } => {
+                self.collect_items(item_tree, child_module, items)
+                    .context("while attempting to collect inline module items")?;
+            }
+            ModuleSource::OutOfLine {
+                definition_file: Some(definition_file),
+            } => {
+                let file_tree = item_tree.file(*definition_file).with_context(|| {
+                    format!(
+                        "while attempting to fetch out-of-line module item tree for {:?}",
+                        definition_file
+                    )
+                })?;
+                self.collect_items(item_tree, child_module, &file_tree.items)
+                    .context("while attempting to collect out-of-line module items")?;
+            }
+            ModuleSource::OutOfLine {
+                definition_file: None,
+            } => {}
+        }
+
+        Ok(())
     }
 
     fn link_child_module(

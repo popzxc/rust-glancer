@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
 use crate::{
     item_tree::{ItemTag, VisibilityLevel},
@@ -66,10 +66,24 @@ pub enum ModuleOrigin {
 pub struct LocalDefData {
     pub module: ModuleId,
     pub name: String,
-    pub kind: ItemTag,
+    pub kind: LocalDefKind,
     pub visibility: VisibilityLevel,
     pub file_id: FileId,
     pub span: Span,
+}
+
+/// Module-scope definition kind that participates in def-map namespaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalDefKind {
+    Const,
+    Enum,
+    Function,
+    MacroDefinition,
+    Static,
+    Struct,
+    Trait,
+    TypeAlias,
+    Union,
 }
 
 /// Module scope with separate namespaces stored under one textual name map.
@@ -174,21 +188,51 @@ pub(super) enum Namespace {
     Macros,
 }
 
-pub(super) fn namespace_for_local_kind(kind: ItemTag) -> Option<Namespace> {
-    match kind {
-        ItemTag::Const | ItemTag::Function | ItemTag::Static => Some(Namespace::Values),
-        ItemTag::Enum | ItemTag::Struct | ItemTag::Trait | ItemTag::TypeAlias | ItemTag::Union => {
-            Some(Namespace::Types)
+impl LocalDefKind {
+    pub(super) fn from_item_tag(tag: ItemTag) -> Option<Self> {
+        match tag {
+            ItemTag::Const => Some(Self::Const),
+            ItemTag::Enum => Some(Self::Enum),
+            ItemTag::Function => Some(Self::Function),
+            ItemTag::MacroDefinition => Some(Self::MacroDefinition),
+            ItemTag::Static => Some(Self::Static),
+            ItemTag::Struct => Some(Self::Struct),
+            ItemTag::Trait => Some(Self::Trait),
+            ItemTag::TypeAlias => Some(Self::TypeAlias),
+            ItemTag::Union => Some(Self::Union),
+            ItemTag::AsmExpr
+            | ItemTag::ExternBlock
+            | ItemTag::ExternCrate
+            | ItemTag::Impl
+            | ItemTag::Module
+            | ItemTag::Use => None,
         }
-        ItemTag::MacroDefinition => Some(Namespace::Macros),
-        ItemTag::AsmExpr
-        | ItemTag::AssociatedConst
-        | ItemTag::AssociatedFunction
-        | ItemTag::AssociatedTypeAlias
-        | ItemTag::ExternBlock
-        | ItemTag::ExternCrate
-        | ItemTag::Impl
-        | ItemTag::Module
-        | ItemTag::Use => None,
+    }
+
+    pub(super) fn namespace(self) -> Namespace {
+        match self {
+            Self::Const | Self::Function | Self::Static => Namespace::Values,
+            Self::Enum | Self::Struct | Self::Trait | Self::TypeAlias | Self::Union => {
+                Namespace::Types
+            }
+            Self::MacroDefinition => Namespace::Macros,
+        }
+    }
+}
+
+impl fmt::Display for LocalDefKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Const => "const",
+            Self::Enum => "enum",
+            Self::Function => "fn",
+            Self::MacroDefinition => "macro_definition",
+            Self::Static => "static",
+            Self::Struct => "struct",
+            Self::Trait => "trait",
+            Self::TypeAlias => "type_alias",
+            Self::Union => "union",
+        };
+        write!(f, "{value}")
     }
 }

@@ -11,7 +11,7 @@ use super::{
     DefId, DefMapDb, ModuleId, ModuleRef, ModuleScope, PackageSlot, ScopeBinding, ScopeEntry,
     TargetRef,
     collect::{TargetState, collect_target_states},
-    data::{Namespace, namespace_for_local_kind},
+    data::Namespace,
 };
 
 pub(crate) fn build_db(parse: &parse::ParseDb, item_tree: &ItemTreeDb) -> anyhow::Result<DefMapDb> {
@@ -537,7 +537,7 @@ fn namespace_for_def(states: &[Vec<TargetState>], def: DefId) -> Option<Namespac
                 .def_map
                 .local_defs
                 .get(local_def_ref.local_def.0)?;
-            namespace_for_local_kind(local_def.kind)
+            Some(local_def.kind.namespace())
         }
     }
 }

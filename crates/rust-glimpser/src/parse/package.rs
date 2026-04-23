@@ -11,8 +11,6 @@ pub struct Package {
     package_name: String,
     /// All parsed files known to this package.
     pub(crate) files: FileDb,
-    /// Whether the package is a part of the workspace being analyzed.
-    is_workspace: bool,
     /// Cargo metadata for the package.
     metadata: cargo_metadata::Package,
     /// Parsed targets rooted in this package.
@@ -44,11 +42,6 @@ impl Package {
     /// Returns one parsed target by stable id.
     pub(crate) fn target(&self, target_id: TargetId) -> Option<&Target> {
         self.targets.iter().find(|target| target.id == target_id)
-    }
-
-    /// Returns whether this package belongs to the analyzed workspace.
-    pub fn is_workspace(&self) -> bool {
-        self.is_workspace
     }
 
     /// Parses package targets and their root files.
@@ -92,7 +85,6 @@ impl Package {
 
         Ok(Self {
             metadata: package,
-            is_workspace,
             package_name,
             files,
             targets: parsed_targets,
