@@ -2,6 +2,7 @@ mod collect;
 mod data;
 mod ids;
 mod import;
+mod path_resolution;
 mod resolve;
 
 pub use self::{

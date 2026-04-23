@@ -1,3 +1,14 @@
+//! Collects the unresolved def-map skeleton from item trees.
+//!
+//! This phase walks one target's module tree and records only what is directly visible from the
+//! syntax:
+//! - module hierarchy
+//! - module-scope local definitions
+//! - raw import directives
+//! - immediate bindings such as child modules and `extern crate`
+//!
+//! Import resolution itself happens later in `resolve.rs`, using the `base_scopes` produced here.
+
 use std::collections::HashMap;
 
 use anyhow::Context as _;
@@ -16,6 +27,10 @@ use super::{
     ModuleScope, PackageSlot, ScopeBinding, TargetRef, data::Namespace,
 };
 
+/// Collected state for one target before fixed-point import resolution.
+///
+/// `def_map` contains the frozen structural data, while `base_scopes` keeps the directly known
+/// bindings that later passes start from.
 pub(super) struct TargetState {
     pub(super) target: TargetRef,
     pub(super) target_name: String,
@@ -24,6 +39,10 @@ pub(super) struct TargetState {
     pub(super) implicit_roots: HashMap<String, ModuleRef>,
 }
 
+/// Collects unresolved target states for every package/target pair.
+///
+/// The nested return shape mirrors the parsed package/target layout so later resolution can move
+/// between targets by package slot and target slot.
 pub(super) fn collect_target_states(
     packages: &[Package],
     item_tree: &ItemTreeDb,
@@ -74,6 +93,11 @@ pub(super) fn collect_target_states(
     Ok(states)
 }
 
+/// Mutable collector for one target's module tree.
+///
+/// The collector builds two parallel structures:
+/// - `def_map.modules`, which is the final structural payload
+/// - `base_scopes`, which starts with only directly known bindings and is enriched later
 struct TargetScopeCollector<'db> {
     target: TargetRef,
     implicit_roots: &'db HashMap<String, ModuleRef>,
@@ -91,12 +115,14 @@ impl<'db> TargetScopeCollector<'db> {
         }
     }
 
+    /// Walks the target starting from its root file and returns the unresolved target state.
     fn collect(
         mut self,
         item_tree: &ItemTreePackage,
         target: &Target,
         root_file: crate::parse::FileId,
     ) -> anyhow::Result<TargetState> {
+        // Root modules are identified by the target; they do not have a textual name or parent.
         let root_module = self.alloc_module(
             None,
             None,
@@ -124,6 +150,7 @@ impl<'db> TargetScopeCollector<'db> {
         })
     }
 
+    /// Allocates one module in both the def-map payload and the base-scope table.
     fn alloc_module(
         &mut self,
         parent: Option<ModuleId>,
@@ -144,6 +171,7 @@ impl<'db> TargetScopeCollector<'db> {
         module_id
     }
 
+    /// Walks one module's items and records everything that is immediately knowable.
     fn collect_items(
         &mut self,
         item_tree: &ItemTreePackage,
@@ -174,6 +202,7 @@ impl<'db> TargetScopeCollector<'db> {
         Ok(())
     }
 
+    /// Records one module-scope local definition and inserts its direct binding into the base scope.
     fn collect_local_def(&mut self, module_id: ModuleId, item: &ItemNode) {
         let Some(kind) = LocalDefKind::from_item_tag(item.kind.tag()) else {
             return;
@@ -214,6 +243,7 @@ impl<'db> TargetScopeCollector<'db> {
             );
     }
 
+    /// Creates a child module node and recursively walks its item source when available.
     fn collect_module(
         &mut self,
         item_tree: &ItemTreePackage,
@@ -247,12 +277,14 @@ impl<'db> TargetScopeCollector<'db> {
 
         match source {
             ModuleSource::Inline { items } => {
+                // Inline modules already carry their lowered items inside the parent file tree.
                 self.collect_items(item_tree, child_module, items)
                     .context("while attempting to collect inline module items")?;
             }
             ModuleSource::OutOfLine {
                 definition_file: Some(definition_file),
             } => {
+                // Out-of-line modules point at another lowered file tree.
                 let file_tree = item_tree.file(*definition_file).with_context(|| {
                     format!(
                         "while attempting to fetch out-of-line module item tree for {:?}",
@@ -270,6 +302,7 @@ impl<'db> TargetScopeCollector<'db> {
         Ok(())
     }
 
+    /// Links a child module into its parent's module tree and type namespace.
     fn link_child_module(
         &mut self,
         parent_module: ModuleId,
@@ -299,11 +332,17 @@ impl<'db> TargetScopeCollector<'db> {
             );
     }
 
+    /// Records raw import directives for later fixed-point resolution.
+    ///
+    /// This phase only normalizes the path and binding metadata. It does not try to resolve the
+    /// import yet.
     fn collect_use(&mut self, module_id: ModuleId, item: &ItemNode, use_item: &UseItem) {
         let imports: &[UseImport] = &use_item.imports;
 
         for import in imports {
             let path = ImportPath::from_use_path(&import.path);
+            // Imports like `use foo::{self};` strip the trailing `self`. If nothing remains, there
+            // is no path to record here.
             if path.segments.is_empty() {
                 continue;
             }
@@ -325,6 +364,10 @@ impl<'db> TargetScopeCollector<'db> {
         }
     }
 
+    /// Lowers `extern crate` into an immediate type-namespace binding.
+    ///
+    /// Unlike normal `use`, this can be bound during collection because the target roots are
+    /// already known.
     fn collect_extern_crate(
         &mut self,
         module_id: ModuleId,
@@ -355,6 +398,8 @@ impl<'db> TargetScopeCollector<'db> {
             module_ref
         };
 
+        // `extern crate` contributes directly to the base scope rather than through a deferred
+        // import record.
         self.base_scopes
             .get_mut(module_id.0)
             .expect("base scope should exist for extern crate binding")
