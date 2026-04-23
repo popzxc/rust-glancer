@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    item_tree::{ItemKind, VisibilityLevel},
+    item_tree::{ItemTag, VisibilityLevel},
     parse::{file::FileId, span::Span},
 };
 
@@ -66,7 +66,7 @@ pub enum ModuleOrigin {
 pub struct LocalDefData {
     pub module: ModuleId,
     pub name: String,
-    pub kind: ItemKind,
+    pub kind: ItemTag,
     pub visibility: VisibilityLevel,
     pub file_id: FileId,
     pub span: Span,
@@ -174,23 +174,21 @@ pub(super) enum Namespace {
     Macros,
 }
 
-pub(super) fn namespace_for_local_kind(kind: ItemKind) -> Option<Namespace> {
+pub(super) fn namespace_for_local_kind(kind: ItemTag) -> Option<Namespace> {
     match kind {
-        ItemKind::Const | ItemKind::Function | ItemKind::Static => Some(Namespace::Values),
-        ItemKind::Enum
-        | ItemKind::Struct
-        | ItemKind::Trait
-        | ItemKind::TypeAlias
-        | ItemKind::Union => Some(Namespace::Types),
-        ItemKind::MacroDefinition => Some(Namespace::Macros),
-        ItemKind::AsmExpr
-        | ItemKind::AssociatedConst
-        | ItemKind::AssociatedFunction
-        | ItemKind::AssociatedTypeAlias
-        | ItemKind::ExternBlock
-        | ItemKind::ExternCrate
-        | ItemKind::Impl
-        | ItemKind::Module
-        | ItemKind::Use => None,
+        ItemTag::Const | ItemTag::Function | ItemTag::Static => Some(Namespace::Values),
+        ItemTag::Enum | ItemTag::Struct | ItemTag::Trait | ItemTag::TypeAlias | ItemTag::Union => {
+            Some(Namespace::Types)
+        }
+        ItemTag::MacroDefinition => Some(Namespace::Macros),
+        ItemTag::AsmExpr
+        | ItemTag::AssociatedConst
+        | ItemTag::AssociatedFunction
+        | ItemTag::AssociatedTypeAlias
+        | ItemTag::ExternBlock
+        | ItemTag::ExternCrate
+        | ItemTag::Impl
+        | ItemTag::Module
+        | ItemTag::Use => None,
     }
 }

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 
 use crate::{
-    item_tree::VisibilityLevel,
+    item_tree::{ItemTreeDb, VisibilityLevel},
     parse::{self, package::Package},
 };
 
@@ -14,12 +14,12 @@ use super::{
     data::{Namespace, namespace_for_local_kind},
 };
 
-pub(crate) fn build_db(parse: &mut parse::ParseDb) -> anyhow::Result<DefMapDb> {
+pub(crate) fn build_db(parse: &parse::ParseDb, item_tree: &ItemTreeDb) -> anyhow::Result<DefMapDb> {
     let implicit_roots =
         build_implicit_roots(parse.metadata(), parse.packages(), parse.package_by_id())
             .context("while attempting to build implicit target roots")?;
 
-    let mut target_states = collect_target_states(parse.packages_mut(), &implicit_roots)
+    let mut target_states = collect_target_states(parse.packages(), item_tree, &implicit_roots)
         .context("while attempting to collect target definitions and imports")?;
 
     finalize_scopes(&mut target_states).context("while attempting to resolve target scopes")?;
@@ -516,6 +516,10 @@ fn binding_is_visible(
     defining_target: TargetRef,
     visibility: &VisibilityLevel,
 ) -> bool {
+    // TODO: for now, to not deal with actual resolution, we overly simplify the model
+    // so that items within a single target all see each other. It is a temporary
+    // solution to iterate faster and get to a working prototype. To be refined
+    // later.
     if importing_target == defining_target {
         return true;
     }

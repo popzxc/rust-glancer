@@ -9,7 +9,7 @@ pub use self::{
     ids::{DefId, ImportId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, PackageSlot, TargetRef},
     import::{ImportBinding, ImportData, ImportKind, ImportPath, PathSegment},
 };
-use crate::parse;
+use crate::{item_tree::ItemTreeDb, parse};
 
 /// Frozen def maps for all parsed packages and targets.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -18,9 +18,9 @@ pub struct DefMapDb {
 }
 
 impl DefMapDb {
-    /// Builds target-local def maps on top of the parsed source database.
-    pub(crate) fn build(parse: &mut parse::ParseDb) -> anyhow::Result<Self> {
-        resolve::build_db(parse)
+    /// Builds target-local def maps from parsed project metadata and lowered item trees.
+    pub(crate) fn build(parse: &parse::ParseDb, item_tree: &ItemTreeDb) -> anyhow::Result<Self> {
+        resolve::build_db(parse, item_tree)
     }
 
     /// Returns one package def-map set by package slot.

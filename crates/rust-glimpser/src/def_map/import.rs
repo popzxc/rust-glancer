@@ -1,6 +1,4 @@
-use ra_syntax::ast::{self, HasName};
-
-use crate::item_tree::VisibilityLevel;
+use crate::item_tree::{ImportAlias, UseImportKind, UsePath, UsePathSegment, VisibilityLevel};
 
 use super::ModuleId;
 
@@ -36,19 +34,12 @@ pub enum ImportBinding {
 }
 
 impl ImportBinding {
-    pub(super) fn from_rename(rename: Option<ast::Rename>) -> Self {
-        let Some(rename) = rename else {
-            return Self::Inferred;
-        };
-
-        if rename.underscore_token().is_some() {
-            return Self::Hidden;
+    pub(super) fn from_alias(alias: &ImportAlias) -> Self {
+        match alias {
+            ImportAlias::Inferred => Self::Inferred,
+            ImportAlias::Explicit(name) => Self::Explicit(name.clone()),
+            ImportAlias::Hidden => Self::Hidden,
         }
-
-        rename
-            .name()
-            .map(|name| Self::Explicit(name.text().to_string()))
-            .unwrap_or(Self::Inferred)
     }
 
     pub(super) fn resolve(&self, inferred_name: Option<String>) -> Option<String> {
@@ -68,6 +59,16 @@ pub enum ImportKind {
     Glob,
 }
 
+impl ImportKind {
+    pub(super) fn from_use_kind(kind: UseImportKind) -> Self {
+        match kind {
+            UseImportKind::Named => Self::Named,
+            UseImportKind::SelfImport => Self::SelfImport,
+            UseImportKind::Glob => Self::Glob,
+        }
+    }
+}
+
 /// Structured path used during import resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportPath {
@@ -76,35 +77,15 @@ pub struct ImportPath {
 }
 
 impl ImportPath {
-    pub(super) fn empty() -> Self {
+    pub(super) fn from_use_path(path: &UsePath) -> Self {
         Self {
-            absolute: false,
-            segments: Vec::new(),
+            absolute: path.absolute,
+            segments: path
+                .segments
+                .iter()
+                .map(PathSegment::from_use_segment)
+                .collect(),
         }
-    }
-
-    pub(super) fn joined(&self, suffix: &Self) -> Self {
-        let mut segments = self.segments.clone();
-        segments.extend(suffix.segments.clone());
-        Self {
-            absolute: self.absolute || suffix.absolute,
-            segments,
-        }
-    }
-
-    pub(super) fn without_trailing_self(&self) -> Self {
-        let mut segments = self.segments.clone();
-        if matches!(segments.last(), Some(PathSegment::SelfKw)) {
-            segments.pop();
-        }
-        Self {
-            absolute: self.absolute,
-            segments,
-        }
-    }
-
-    pub(super) fn ends_with_self(&self) -> bool {
-        matches!(self.segments.last(), Some(PathSegment::SelfKw))
     }
 
     pub(super) fn last_name(&self) -> Option<String> {
@@ -124,4 +105,15 @@ pub enum PathSegment {
     SelfKw,
     SuperKw,
     CrateKw,
+}
+
+impl PathSegment {
+    fn from_use_segment(segment: &UsePathSegment) -> Self {
+        match segment {
+            UsePathSegment::Name(name) => Self::Name(name.clone()),
+            UsePathSegment::SelfKw => Self::SelfKw,
+            UsePathSegment::SuperKw => Self::SuperKw,
+            UsePathSegment::CrateKw => Self::CrateKw,
+        }
+    }
 }

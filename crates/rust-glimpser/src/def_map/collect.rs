@@ -1,22 +1,18 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::Context as _;
-use ra_syntax::{
-    AstNode as _,
-    ast::{self, HasModuleItem, HasName, HasVisibility},
-};
 
-use crate::item_tree::{ItemKind, VisibilityLevel, resolve_module_file};
-use crate::parse::{
-    FileDb, FileId, Package,
-    span::{LineIndex, Span},
-    target::Target,
+use crate::{
+    item_tree::{
+        ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ModuleSource, UseImport, UseItem,
+    },
+    parse::{Package, Target},
 };
 
 use super::{
     DefId, DefMap, ImportBinding, ImportData, ImportId, ImportKind, ImportPath, LocalDefData,
     LocalDefId, LocalDefRef, ModuleData, ModuleId, ModuleOrigin, ModuleRef, ModuleScope,
-    PackageSlot, PathSegment, ScopeBinding, TargetRef,
+    PackageSlot, ScopeBinding, TargetRef,
     data::{Namespace, namespace_for_local_kind},
 };
 
@@ -29,12 +25,19 @@ pub(super) struct TargetState {
 }
 
 pub(super) fn collect_target_states(
-    packages: &mut [Package],
+    packages: &[Package],
+    item_tree: &ItemTreeDb,
     implicit_roots: &[Vec<HashMap<String, ModuleRef>>],
 ) -> anyhow::Result<Vec<Vec<TargetState>>> {
     let mut states = Vec::with_capacity(packages.len());
 
-    for (package_slot, package) in packages.iter_mut().enumerate() {
+    for (package_slot, package) in packages.iter().enumerate() {
+        let item_tree_package = item_tree.package(package_slot).with_context(|| {
+            format!(
+                "while attempting to fetch item tree package for {}",
+                package.package_name()
+            )
+        })?;
         let mut package_states = Vec::with_capacity(package.targets.len());
 
         for target in &package.targets {
@@ -46,14 +49,15 @@ pub(super) fn collect_target_states(
                 .get(package_slot)
                 .and_then(|package_roots| package_roots.get(target.id.0))
                 .expect("implicit roots should exist for every parsed target");
-
-            let collector = TargetScopeCollector::new(target_ref, &mut package.files, target_roots);
-            let state = collector.collect(target).with_context(|| {
+            let target_tree = item_tree_package.target(target.id).with_context(|| {
                 format!(
-                    "while attempting to collect target scope for {}",
+                    "while attempting to fetch item tree target for {}",
                     target.cargo_target.name
                 )
             })?;
+
+            let collector = TargetScopeCollector::new(target_ref, target_roots);
+            let state = collector.collect(target, &target_tree.root_items);
             package_states.push(state);
         }
 
@@ -65,30 +69,22 @@ pub(super) fn collect_target_states(
 
 struct TargetScopeCollector<'db> {
     target: TargetRef,
-    parse_db: &'db mut FileDb,
     implicit_roots: &'db HashMap<String, ModuleRef>,
-    active_files: HashSet<FileId>,
     def_map: DefMap,
     base_scopes: Vec<ModuleScope>,
 }
 
 impl<'db> TargetScopeCollector<'db> {
-    fn new(
-        target: TargetRef,
-        parse_db: &'db mut FileDb,
-        implicit_roots: &'db HashMap<String, ModuleRef>,
-    ) -> Self {
+    fn new(target: TargetRef, implicit_roots: &'db HashMap<String, ModuleRef>) -> Self {
         Self {
             target,
-            parse_db,
             implicit_roots,
-            active_files: HashSet::default(),
             def_map: DefMap::default(),
             base_scopes: Vec::new(),
         }
     }
 
-    fn collect(mut self, target: &Target) -> anyhow::Result<TargetState> {
+    fn collect(mut self, target: &Target, root_items: &[ItemNode]) -> TargetState {
         let root_module = self.alloc_module(
             None,
             None,
@@ -98,21 +94,15 @@ impl<'db> TargetScopeCollector<'db> {
         );
         self.def_map.set_root_module(root_module);
 
-        self.collect_file_items(root_module, target.root_file)
-            .with_context(|| {
-                format!(
-                    "while attempting to collect source items for {}",
-                    target.cargo_target.name
-                )
-            })?;
+        self.collect_items(root_module, root_items);
 
-        Ok(TargetState {
+        TargetState {
             target: self.target,
             target_name: target.cargo_target.name.clone(),
             def_map: self.def_map,
             base_scopes: self.base_scopes,
             implicit_roots: self.implicit_roots.clone(),
-        })
+        }
     }
 
     fn alloc_module(
@@ -135,146 +125,29 @@ impl<'db> TargetScopeCollector<'db> {
         module_id
     }
 
-    fn collect_file_items(&mut self, module_id: ModuleId, file_id: FileId) -> anyhow::Result<()> {
-        if !self.active_files.insert(file_id) {
-            return Ok(());
-        }
-
-        let (items, line_index) = {
-            let parsed_file = self
-                .parse_db
-                .parsed_file(file_id)
-                .with_context(|| format!("while attempting to fetch parsed file {:?}", file_id))?;
-            (
-                parsed_file.tree.items().collect::<Vec<_>>(),
-                parsed_file.line_index.clone(),
-            )
-        };
-
-        self.collect_items(module_id, items, file_id, &line_index)
-            .with_context(|| format!("while attempting to collect file items for {:?}", file_id))?;
-
-        self.active_files.remove(&file_id);
-        Ok(())
-    }
-
-    fn collect_items(
-        &mut self,
-        module_id: ModuleId,
-        items: Vec<ast::Item>,
-        file_id: FileId,
-        line_index: &LineIndex,
-    ) -> anyhow::Result<()> {
+    fn collect_items(&mut self, module_id: ModuleId, items: &[ItemNode]) {
         for item in items {
-            match item {
-                ast::Item::AsmExpr(_) => {}
-                ast::Item::Const(item) => self.collect_local_def(
-                    module_id,
-                    ItemKind::Const,
-                    item.name().map(|name| name.text().to_string()),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    file_id,
-                    Span::from_text_range(item.syntax().text_range(), line_index),
-                ),
-                ast::Item::Enum(item) => self.collect_local_def(
-                    module_id,
-                    ItemKind::Enum,
-                    item.name().map(|name| name.text().to_string()),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    file_id,
-                    Span::from_text_range(item.syntax().text_range(), line_index),
-                ),
-                ast::Item::ExternBlock(_) => {}
-                ast::Item::ExternCrate(item) => self.collect_extern_crate(module_id, item),
-                ast::Item::Fn(item) => self.collect_local_def(
-                    module_id,
-                    ItemKind::Function,
-                    item.name().map(|name| name.text().to_string()),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    file_id,
-                    Span::from_text_range(item.syntax().text_range(), line_index),
-                ),
-                ast::Item::Impl(_) => {}
-                ast::Item::MacroCall(_) => {}
-                ast::Item::MacroDef(item) => self.collect_local_def(
-                    module_id,
-                    ItemKind::MacroDefinition,
-                    item.name().map(|name| name.text().to_string()),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    file_id,
-                    Span::from_text_range(item.syntax().text_range(), line_index),
-                ),
-                ast::Item::MacroRules(item) => self.collect_local_def(
-                    module_id,
-                    ItemKind::MacroDefinition,
-                    item.name().map(|name| name.text().to_string()),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    file_id,
-                    Span::from_text_range(item.syntax().text_range(), line_index),
-                ),
-                ast::Item::Module(item) => self
-                    .collect_module(module_id, item, file_id, line_index)
-                    .context("while attempting to collect module item")?,
-                ast::Item::Static(item) => self.collect_local_def(
-                    module_id,
-                    ItemKind::Static,
-                    item.name().map(|name| name.text().to_string()),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    file_id,
-                    Span::from_text_range(item.syntax().text_range(), line_index),
-                ),
-                ast::Item::Struct(item) => self.collect_local_def(
-                    module_id,
-                    ItemKind::Struct,
-                    item.name().map(|name| name.text().to_string()),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    file_id,
-                    Span::from_text_range(item.syntax().text_range(), line_index),
-                ),
-                ast::Item::Trait(item) => self.collect_local_def(
-                    module_id,
-                    ItemKind::Trait,
-                    item.name().map(|name| name.text().to_string()),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    file_id,
-                    Span::from_text_range(item.syntax().text_range(), line_index),
-                ),
-                ast::Item::TypeAlias(item) => self.collect_local_def(
-                    module_id,
-                    ItemKind::TypeAlias,
-                    item.name().map(|name| name.text().to_string()),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    file_id,
-                    Span::from_text_range(item.syntax().text_range(), line_index),
-                ),
-                ast::Item::Union(item) => self.collect_local_def(
-                    module_id,
-                    ItemKind::Union,
-                    item.name().map(|name| name.text().to_string()),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    file_id,
-                    Span::from_text_range(item.syntax().text_range(), line_index),
-                ),
-                ast::Item::Use(item) => self.collect_use(module_id, item),
+            match &item.kind {
+                ItemKind::ExternCrate(extern_crate) => {
+                    self.collect_extern_crate(module_id, item, extern_crate);
+                }
+                ItemKind::Module(module_item) => {
+                    self.collect_module(module_id, item, &module_item.source);
+                }
+                ItemKind::Use(use_item) => {
+                    self.collect_use(module_id, item, use_item);
+                }
+                _ => self.collect_local_def(module_id, item),
             }
         }
-
-        Ok(())
     }
 
-    fn collect_local_def(
-        &mut self,
-        module_id: ModuleId,
-        kind: ItemKind,
-        name: Option<String>,
-        visibility: VisibilityLevel,
-        file_id: FileId,
-        span: Span,
-    ) {
-        let Some(name) = name else {
+    fn collect_local_def(&mut self, module_id: ModuleId, item: &ItemNode) {
+        let kind = item.kind.tag();
+        let Some(namespace) = namespace_for_local_kind(kind) else {
             return;
         };
-        let Some(namespace) = namespace_for_local_kind(kind) else {
+        let Some(name) = item.name.clone() else {
             return;
         };
 
@@ -283,9 +156,9 @@ impl<'db> TargetScopeCollector<'db> {
             module: module_id,
             name: name.clone(),
             kind,
-            visibility: visibility.clone(),
-            file_id,
-            span,
+            visibility: item.visibility.clone(),
+            file_id: item.file_id,
+            span: item.span,
         });
         self.def_map
             .modules
@@ -304,82 +177,36 @@ impl<'db> TargetScopeCollector<'db> {
                         target: self.target,
                         local_def: local_def_id,
                     }),
-                    visibility,
+                    visibility: item.visibility.clone(),
                 },
             );
     }
 
-    fn collect_module(
-        &mut self,
-        parent_module: ModuleId,
-        item: ast::Module,
-        file_id: FileId,
-        line_index: &LineIndex,
-    ) -> anyhow::Result<()> {
-        let Some(module_name) = item.name().map(|name| name.text().to_string()) else {
-            return Ok(());
-        };
-        let visibility = VisibilityLevel::from_ast(item.visibility());
-        let declaration_span = Span::from_text_range(item.syntax().text_range(), line_index);
-
-        if let Some(item_list) = item.item_list() {
-            let child_module = self.alloc_module(
-                Some(parent_module),
-                Some(module_name.clone()),
-                ModuleOrigin::Inline {
-                    declaration_file: file_id,
-                    declaration_span,
-                },
-            );
-            self.link_child_module(parent_module, child_module, &module_name, visibility);
-
-            let inline_items = item_list.items().collect::<Vec<_>>();
-            self.collect_items(child_module, inline_items, file_id, line_index)
-                .with_context(|| {
-                    format!("while attempting to collect inline module {module_name}")
-                })?;
-            return Ok(());
-        }
-
-        let current_file_path = self
-            .parse_db
-            .file_path(file_id)
-            .with_context(|| format!("while attempting to resolve current file {:?}", file_id))?;
-        let module_file_path = resolve_module_file(current_file_path, &module_name);
-        let definition_file = if let Some(module_file_path) = module_file_path {
-            Some(
-                self.parse_db
-                    .get_or_parse_file(&module_file_path)
-                    .with_context(|| {
-                        format!(
-                            "while attempting to parse module file {}",
-                            module_file_path.display()
-                        )
-                    })?,
-            )
-        } else {
-            None
+    fn collect_module(&mut self, parent_module: ModuleId, item: &ItemNode, source: &ModuleSource) {
+        let Some(module_name) = item.name.clone() else {
+            return;
         };
 
-        let child_module = self.alloc_module(
-            Some(parent_module),
-            Some(module_name.clone()),
-            ModuleOrigin::OutOfLine {
-                declaration_file: file_id,
-                declaration_span,
-                definition_file,
+        let origin = match source {
+            ModuleSource::Inline => ModuleOrigin::Inline {
+                declaration_file: item.file_id,
+                declaration_span: item.span,
             },
+            ModuleSource::OutOfLine { definition_file } => ModuleOrigin::OutOfLine {
+                declaration_file: item.file_id,
+                declaration_span: item.span,
+                definition_file: *definition_file,
+            },
+        };
+        let child_module =
+            self.alloc_module(Some(parent_module), Some(module_name.clone()), origin);
+        self.link_child_module(
+            parent_module,
+            child_module,
+            &module_name,
+            item.visibility.clone(),
         );
-        self.link_child_module(parent_module, child_module, &module_name, visibility);
-
-        if let Some(definition_file) = definition_file {
-            self.collect_file_items(child_module, definition_file)
-                .with_context(|| {
-                    format!("while attempting to collect out-of-line module {module_name}")
-                })?;
-        }
-
-        Ok(())
+        self.collect_items(child_module, &item.children);
     }
 
     fn link_child_module(
@@ -387,7 +214,7 @@ impl<'db> TargetScopeCollector<'db> {
         parent_module: ModuleId,
         child_module: ModuleId,
         module_name: &str,
-        visibility: VisibilityLevel,
+        visibility: crate::item_tree::VisibilityLevel,
     ) {
         self.def_map
             .modules
@@ -411,73 +238,43 @@ impl<'db> TargetScopeCollector<'db> {
             );
     }
 
-    fn collect_use(&mut self, module_id: ModuleId, item: ast::Use) {
-        let visibility = VisibilityLevel::from_ast(item.visibility());
-        let Some(use_tree) = item.use_tree() else {
-            return;
-        };
+    fn collect_use(&mut self, module_id: ModuleId, item: &ItemNode, use_item: &UseItem) {
+        let imports: &[UseImport] = &use_item.imports;
 
-        self.lower_use_tree(module_id, &ImportPath::empty(), visibility, use_tree);
+        for import in imports {
+            let path = ImportPath::from_use_path(&import.path);
+            if path.segments.is_empty() {
+                continue;
+            }
+
+            let import_id = ImportId(self.def_map.imports.len());
+            self.def_map.imports.push(ImportData {
+                module: module_id,
+                visibility: item.visibility.clone(),
+                kind: ImportKind::from_use_kind(import.kind),
+                path,
+                binding: ImportBinding::from_alias(&import.alias),
+            });
+            self.def_map
+                .modules
+                .get_mut(module_id.0)
+                .expect("module should exist for lowered import")
+                .imports
+                .push(import_id);
+        }
     }
 
-    fn lower_use_tree(
+    fn collect_extern_crate(
         &mut self,
         module_id: ModuleId,
-        prefix: &ImportPath,
-        visibility: VisibilityLevel,
-        use_tree: ast::UseTree,
+        item: &ItemNode,
+        extern_crate: &ExternCrateItem,
     ) {
-        let path = use_tree
-            .path()
-            .and_then(|path| lower_path(&path))
-            .unwrap_or_else(ImportPath::empty);
-        let path = prefix.joined(&path);
-
-        if let Some(use_tree_list) = use_tree.use_tree_list() {
-            for child_use_tree in use_tree_list.use_trees() {
-                self.lower_use_tree(module_id, &path, visibility.clone(), child_use_tree);
-            }
-            return;
-        }
-
-        let binding = ImportBinding::from_rename(use_tree.rename());
-
-        let (kind, path) = if use_tree.star_token().is_some() {
-            (ImportKind::Glob, path)
-        } else if path.ends_with_self() {
-            // `use foo::{self}` should resolve the `foo` module and bind it under `foo`
-            // (or an explicit alias), so the lowered import keeps the module path.
-            (ImportKind::SelfImport, path.without_trailing_self())
-        } else {
-            (ImportKind::Named, path)
-        };
-
-        if path.segments.is_empty() {
-            return;
-        }
-
-        let import_id = ImportId(self.def_map.imports.len());
-        self.def_map.imports.push(ImportData {
-            module: module_id,
-            visibility,
-            kind,
-            path,
-            binding,
-        });
-        self.def_map
-            .modules
-            .get_mut(module_id.0)
-            .expect("module should exist for lowered import")
-            .imports
-            .push(import_id);
-    }
-
-    fn collect_extern_crate(&mut self, module_id: ModuleId, item: ast::ExternCrate) {
-        let Some(extern_name) = item.name_ref().map(|name_ref| name_ref.text().to_string()) else {
+        let Some(extern_name) = extern_crate.name.clone() else {
             return;
         };
         let Some(binding_name) =
-            ImportBinding::from_rename(item.rename()).resolve(Some(extern_name.clone()))
+            ImportBinding::from_alias(&extern_crate.alias).resolve(Some(extern_name.clone()))
         else {
             return;
         };
@@ -497,7 +294,6 @@ impl<'db> TargetScopeCollector<'db> {
             module_ref
         };
 
-        let visibility = VisibilityLevel::from_ast(item.visibility());
         self.base_scopes
             .get_mut(module_id.0)
             .expect("base scope should exist for extern crate binding")
@@ -506,30 +302,8 @@ impl<'db> TargetScopeCollector<'db> {
                 Namespace::Types,
                 ScopeBinding {
                     def: DefId::Module(module_ref),
-                    visibility,
+                    visibility: item.visibility.clone(),
                 },
             );
     }
-}
-
-fn lower_path(path: &ast::Path) -> Option<ImportPath> {
-    let mut segments = Vec::new();
-
-    for segment in path.segments() {
-        let lowered_segment = match segment.kind()? {
-            ast::PathSegmentKind::Name(name_ref) => PathSegment::Name(name_ref.text().to_string()),
-            ast::PathSegmentKind::SelfKw => PathSegment::SelfKw,
-            ast::PathSegmentKind::SuperKw => PathSegment::SuperKw,
-            ast::PathSegmentKind::CrateKw => PathSegment::CrateKw,
-            ast::PathSegmentKind::SelfTypeKw | ast::PathSegmentKind::Type { .. } => return None,
-        };
-        segments.push(lowered_segment);
-    }
-
-    Some(ImportPath {
-        absolute: path
-            .first_segment()
-            .is_some_and(|segment| segment.coloncolon_token().is_some()),
-        segments,
-    })
 }

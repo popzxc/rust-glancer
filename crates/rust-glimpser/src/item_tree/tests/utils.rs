@@ -4,7 +4,7 @@ use expect_test::Expect;
 
 use crate::{
     Project,
-    item_tree::ItemNode,
+    item_tree::{ItemKind, ItemNode, ModuleSource},
     parse::{Package, Target},
     test_utils::{TestTargetExt, fixture_crate},
 };
@@ -116,6 +116,18 @@ fn render_item(
         line.push_str(name);
     }
 
+    if let ItemKind::Module(module) = &item.kind {
+        line.push_str(&format!(
+            " [{}]",
+            render_module_source(package, &module.source)
+        ));
+    }
+
+    if let ItemKind::ExternCrate(extern_crate) = &item.kind {
+        let name = extern_crate.name.as_deref().unwrap_or("<missing>");
+        line.push_str(&format!(" [{name}{}]", extern_crate.alias));
+    }
+
     if include_spans {
         let file_path = package
             .file_path(item.file_id)
@@ -138,7 +150,46 @@ fn render_item(
 
     writeln!(dump, "{line}").expect("string writes should not fail");
 
+    if let ItemKind::Use(use_item) = &item.kind {
+        for import in &use_item.imports {
+            let path = import.path.to_string();
+            let path = if path.is_empty() {
+                "<empty>".to_string()
+            } else {
+                path
+            };
+
+            writeln!(
+                dump,
+                "{}  - import {} {}{}",
+                indent, import.kind, path, import.alias
+            )
+            .expect("string writes should not fail");
+        }
+    }
+
     for child in &item.children {
         render_item(package, child, depth + 1, include_spans, dump);
+    }
+}
+
+fn render_module_source(package: &Package, source: &ModuleSource) -> String {
+    match source {
+        ModuleSource::Inline => "inline".to_string(),
+        ModuleSource::OutOfLine {
+            definition_file: Some(file_id),
+        } => {
+            let file_path = package
+                .file_path(*file_id)
+                .expect("out-of-line module file should exist while rendering snapshot");
+            let file_label = file_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("<unknown>");
+            format!("out_of_line {file_label}")
+        }
+        ModuleSource::OutOfLine {
+            definition_file: None,
+        } => "out_of_line <missing>".to_string(),
     }
 }

@@ -10,7 +10,10 @@ mod tests;
 
 use crate::parse::{FileDb, FileId, ParseDb, Target as ParseTarget, TargetId, span::LineIndex};
 
-pub(crate) use self::item::{ItemKind, ItemNode, VisibilityLevel};
+pub(crate) use self::item::{
+    ExternCrateItem, ImportAlias, ItemKind, ItemNode, ItemTag, ModuleItem, ModuleSource, UseImport,
+    UseImportKind, UseItem, UsePath, UsePathSegment, VisibilityLevel,
+};
 
 /// Lowered item trees for all parsed packages and targets.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -64,6 +67,13 @@ impl Package {
     /// Returns all target trees.
     pub(crate) fn targets(&self) -> &[Target] {
         &self.targets
+    }
+
+    /// Returns one target tree by parsed target id.
+    pub(crate) fn target(&self, target_id: TargetId) -> Option<&Target> {
+        self.targets
+            .iter()
+            .find(|target| target.target == target_id)
     }
 }
 
@@ -169,7 +179,7 @@ impl<'db> TargetTreeBuilder<'db> {
                 }
                 ast::Item::Module(item) => {
                     let module_name = item.name().map(|name| name.text().to_string());
-                    let children = self
+                    let (module_item, children) = self
                         .collect_module_children(&item, current_file_id, line_index)
                         .with_context(|| {
                             format!(
@@ -179,6 +189,7 @@ impl<'db> TargetTreeBuilder<'db> {
                         })?;
                     Some(ItemNode::new_module(
                         item,
+                        module_item,
                         children,
                         current_file_id,
                         line_index,
@@ -215,16 +226,29 @@ impl<'db> TargetTreeBuilder<'db> {
         item: &ast::Module,
         current_file_id: FileId,
         line_index: &LineIndex,
-    ) -> anyhow::Result<Vec<ItemNode>> {
+    ) -> anyhow::Result<(ModuleItem, Vec<ItemNode>)> {
         if let Some(item_list) = item.item_list() {
             let inline_items = item_list.items().collect::<Vec<_>>();
-            return self
+            let children = self
                 .collect_items(inline_items, current_file_id, line_index)
-                .context("while attempting to collect inline module items");
+                .context("while attempting to collect inline module items")?;
+            return Ok((
+                ModuleItem {
+                    source: ModuleSource::Inline,
+                },
+                children,
+            ));
         }
 
         let Some(module_name) = item.name().map(|name| name.text().to_string()) else {
-            return Ok(Vec::new());
+            return Ok((
+                ModuleItem {
+                    source: ModuleSource::OutOfLine {
+                        definition_file: None,
+                    },
+                },
+                Vec::new(),
+            ));
         };
         let current_file_path = self.files.file_path(current_file_id).with_context(|| {
             format!(
@@ -235,7 +259,14 @@ impl<'db> TargetTreeBuilder<'db> {
 
         // TODO: support `#[path = \"...\"]` and other advanced module-resolution rules when needed.
         let Some(module_file_path) = resolve_module_file(current_file_path, &module_name) else {
-            return Ok(Vec::new());
+            return Ok((
+                ModuleItem {
+                    source: ModuleSource::OutOfLine {
+                        definition_file: None,
+                    },
+                },
+                Vec::new(),
+            ));
         };
 
         let module_file_id = self
@@ -248,12 +279,21 @@ impl<'db> TargetTreeBuilder<'db> {
                 )
             })?;
 
-        self.collect_file_items(module_file_id).with_context(|| {
+        let children = self.collect_file_items(module_file_id).with_context(|| {
             format!(
                 "while attempting to collect module items from {}",
                 module_file_path.display()
             )
-        })
+        })?;
+
+        Ok((
+            ModuleItem {
+                source: ModuleSource::OutOfLine {
+                    definition_file: Some(module_file_id),
+                },
+            },
+            children,
+        ))
     }
 }
 

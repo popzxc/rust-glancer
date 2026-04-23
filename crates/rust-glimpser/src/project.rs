@@ -25,7 +25,7 @@ impl Project {
         let item_tree =
             ItemTreeDb::build(&mut parse).context("while attempting to build item tree db")?;
         let def_map =
-            DefMapDb::build(&mut parse).context("while attempting to build def map db")?;
+            DefMapDb::build(&parse, &item_tree).context("while attempting to build def map db")?;
 
         Ok(Self {
             parse,

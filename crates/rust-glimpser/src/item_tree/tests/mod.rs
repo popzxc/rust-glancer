@@ -48,17 +48,62 @@ fn main() {
             package moderate_crate
 
             target moderate_crate [lib]
-            - pub module cli
+            - pub module cli [out_of_line cli.rs]
               - pub fn run
-            - pub module model
+            - pub module model [out_of_line model.rs]
               - pub struct Model
               - impl
                 - pub associated_fn new
 
             target moderate_crate [bin]
             - use std::path::PathBuf
+              - import named std::path::PathBuf
             - use moderate_crate::cli::run
+              - import named moderate_crate::cli::run
             - fn main
+        "#]],
+    );
+}
+
+#[test]
+fn dumps_import_payloads() {
+    utils::check_project_item_tree(
+        r#"
+//- /Cargo.toml
+[package]
+name = "import_crate"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod bar {
+    pub mod foo {}
+}
+
+extern crate self as current;
+extern crate self as _;
+
+use bar::foo::{self, self as imported_foo, work as _, *};
+use crate::bar::foo::work as run;
+use ::bar::foo;
+"#,
+        expect![[r#"
+            package import_crate
+
+            target import_crate [lib]
+            - pub module bar [inline]
+              - pub module foo [inline]
+            - extern_crate self [self as current]
+            - extern_crate self [self as _]
+            - use bar::foo::{self, self as imported_foo, work as _, *}
+              - import self bar::foo
+              - import self bar::foo as imported_foo
+              - import named bar::foo::work as _
+              - import glob bar::foo
+            - use crate::bar::foo::work as run
+              - import named crate::bar::foo::work as run
+            - use ::bar::foo
+              - import named ::bar::foo
         "#]],
     );
 }

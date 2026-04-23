@@ -8,9 +8,19 @@ use crate::parse::{
     span::{LineIndex, Span},
 };
 
-pub(crate) use self::types::{ItemKind, VisibilityLevel};
+pub(crate) use self::{
+    import::{
+        ExternCrateItem, ImportAlias, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
+    },
+    kind::{ItemKind, ItemTag},
+    module::{ModuleItem, ModuleSource},
+    visibility::VisibilityLevel,
+};
 
-mod types;
+mod import;
+mod kind;
+mod module;
+mod visibility;
 
 /// AST-based module items (impl block, struct, etc) representation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,8 +105,9 @@ impl ItemNode {
         file_id: FileId,
         line_index: &LineIndex,
     ) -> Self {
+        let extern_crate = ExternCrateItem::from_ast(&item);
         Self::from_parts(
-            ItemKind::ExternCrate,
+            ItemKind::ExternCrate(Box::new(extern_crate)),
             item.name_ref()
                 .map(|name_ref| name_ref.syntax().text().to_string()),
             VisibilityLevel::from_ast(item.visibility()),
@@ -171,12 +182,13 @@ impl ItemNode {
     /// Builds an item node for a module declaration with already-collected children.
     pub(crate) fn new_module(
         item: ast::Module,
+        module_item: ModuleItem,
         children: Vec<ItemNode>,
         file_id: FileId,
         line_index: &LineIndex,
     ) -> Self {
         Self::from_parts(
-            ItemKind::Module,
+            ItemKind::Module(Box::new(module_item)),
             item.name().map(|name| name.text().to_string()),
             VisibilityLevel::from_ast(item.visibility()),
             item.syntax().text_range(),
@@ -266,8 +278,9 @@ impl ItemNode {
             Some(name)
         }
 
+        let use_item = UseItem::from_ast(&item);
         Self::from_parts(
-            ItemKind::Use,
+            ItemKind::Use(Box::new(use_item)),
             use_name(&item),
             VisibilityLevel::from_ast(item.visibility()),
             item.syntax().text_range(),

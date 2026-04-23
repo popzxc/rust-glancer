@@ -1,58 +1,6 @@
-//! Types that power `ItemNode` but are not part of it.
-// Potentially, as this module grows, we'll need to split it further.
-
 use std::fmt;
 
 use ra_syntax::{AstNode as _, ast};
-
-/// Normalized item kinds, serves as tag for otherwise generic `ItemNode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ItemKind {
-    AsmExpr,
-    AssociatedConst,
-    AssociatedFunction,
-    AssociatedTypeAlias,
-    Const,
-    Enum,
-    ExternBlock,
-    ExternCrate,
-    Function,
-    Impl,
-    MacroDefinition,
-    Module,
-    Static,
-    Struct,
-    Trait,
-    TypeAlias,
-    Union,
-    Use,
-}
-
-impl fmt::Display for ItemKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = match self {
-            ItemKind::AsmExpr => "asm",
-            ItemKind::AssociatedConst => "associated_const",
-            ItemKind::AssociatedFunction => "associated_fn",
-            ItemKind::AssociatedTypeAlias => "associated_type_alias",
-            ItemKind::Const => "const",
-            ItemKind::Enum => "enum",
-            ItemKind::ExternBlock => "extern_block",
-            ItemKind::ExternCrate => "extern_crate",
-            ItemKind::Function => "fn",
-            ItemKind::Impl => "impl",
-            ItemKind::MacroDefinition => "macro_definition",
-            ItemKind::Module => "module",
-            ItemKind::Static => "static",
-            ItemKind::Struct => "struct",
-            ItemKind::Trait => "trait",
-            ItemKind::TypeAlias => "type_alias",
-            ItemKind::Union => "union",
-            ItemKind::Use => "use",
-        };
-        write!(f, "{value}")
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VisibilityLevel {
