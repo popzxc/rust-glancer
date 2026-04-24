@@ -15,7 +15,7 @@ use super::super::{
 };
 
 pub(super) fn check_project_semantic_ir(fixture: &str, expect: Expect) {
-    let project = fixture_crate!(fixture).project();
+    let project = fixture_crate(fixture).project();
     let actual = ProjectSemanticIrSnapshot::new(&project).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);

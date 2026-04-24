@@ -13,21 +13,21 @@ use crate::{
 };
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
-    let project = fixture_crate!(fixture).project();
+    let project = fixture_crate(fixture).project();
     let actual = ProjectItemTreeSnapshot::new(&project, SnapshotMode::Structure).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
 
 pub(super) fn check_project_item_tree_with_declarations(fixture: &str, expect: Expect) {
-    let project = fixture_crate!(fixture).project();
+    let project = fixture_crate(fixture).project();
     let actual = ProjectItemTreeSnapshot::new(&project, SnapshotMode::Declarations).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
 
 pub(super) fn check_project_item_tree_with_spans(fixture: &str, expect: Expect) {
-    let project = fixture_crate!(fixture).project();
+    let project = fixture_crate(fixture).project();
     let actual = ProjectItemTreeSnapshot::new(&project, SnapshotMode::Spans).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);

@@ -20,9 +20,7 @@ pub(crate) struct CrateFixture {
 }
 
 impl CrateFixture {
-    /// Materializes a crate fixture from a rust-analyzer-style multi-file fixture string.
-    ///
-    /// Only the file-splitting syntax is supported right now:
+    /// Materializes a crate fixture from the following syntax (inspired by rust-analyzer):
     ///
     /// ```text
     /// //- /Cargo.toml
@@ -240,8 +238,6 @@ impl Drop for CrateFixture {
     }
 }
 
-macro_rules! fixture_crate {
-    ($fixture:expr $(,)?) => {{ $crate::test_utils::CrateFixture::from_fixture_spec($fixture) }};
+pub fn fixture_crate(fixture: &str) -> CrateFixture {
+    CrateFixture::from_fixture_spec(fixture)
 }
-
-pub(crate) use fixture_crate;

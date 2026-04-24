@@ -5,7 +5,7 @@ use expect_test::Expect;
 use crate::{WorkspaceMetadata, test_utils::fixture_crate};
 
 pub(super) fn check_workspace_metadata(fixture: &str, expect: Expect) {
-    let actual = render_workspace_metadata(&fixture_crate!(fixture).workspace_metadata());
+    let actual = render_workspace_metadata(&fixture_crate(fixture).workspace_metadata());
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }

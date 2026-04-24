@@ -198,7 +198,7 @@ pub mod nested {
 
 #[test]
 fn keeps_type_and_value_bindings_separate() {
-    let fixture = fixture_crate!(
+    let fixture = fixture_crate(
         r#"
 //- /Cargo.toml
 [package]
@@ -213,7 +213,7 @@ pub struct Thing;
 pub fn Thing() -> Thing {
     Thing
 }
-"#
+"#,
     );
     let project = fixture.analyze();
 

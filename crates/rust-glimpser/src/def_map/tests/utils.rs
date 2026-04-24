@@ -11,7 +11,7 @@ use crate::{
 };
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
-    let project = fixture_crate!(fixture).project();
+    let project = fixture_crate(fixture).project();
     let actual = ProjectDefMapSnapshot::new(&project).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);

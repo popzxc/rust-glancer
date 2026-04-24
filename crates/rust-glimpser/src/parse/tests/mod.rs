@@ -45,7 +45,7 @@ fn resolves_project() {
 }
 
 fn simple_fixture() -> CrateFixture {
-    fixture_crate!(
+    fixture_crate(
         r#"
 //- /Cargo.toml
 [package]
@@ -57,7 +57,7 @@ edition = "2024"
 pub fn add_two_numbers(left: i32, right: i32) -> i32 {
     left + right
 }
-"#
+"#,
     )
 }
 
