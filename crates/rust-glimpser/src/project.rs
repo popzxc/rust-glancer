@@ -14,10 +14,10 @@ use crate::{
 /// Fully built project pipeline state.
 #[derive(Debug, Clone)]
 pub struct Project {
-    pub workspace: WorkspaceMetadata,
-    pub parse: ParseDb,
-    pub item_tree: ItemTreeDb,
-    pub def_map: DefMapDb,
+    workspace: WorkspaceMetadata,
+    parse: ParseDb,
+    item_tree: ItemTreeDb,
+    def_map: DefMapDb,
 }
 
 impl Project {
@@ -41,6 +41,12 @@ impl Project {
     #[cfg(test)]
     pub(crate) fn packages(&self) -> &[parse::Package] {
         self.parse.packages()
+    }
+
+    /// Returns lowered item trees for test snapshot rendering.
+    #[cfg(test)]
+    pub(crate) fn item_tree(&self) -> &ItemTreeDb {
+        &self.item_tree
     }
 
     /// Returns the def map for one project-wide target reference.
@@ -103,6 +109,16 @@ impl fmt::Display for Project {
             self.workspace.packages().len(),
             workspace_member_count,
             dependency_count,
+        )?;
+
+        let def_map_stats = self.def_map.stats();
+        writeln!(
+            f,
+            "DefMaps {} targets (modules: {}, local defs: {}, imports: {})",
+            def_map_stats.target_count,
+            def_map_stats.module_count,
+            def_map_stats.local_def_count,
+            def_map_stats.import_count,
         )?;
 
         for (package_slot, package) in self.parse.packages().iter().enumerate() {

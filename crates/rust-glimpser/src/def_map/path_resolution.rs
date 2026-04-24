@@ -22,7 +22,6 @@ use super::{
 /// The result keeps the same textual-name-to-`ScopeEntry` shape as `ModuleScope`, but filters out
 /// bindings that are not visible from the caller's target.
 pub(super) fn visible_module_scope_entry_set(
-    states: &[Vec<TargetState>],
     current_scopes: &[Vec<Vec<ModuleScope>>],
     importing_target: TargetRef,
     source_module: ModuleRef,
@@ -65,8 +64,6 @@ pub(super) fn visible_module_scope_entry_set(
             names.insert(name.clone(), visible_entry);
         }
     }
-
-    let _ = states;
 
     names
 }

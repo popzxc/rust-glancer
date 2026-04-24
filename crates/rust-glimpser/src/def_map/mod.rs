@@ -31,6 +31,23 @@ impl DefMapDb {
         resolve::build_db(workspace, parse, item_tree)
     }
 
+    /// Returns coarse DefMap totals for the current project report.
+    pub(crate) fn stats(&self) -> DefMapStats {
+        let mut stats = DefMapStats::default();
+
+        for package in &self.packages {
+            stats.target_count += package.targets.len();
+
+            for target in &package.targets {
+                stats.module_count += target.modules.len();
+                stats.local_def_count += target.local_defs.len();
+                stats.import_count += target.imports.len();
+            }
+        }
+
+        stats
+    }
+
     /// Returns one package def-map set by package slot.
     #[cfg(test)]
     pub(crate) fn package(&self, package_slot: usize) -> Option<&Package> {
@@ -42,6 +59,15 @@ impl DefMapDb {
     pub(crate) fn def_map(&self, target: TargetRef) -> Option<&DefMap> {
         self.package(target.package.0)?.target(target.target)
     }
+}
+
+/// Coarse totals for reporting that the DefMap phase produced useful data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct DefMapStats {
+    pub(crate) target_count: usize,
+    pub(crate) module_count: usize,
+    pub(crate) local_def_count: usize,
+    pub(crate) import_count: usize,
 }
 
 /// Def maps for all targets inside one parsed package.

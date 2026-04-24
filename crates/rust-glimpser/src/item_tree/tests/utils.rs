@@ -29,7 +29,7 @@ fn render_project_item_tree(project: &Project, include_spans: bool) -> String {
         .into_iter()
         .map(|(package_slot, package)| {
             let item_trees = project
-                .item_tree
+                .item_tree()
                 .package(package_slot)
                 .expect("package item trees should exist while rendering snapshot");
             let mut target_roots = item_trees.target_roots().iter().collect::<Vec<_>>();

@@ -1,3 +1,5 @@
+## Use `impl` blocks for scoping where it makes sense
+
 When adding functions that operate on structs/enums, prefer adding them as methods rather than pure functions.
 Even if function is not explicitly related to a struct/enum, but it only exists as a helper for it, prefer adding it as a static method -- it helps with logical grouping. Pure functions should be relatively rare, and they typically represent either big chunks of isolated business logic, or shared general-purpose helpers.
 Bad:
@@ -19,6 +21,7 @@ impl Item {
 }
 ```
 
+## Avoid single-use helpers
 
 Instead of introducing single-use helpers, prefer embedding functionality as a block with comment.
 Bad (if only used once):
@@ -33,7 +36,14 @@ Good:
 text = text.split_whitespace().collect::<Vec<_>>().join(" ")
 ```
 
+## Paths
 
 For `cargo_metadata` items, always use fully qualified paths.
 
+This project defines a lot of similarly looking names, so include the module path when you refer to something,
+e.g. `def_map::Package` instead of `Package`.
+
+## State of project
+
 This software is heavily WIP, we don't care about backward compatibility.
+It is not yet in production, so we must optimize for the code quality right now rather than legacy compatibility.

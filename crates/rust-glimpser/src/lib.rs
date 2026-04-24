@@ -14,7 +14,7 @@ mod test_utils;
 pub use self::project::Project;
 pub use self::workspace_metadata::WorkspaceMetadata;
 
-/// Runs project analysis for the Cargo manifest at `path` and prints extracted item trees.
+/// Runs project analysis for the Cargo manifest at `path` and prints the current analysis report.
 pub fn analyze(path: PathBuf) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("folder {} does not exist", path.display());

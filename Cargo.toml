@@ -24,7 +24,6 @@ description = "A Rust workspace for rust-glimpser."
 anyhow = "1.0.102"
 clap = "4.5.50"
 cargo_metadata = "0.23"
-rayon = "1"
 expect-test = "1.5.1"
 
 ra_syntax = { package = "syntax", git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca"}

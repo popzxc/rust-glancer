@@ -65,12 +65,12 @@ fn mock_target(name: &str, kind: &[&str], root_file: PathBuf) -> cargo_metadata:
     cargo_metadata::TargetBuilder::default()
         .name(name)
         .kind(
-            kind.into_iter()
+            kind.iter()
                 .map(|&k| cargo_metadata::TargetKind::from(k))
                 .collect::<Vec<_>>(),
         )
         .crate_types(
-            kind.into_iter()
+            kind.iter()
                 .map(|&k| cargo_metadata::CrateType::from(k))
                 .collect::<Vec<_>>(),
         )
