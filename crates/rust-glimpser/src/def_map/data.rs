@@ -40,6 +40,7 @@ pub struct ModuleData {
     pub children: Vec<(String, ModuleId)>,
     pub local_defs: Vec<LocalDefId>,
     pub imports: Vec<ImportId>,
+    pub unresolved_imports: Vec<ImportId>,
     pub scope: ModuleScope,
     pub origin: ModuleOrigin,
 }

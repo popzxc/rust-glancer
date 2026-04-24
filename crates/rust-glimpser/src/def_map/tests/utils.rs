@@ -2,7 +2,7 @@ use expect_test::Expect;
 
 use crate::{
     Project,
-    def_map::{DefId, ModuleId, ScopeBinding, ScopeEntry, TargetRef},
+    def_map::{DefId, ImportData, ImportKind, ModuleId, ScopeBinding, ScopeEntry, TargetRef},
     item_tree::VisibilityLevel,
     parse::{Package, Target},
     test_utils::fixture_crate,
@@ -112,9 +112,39 @@ fn render_target_def_map(
             )
             .expect("string writes should not fail");
         }
+
+        if !module.unresolved_imports.is_empty() {
+            std::fmt::Write::write_str(&mut dump, "unresolved imports\n")
+                .expect("string writes should not fail");
+
+            for import_id in &module.unresolved_imports {
+                let import = def_map
+                    .imports
+                    .get(import_id.0)
+                    .expect("unresolved import id should exist while dumping");
+                std::fmt::Write::write_fmt(
+                    &mut dump,
+                    format_args!("- {}\n", render_unresolved_import(import)),
+                )
+                .expect("string writes should not fail");
+            }
+        }
     }
 
     dump
+}
+
+fn render_unresolved_import(import: &ImportData) -> String {
+    let visibility = match &import.visibility {
+        VisibilityLevel::Private => String::new(),
+        visibility => format!("{visibility} "),
+    };
+    let path = match import.kind {
+        ImportKind::Glob => format!("{}::*", import.path),
+        ImportKind::Named | ImportKind::SelfImport => import.path.to_string(),
+    };
+
+    format!("{visibility}use {path}{}", import.binding)
 }
 
 fn render_scope_entry(project: &Project, entry: &ScopeEntry) -> String {

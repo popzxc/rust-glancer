@@ -114,11 +114,12 @@ impl fmt::Display for Project {
         let def_map_stats = self.def_map.stats();
         writeln!(
             f,
-            "DefMaps {} targets (modules: {}, local defs: {}, imports: {})",
+            "DefMaps {} targets (modules: {}, local defs: {}, imports: {}, unresolved imports: {})",
             def_map_stats.target_count,
             def_map_stats.module_count,
             def_map_stats.local_def_count,
             def_map_stats.import_count,
+            def_map_stats.unresolved_import_count,
         )?;
 
         for (package_slot, package) in self.parse.packages().iter().enumerate() {

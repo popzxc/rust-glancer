@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::item_tree::{ImportAlias, UseImportKind, UsePath, UsePathSegment, VisibilityLevel};
 
 use super::ModuleId;
@@ -51,6 +53,16 @@ impl ImportBinding {
     }
 }
 
+impl fmt::Display for ImportBinding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Inferred => Ok(()),
+            Self::Explicit(name) => write!(f, " as {name}"),
+            Self::Hidden => write!(f, " as _"),
+        }
+    }
+}
+
 /// Import form that matters for scope propagation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportKind {
@@ -98,6 +110,23 @@ impl ImportPath {
     }
 }
 
+impl fmt::Display for ImportPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.absolute {
+            write!(f, "::")?;
+        }
+
+        for (idx, segment) in self.segments.iter().enumerate() {
+            if idx > 0 {
+                write!(f, "::")?;
+            }
+            write!(f, "{segment}")?;
+        }
+
+        Ok(())
+    }
+}
+
 /// One structured path segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathSegment {
@@ -114,6 +143,17 @@ impl PathSegment {
             UsePathSegment::SelfKw => Self::SelfKw,
             UsePathSegment::SuperKw => Self::SuperKw,
             UsePathSegment::CrateKw => Self::CrateKw,
+        }
+    }
+}
+
+impl fmt::Display for PathSegment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Name(name) => write!(f, "{name}"),
+            Self::SelfKw => write!(f, "self"),
+            Self::SuperKw => write!(f, "super"),
+            Self::CrateKw => write!(f, "crate"),
         }
     }
 }

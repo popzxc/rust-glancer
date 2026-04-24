@@ -16,7 +16,8 @@ use crate::{
 };
 
 use super::{
-    DefMapDb, ModuleId, ModuleRef, ModuleScope, PackageSlot, ScopeBinding, TargetRef,
+    DefMapDb, ImportData, ImportId, ModuleId, ModuleRef, ModuleScope, PackageSlot, ScopeBinding,
+    TargetRef,
     collect::{TargetState, collect_target_states},
     path_resolution::{
         namespace_for_def, resolve_path_to_defs, resolve_path_to_modules,
@@ -194,21 +195,31 @@ fn finalize_scopes(states: &mut [Vec<TargetState>]) -> anyhow::Result<()> {
 
         if next_scopes == current_scopes {
             // Once the import graph reaches a fixed point, freeze the resolved scopes into the
-            // public def-map payload.
+            // public def-map payload and preserve unresolved imports for query consumers.
+            let unresolved_imports = collect_unresolved_imports(states, &current_scopes);
+
             for package_states in states.iter_mut() {
                 for state in package_states {
                     let final_scopes = current_scopes
                         .get(state.target.package.0)
                         .and_then(|package_scopes| package_scopes.get(state.target.target.0))
                         .expect("final scopes should exist for every target");
+                    let final_unresolved_imports = unresolved_imports
+                        .get(state.target.package.0)
+                        .and_then(|package_imports| package_imports.get(state.target.target.0))
+                        .expect("unresolved imports should exist for every target");
 
                     for (module_id, scope) in final_scopes.iter().enumerate() {
-                        state
+                        let module = state
                             .def_map
                             .modules
                             .get_mut(module_id)
-                            .expect("module should exist for every final scope")
-                            .scope = scope.clone();
+                            .expect("module should exist for every final scope");
+                        module.scope = scope.clone();
+                        module.unresolved_imports = final_unresolved_imports
+                            .get(module_id)
+                            .expect("unresolved imports should exist for every module")
+                            .clone();
                     }
                 }
             }
@@ -217,6 +228,62 @@ fn finalize_scopes(states: &mut [Vec<TargetState>]) -> anyhow::Result<()> {
         }
 
         current_scopes = next_scopes;
+    }
+}
+
+/// Computes imports that still have no resolution after the fixed-point loop has stabilized.
+fn collect_unresolved_imports(
+    states: &[Vec<TargetState>],
+    final_scopes: &[Vec<Vec<ModuleScope>>],
+) -> Vec<Vec<Vec<Vec<ImportId>>>> {
+    states
+        .iter()
+        .map(|package_states| {
+            package_states
+                .iter()
+                .map(|state| {
+                    let mut module_imports = vec![Vec::new(); state.def_map.modules.len()];
+
+                    for (import_idx, import) in state.def_map.imports.iter().enumerate() {
+                        if import_is_unresolved(state, states, final_scopes, import) {
+                            module_imports
+                                .get_mut(import.module.0)
+                                .expect("import module should exist while collecting unresolved imports")
+                                .push(ImportId(import_idx));
+                        }
+                    }
+
+                    module_imports
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Checks whether one import failed to resolve, independent of whether it introduces a binding.
+fn import_is_unresolved(
+    state: &TargetState,
+    states: &[Vec<TargetState>],
+    final_scopes: &[Vec<Vec<ModuleScope>>],
+    import: &ImportData,
+) -> bool {
+    match import.kind {
+        super::ImportKind::Glob => resolve_path_to_modules(
+            states,
+            final_scopes,
+            state.target,
+            import.module,
+            &import.path,
+        )
+        .is_empty(),
+        super::ImportKind::Named | super::ImportKind::SelfImport => resolve_path_to_defs(
+            states,
+            final_scopes,
+            state.target,
+            import.module,
+            &import.path,
+        )
+        .is_empty(),
     }
 }
 

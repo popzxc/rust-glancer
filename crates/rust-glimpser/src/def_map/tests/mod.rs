@@ -274,3 +274,69 @@ use bar::work as _;
         .entry("work")
         .assert_missing("hidden use renames should not bind the imported item name");
 }
+
+#[test]
+fn records_unresolved_named_and_glob_imports() {
+    utils::check_project_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "unresolved_import_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod existing {}
+
+use missing::Thing;
+use existing::Missing as Renamed;
+pub use existing::missing::*;
+"#,
+        expect![[r#"
+            package unresolved_import_fixture
+
+            unresolved_import_fixture [lib]
+            crate
+            - existing : type [module unresolved_import_fixture[lib]::crate::existing]
+            unresolved imports
+            - use missing::Thing
+            - use existing::Missing as Renamed
+            - pub use existing::missing::*
+
+            crate::existing
+        "#]],
+    );
+}
+
+#[test]
+fn records_unresolved_hidden_imports_without_flagging_resolved_hidden_imports() {
+    utils::check_project_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "hidden_unresolved_import_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod existing {
+    pub fn work() {}
+}
+
+use existing::work as _;
+use missing::Thing as _;
+"#,
+        expect![[r#"
+            package hidden_unresolved_import_fixture
+
+            hidden_unresolved_import_fixture [lib]
+            crate
+            - existing : type [module hidden_unresolved_import_fixture[lib]::crate::existing]
+            unresolved imports
+            - use missing::Thing as _
+
+            crate::existing
+            - work : value [pub fn hidden_unresolved_import_fixture[lib]::crate::existing::work]
+        "#]],
+    );
+}

@@ -164,6 +164,7 @@ impl<'db> TargetScopeCollector<'db> {
             children: Vec::new(),
             local_defs: Vec::new(),
             imports: Vec::new(),
+            unresolved_imports: Vec::new(),
             scope: ModuleScope::default(),
             origin,
         });

@@ -42,6 +42,11 @@ impl DefMapDb {
                 stats.module_count += target.modules.len();
                 stats.local_def_count += target.local_defs.len();
                 stats.import_count += target.imports.len();
+                stats.unresolved_import_count += target
+                    .modules
+                    .iter()
+                    .map(|module| module.unresolved_imports.len())
+                    .sum::<usize>();
             }
         }
 
@@ -68,6 +73,7 @@ pub(crate) struct DefMapStats {
     pub(crate) module_count: usize,
     pub(crate) local_def_count: usize,
     pub(crate) import_count: usize,
+    pub(crate) unresolved_import_count: usize,
 }
 
 /// Def maps for all targets inside one parsed package.
