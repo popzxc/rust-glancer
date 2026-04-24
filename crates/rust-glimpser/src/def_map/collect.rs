@@ -240,6 +240,10 @@ impl<'db> TargetScopeCollector<'db> {
                         local_def: local_def_id,
                     }),
                     visibility: item.visibility.clone(),
+                    owner: ModuleRef {
+                        target: self.target,
+                        module: module_id,
+                    },
                 },
             );
     }
@@ -329,6 +333,10 @@ impl<'db> TargetScopeCollector<'db> {
                         module: child_module,
                     }),
                     visibility,
+                    owner: ModuleRef {
+                        target: self.target,
+                        module: parent_module,
+                    },
                 },
             );
     }
@@ -410,6 +418,10 @@ impl<'db> TargetScopeCollector<'db> {
                 ScopeBinding {
                     def: DefId::Module(module_ref),
                     visibility: item.visibility.clone(),
+                    owner: ModuleRef {
+                        target: self.target,
+                        module: module_id,
+                    },
                 },
             );
     }

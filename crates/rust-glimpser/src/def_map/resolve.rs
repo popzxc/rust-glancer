@@ -309,8 +309,16 @@ fn apply_imports(
                 );
 
                 for source_module in source_modules {
-                    let source_scope =
-                        visible_module_scope_entry_set(current_scopes, state.target, source_module);
+                    let import_owner = ModuleRef {
+                        target: state.target,
+                        module: import.module,
+                    };
+                    let source_scope = visible_module_scope_entry_set(
+                        states,
+                        current_scopes,
+                        import_owner,
+                        source_module,
+                    );
                     let target_scope = next_scopes
                         .get_mut(state.target.package.0)
                         .and_then(|package_scopes| package_scopes.get_mut(state.target.target.0))
@@ -324,6 +332,7 @@ fn apply_imports(
                             &name,
                             &entry,
                             import.visibility.clone(),
+                            import_owner,
                         );
                     }
                 }
@@ -358,6 +367,10 @@ fn apply_imports(
                         ScopeBinding {
                             def: resolved_def,
                             visibility: import.visibility.clone(),
+                            owner: ModuleRef {
+                                target: state.target,
+                                module: import.module,
+                            },
                         },
                     );
                 }

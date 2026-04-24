@@ -5,7 +5,7 @@ use crate::{
     parse::{file::FileId, span::Span},
 };
 
-use super::{DefId, ImportData, ImportId, LocalDefId, ModuleId};
+use super::{DefId, ImportData, ImportId, LocalDefId, ModuleId, ModuleRef};
 
 /// Frozen namespace map for one analyzed target.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -118,6 +118,7 @@ impl ModuleScope {
         name: &str,
         entry: &ScopeEntry,
         visibility: VisibilityLevel,
+        owner: ModuleRef,
     ) {
         for binding in &entry.types {
             self.insert_binding(
@@ -126,6 +127,7 @@ impl ModuleScope {
                 ScopeBinding {
                     def: binding.def,
                     visibility: visibility.clone(),
+                    owner,
                 },
             );
         }
@@ -137,6 +139,7 @@ impl ModuleScope {
                 ScopeBinding {
                     def: binding.def,
                     visibility: visibility.clone(),
+                    owner,
                 },
             );
         }
@@ -148,6 +151,7 @@ impl ModuleScope {
                 ScopeBinding {
                     def: binding.def,
                     visibility: visibility.clone(),
+                    owner,
                 },
             );
         }
@@ -189,6 +193,7 @@ impl ScopeEntry {
 pub struct ScopeBinding {
     pub def: DefId,
     pub visibility: VisibilityLevel,
+    pub owner: ModuleRef,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
