@@ -9,7 +9,7 @@ use crate::{
         VisibilityLevel,
     },
     parse::{Package, Target},
-    test_utils::fixture_crate,
+    test_utils::{fixture_crate, snapshot},
 };
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
@@ -46,16 +46,7 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        let mut packages = self
-            .project
-            .parse_db()
-            .packages()
-            .iter()
-            .enumerate()
-            .collect::<Vec<_>>();
-        packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
-
-        let package_dumps = packages
+        let package_dumps = snapshot::sorted_packages(self.project)
             .into_iter()
             .map(|(package_slot, package)| {
                 let item_trees = self
@@ -86,8 +77,7 @@ struct PackageItemTreeSnapshot<'a> {
 
 impl<'a> PackageItemTreeSnapshot<'a> {
     fn render(&self) -> String {
-        let target_dumps = self
-            .sorted_target_roots()
+        let target_dumps = snapshot::sorted_item_tree_target_roots(self.package, self.item_trees)
             .into_iter()
             .map(|target_root| {
                 let target = self
@@ -101,8 +91,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        let file_dumps = self
-            .sorted_files()
+        let file_dumps = snapshot::sorted_item_tree_files(self.package, self.item_trees)
             .into_iter()
             .map(|file_tree| {
                 self.render_file_item_tree(file_tree, &file_tree.top_level)
@@ -116,48 +105,6 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             "package {}\n\ntargets\n{target_dumps}\n\nfiles\n{file_dumps}",
             self.package.package_name()
         )
-    }
-
-    fn sorted_target_roots(&self) -> Vec<&crate::item_tree::TargetRoot> {
-        let mut target_roots = self.item_trees.target_roots().iter().collect::<Vec<_>>();
-        target_roots.sort_by(|left, right| {
-            let left_target = self
-                .package
-                .target(left.target)
-                .expect("parsed target should exist while sorting");
-            let right_target = self
-                .package
-                .target(right.target)
-                .expect("parsed target should exist while sorting");
-
-            (
-                left_target.kind.sort_order(),
-                left_target.name.as_str(),
-                left_target.src_path.as_path(),
-            )
-                .cmp(&(
-                    right_target.kind.sort_order(),
-                    right_target.name.as_str(),
-                    right_target.src_path.as_path(),
-                ))
-        });
-        target_roots
-    }
-
-    fn sorted_files(&self) -> Vec<&crate::item_tree::FileTree> {
-        let mut files = self.item_trees.files().collect::<Vec<_>>();
-        files.sort_by(|left, right| {
-            let left_path = self
-                .package
-                .file_path(left.file)
-                .expect("item-tree file should exist while sorting");
-            let right_path = self
-                .package
-                .file_path(right.file)
-                .expect("item-tree file should exist while sorting");
-            left_path.cmp(right_path)
-        });
-        files
     }
 
     fn render_target_root(&self, target: &Target, root_file: crate::parse::FileId) -> String {
@@ -448,12 +395,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
     }
 
     fn file_label(&self, file_id: crate::parse::FileId) -> String {
-        self.package
-            .file_path(file_id)
-            .and_then(|path| path.file_name())
-            .and_then(|name| name.to_str())
-            .unwrap_or("<unknown>")
-            .to_string()
+        snapshot::file_label(self.package, file_id)
     }
 }
 

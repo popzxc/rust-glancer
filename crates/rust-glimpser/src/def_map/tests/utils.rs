@@ -7,7 +7,7 @@ use crate::{
     },
     item_tree::VisibilityLevel,
     parse::{Package, Target},
-    test_utils::fixture_crate,
+    test_utils::{fixture_crate, snapshot},
 };
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
@@ -29,16 +29,7 @@ impl<'a> ProjectDefMapSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        let mut packages = self
-            .project
-            .parse_db()
-            .packages()
-            .iter()
-            .enumerate()
-            .collect::<Vec<_>>();
-        packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
-
-        let package_dumps = packages
+        let package_dumps = snapshot::sorted_packages(self.project)
             .into_iter()
             .map(|(package_slot, package)| {
                 PackageDefMapSnapshot {
@@ -64,8 +55,7 @@ struct PackageDefMapSnapshot<'a> {
 
 impl<'a> PackageDefMapSnapshot<'a> {
     fn render(&self) -> String {
-        let target_dumps = self
-            .sorted_targets()
+        let target_dumps = snapshot::sorted_targets(self.package)
             .into_iter()
             .map(|target| {
                 let target_ref = TargetRef {
@@ -86,23 +76,6 @@ impl<'a> PackageDefMapSnapshot<'a> {
             .join("\n\n");
 
         format!("package {}\n\n{target_dumps}", self.package.package_name())
-    }
-
-    fn sorted_targets(&self) -> Vec<&'a Target> {
-        let mut targets = self.package.targets().iter().collect::<Vec<_>>();
-        targets.sort_by(|left, right| {
-            (
-                left.kind.sort_order(),
-                left.name.as_str(),
-                left.src_path.as_path(),
-            )
-                .cmp(&(
-                    right.kind.sort_order(),
-                    right.name.as_str(),
-                    right.src_path.as_path(),
-                ))
-        });
-        targets
     }
 }
 
@@ -268,12 +241,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
     }
 
     fn render_item_tree_ref(&self, item_ref: crate::item_tree::ItemTreeRef) -> String {
-        let file_label = self
-            .package
-            .file_path(item_ref.file_id)
-            .and_then(|path| path.file_name())
-            .and_then(|name| name.to_str())
-            .unwrap_or("<unknown>");
+        let file_label = snapshot::file_label(self.package, item_ref.file_id);
         format!("{file_label}#{}", item_ref.item.0)
     }
 
