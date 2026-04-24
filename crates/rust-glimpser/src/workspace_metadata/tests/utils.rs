@@ -86,32 +86,59 @@ fn render_package(
         .iter()
         .map(|dependency| {
             let package_name = workspace
-                .package(&dependency.package)
+                .package(dependency.package_id())
                 .map(|package| package.name.as_str())
                 .unwrap_or("<missing>");
             (dependency, package_name)
         })
         .collect::<Vec<_>>();
     dependencies.sort_by(|left, right| {
-        (left.0.name.as_str(), left.1, left.0.is_build_only).cmp(&(
-            right.0.name.as_str(),
-            right.1,
-            right.0.is_build_only,
-        ))
+        (
+            left.0.name(),
+            left.1,
+            left.0.is_normal(),
+            left.0.is_build(),
+            left.0.is_dev(),
+        )
+            .cmp(&(
+                right.0.name(),
+                right.1,
+                right.0.is_normal(),
+                right.0.is_build(),
+                right.0.is_dev(),
+            ))
     });
 
     for (dependency, package_name) in dependencies {
-        let build_only = if dependency.is_build_only {
-            " [build-only]"
-        } else {
-            ""
-        };
+        let kind_label = render_dependency_kinds(dependency);
         writeln!(
             dump,
             "- {} -> {}{}",
-            dependency.name, package_name, build_only
+            dependency.name(),
+            package_name,
+            kind_label
         )
         .expect("string writes should not fail");
+    }
+}
+
+fn render_dependency_kinds(dependency: &crate::workspace_metadata::PackageDependency) -> String {
+    let mut kinds = Vec::new();
+
+    if dependency.is_normal() {
+        kinds.push("normal");
+    }
+    if dependency.is_build() {
+        kinds.push("build");
+    }
+    if dependency.is_dev() {
+        kinds.push("dev");
+    }
+
+    if kinds == ["normal"] {
+        String::new()
+    } else {
+        format!(" [{}]", kinds.join(", "))
     }
 }
 

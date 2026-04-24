@@ -102,10 +102,10 @@ fn build_implicit_roots(
         for target in &package.targets {
             let mut target_roots = HashMap::new();
 
-            // A workspace binary/example/test target can refer to its sibling library target by
-            // the package library name without going through Cargo metadata dependencies.
+            // Cargo lets package targets refer to their sibling library by crate name, but build
+            // scripts are separate crates and only see explicit build-dependencies.
             if let Some(&lib_target) = lib_targets.get(package.id()) {
-                if lib_target.target != target.id {
+                if lib_target.target != target.id && !target.kind.is_custom_build() {
                     let lib_name = package
                         .targets
                         .get(lib_target.target.0)
@@ -123,17 +123,16 @@ fn build_implicit_roots(
             }
 
             for dependency in &workspace_package.dependencies {
-                // Step 1 deliberately ignores build-only dependencies in def-map resolution.
-                if dependency.name.is_empty() || dependency.is_build_only {
+                if dependency.name().is_empty() || !dependency.applies_to_target(&target.kind) {
                     continue;
                 }
 
-                let Some(&lib_target) = lib_targets.get(&dependency.package) else {
+                let Some(&lib_target) = lib_targets.get(dependency.package_id()) else {
                     continue;
                 };
 
                 target_roots.insert(
-                    dependency.name.clone(),
+                    dependency.name().to_string(),
                     ModuleRef {
                         target: lib_target,
                         module: ModuleId(0),

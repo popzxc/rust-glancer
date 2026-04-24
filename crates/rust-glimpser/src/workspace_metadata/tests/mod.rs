@@ -23,6 +23,9 @@ dep_alias = { path = "../dep", package = "dep" }
 [build-dependencies]
 build_support = { path = "../../vendor/build_helper", package = "build_helper" }
 
+[dev-dependencies]
+dev_support = { path = "../../vendor/dev_helper", package = "dev_helper" }
+
 [[example]]
 name = "demo"
 path = "examples/demo.rs"
@@ -83,6 +86,15 @@ edition = "2024"
 
 //- /vendor/build_helper/src/lib.rs
 pub fn build_helper() {}
+
+//- /vendor/dev_helper/Cargo.toml
+[package]
+name = "dev_helper"
+version = "0.1.0"
+edition = "2024"
+
+//- /vendor/dev_helper/src/lib.rs
+pub fn dev_helper() {}
 "#,
         expect![[r#"
             workspace .
@@ -97,8 +109,9 @@ pub fn build_helper() {}
             - api [bench] crates/app/benches/api.rs
             - build-script-build [custom-build] crates/app/build.rs
             dependencies
-            - build_support -> build_helper [build-only]
+            - build_support -> build_helper [build]
             - dep_alias -> dep
+            - dev_support -> dev_helper [dev]
 
             package build_helper [member]
             manifest vendor/build_helper/Cargo.toml
@@ -113,6 +126,13 @@ pub fn build_helper() {}
             - dep [lib] crates/dep/src/lib.rs
             dependencies
             - helper_tools -> helper
+
+            package dev_helper [member]
+            manifest vendor/dev_helper/Cargo.toml
+            targets
+            - dev_helper [lib] vendor/dev_helper/src/lib.rs
+            dependencies
+            - <none>
 
             package helper [member]
             manifest vendor/helper/Cargo.toml

@@ -75,15 +75,7 @@ impl WorkspaceMetadata {
                     PackageId::from_cargo(&node.id),
                     node.deps
                         .iter()
-                        .map(|dependency| PackageDependency {
-                            package: PackageId::from_cargo(&dependency.pkg),
-                            name: dependency.name.clone(),
-                            is_build_only: !dependency.dep_kinds.is_empty()
-                                && dependency
-                                    .dep_kinds
-                                    .iter()
-                                    .all(|kind| kind.kind == cargo_metadata::DependencyKind::Build),
-                        })
+                        .map(PackageDependency::from_cargo)
                         .collect::<Vec<_>>(),
                 )
             })
@@ -157,9 +149,75 @@ impl Target {
 /// One dependency edge after Cargo resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageDependency {
-    pub package: PackageId,
-    pub name: String,
-    pub is_build_only: bool,
+    package: PackageId,
+    name: String,
+    is_normal: bool,
+    is_build: bool,
+    is_dev: bool,
+}
+
+impl PackageDependency {
+    fn from_cargo(dependency: &cargo_metadata::NodeDep) -> Self {
+        let mut is_normal = dependency.dep_kinds.is_empty();
+        let mut is_build = false;
+        let mut is_dev = false;
+
+        // Cargo may report separate platform-specific entries for the same dependency kind.
+        // Until we analyze a concrete target platform, each listed kind is potentially relevant.
+        for kind in &dependency.dep_kinds {
+            match kind.kind {
+                cargo_metadata::DependencyKind::Normal => is_normal = true,
+                cargo_metadata::DependencyKind::Development => is_dev = true,
+                cargo_metadata::DependencyKind::Build => is_build = true,
+                // Keep future Cargo dependency kinds resolvable instead of silently dropping them.
+                cargo_metadata::DependencyKind::Unknown => is_normal = true,
+            }
+        }
+
+        Self {
+            package: PackageId::from_cargo(&dependency.pkg),
+            name: dependency.name.clone(),
+            is_normal,
+            is_build,
+            is_dev,
+        }
+    }
+
+    /// Returns the resolved package this dependency points to.
+    pub fn package_id(&self) -> &PackageId {
+        &self.package
+    }
+
+    /// Returns the crate name used by source code to refer to this dependency.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns whether this edge is visible to normal package targets.
+    pub fn is_normal(&self) -> bool {
+        self.is_normal
+    }
+
+    /// Returns whether this edge is visible to build scripts.
+    pub fn is_build(&self) -> bool {
+        self.is_build
+    }
+
+    /// Returns whether this edge is visible to dev targets.
+    pub fn is_dev(&self) -> bool {
+        self.is_dev
+    }
+
+    /// Returns whether this dependency can be named from a target of the given kind.
+    pub fn applies_to_target(&self, target_kind: &TargetKind) -> bool {
+        match target_kind {
+            TargetKind::CustomBuild => self.is_build,
+            TargetKind::Example | TargetKind::Test | TargetKind::Bench => {
+                self.is_normal || self.is_dev
+            }
+            TargetKind::Lib | TargetKind::Bin | TargetKind::Other(_) => self.is_normal,
+        }
+    }
 }
 
 /// Analysis-relevant target kinds.
@@ -211,6 +269,10 @@ impl TargetKind {
 
     pub fn is_lib(&self) -> bool {
         matches!(self, Self::Lib)
+    }
+
+    pub fn is_custom_build(&self) -> bool {
+        matches!(self, Self::CustomBuild)
     }
 
     // Used for predictable ordering, e.g.
