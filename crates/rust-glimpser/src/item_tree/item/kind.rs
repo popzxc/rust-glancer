@@ -1,5 +1,3 @@
-use std::fmt;
-
 use super::{
     import::{ExternCrateItem, UseItem},
     module::ModuleItem,
@@ -10,22 +8,37 @@ use super::{
 /// Unit variants are enough for plain local definitions. Variants whose syntax
 /// matters to later lowering stages carry structured item-tree facts, boxed to
 /// keep the enum size stable as those facts grow.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum ItemKind {
+    #[display("asm")]
     AsmExpr,
+    #[display("const")]
     Const,
+    #[display("enum")]
     Enum,
+    #[display("extern_block")]
     ExternBlock,
+    #[display("extern_crate")]
     ExternCrate(Box<ExternCrateItem>),
+    #[display("fn")]
     Function,
+    #[display("impl")]
     Impl,
+    #[display("macro_definition")]
     MacroDefinition,
+    #[display("module")]
     Module(Box<ModuleItem>),
+    #[display("static")]
     Static,
+    #[display("struct")]
     Struct,
+    #[display("trait")]
     Trait,
+    #[display("type_alias")]
     TypeAlias,
+    #[display("union")]
     Union,
+    #[display("use")]
     Use(Box<UseItem>),
 }
 
@@ -52,51 +65,37 @@ impl ItemKind {
     }
 }
 
-impl fmt::Display for ItemKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.tag().fmt(f)
-    }
-}
-
 /// Payload-independent item classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub enum ItemTag {
+    #[display("asm")]
     AsmExpr,
+    #[display("const")]
     Const,
+    #[display("enum")]
     Enum,
+    #[display("extern_block")]
     ExternBlock,
+    #[display("extern_crate")]
     ExternCrate,
+    #[display("fn")]
     Function,
+    #[display("impl")]
     Impl,
+    #[display("macro_definition")]
     MacroDefinition,
+    #[display("module")]
     Module,
+    #[display("static")]
     Static,
+    #[display("struct")]
     Struct,
+    #[display("trait")]
     Trait,
+    #[display("type_alias")]
     TypeAlias,
+    #[display("union")]
     Union,
+    #[display("use")]
     Use,
-}
-
-impl fmt::Display for ItemTag {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = match self {
-            Self::AsmExpr => "asm",
-            Self::Const => "const",
-            Self::Enum => "enum",
-            Self::ExternBlock => "extern_block",
-            Self::ExternCrate => "extern_crate",
-            Self::Function => "fn",
-            Self::Impl => "impl",
-            Self::MacroDefinition => "macro_definition",
-            Self::Module => "module",
-            Self::Static => "static",
-            Self::Struct => "struct",
-            Self::Trait => "trait",
-            Self::TypeAlias => "type_alias",
-            Self::Union => "union",
-            Self::Use => "use",
-        };
-        write!(f, "{value}")
-    }
 }

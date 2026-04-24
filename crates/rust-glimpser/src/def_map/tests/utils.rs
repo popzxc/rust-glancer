@@ -2,213 +2,282 @@ use expect_test::Expect;
 
 use crate::{
     Project,
-    def_map::{DefId, ImportData, ImportKind, ModuleId, ScopeBinding, ScopeEntry, TargetRef},
+    def_map::{
+        DefId, DefMap, ImportData, ImportKind, ModuleId, ScopeBinding, ScopeEntry, TargetRef,
+    },
     item_tree::VisibilityLevel,
     parse::{Package, Target},
     test_utils::fixture_crate,
 };
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
-    let actual = render_project_def_map(&fixture_crate!(fixture).project());
+    let project = fixture_crate!(fixture).project();
+    let actual = ProjectDefMapSnapshot::new(&project).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
 
-fn render_project_def_map(project: &Project) -> String {
-    let mut packages = project.packages().iter().enumerate().collect::<Vec<_>>();
-    packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
-
-    let package_dumps = packages
-        .into_iter()
-        .map(|(package_slot, package)| {
-            let mut targets = package.targets().iter().collect::<Vec<_>>();
-            targets.sort_by(|left, right| {
-                (
-                    left.kind.sort_order(),
-                    left.name.as_str(),
-                    left.src_path.as_path(),
-                )
-                    .cmp(&(
-                        right.kind.sort_order(),
-                        right.name.as_str(),
-                        right.src_path.as_path(),
-                    ))
-            });
-
-            let target_dumps = targets
-                .into_iter()
-                .map(|target| {
-                    render_target_def_map(
-                        project,
-                        package,
-                        target,
-                        TargetRef {
-                            package: crate::def_map::PackageSlot(package_slot),
-                            target: target.id,
-                        },
-                    )
-                    .trim_end()
-                    .to_string()
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-
-            format!("package {}\n\n{target_dumps}", package.package_name())
-        })
-        .collect::<Vec<_>>();
-
-    package_dumps.join("\n\n")
+/// Project-level DefMap snapshot context.
+/// Renders package sections such as `package app`.
+struct ProjectDefMapSnapshot<'a> {
+    project: &'a Project,
 }
 
-fn render_target_def_map(
-    project: &Project,
-    package: &Package,
-    target: &Target,
-    target_ref: TargetRef,
-) -> String {
-    let def_map = project
-        .def_map(target_ref)
-        .expect("target def map should exist while rendering snapshot");
-    let mut modules = def_map
-        .modules
-        .iter()
-        .enumerate()
-        .map(|(idx, _)| {
-            let module_id = ModuleId(idx);
-            (module_path(project, target_ref, module_id), module_id)
-        })
-        .collect::<Vec<_>>();
-    modules.sort_by(|left, right| left.0.cmp(&right.0));
+impl<'a> ProjectDefMapSnapshot<'a> {
+    fn new(project: &'a Project) -> Self {
+        Self { project }
+    }
 
-    let mut dump = String::new();
-    std::fmt::Write::write_fmt(
-        &mut dump,
-        format_args!("{} [{}]\n", package.package_name(), target.kind),
-    )
-    .expect("string writes should not fail");
+    fn render(&self) -> String {
+        let mut packages = self
+            .project
+            .packages()
+            .iter()
+            .enumerate()
+            .collect::<Vec<_>>();
+        packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
 
-    for (idx, (module_path, module_id)) in modules.into_iter().enumerate() {
-        if idx > 0 {
-            dump.push('\n');
-        }
+        let package_dumps = packages
+            .into_iter()
+            .map(|(package_slot, package)| {
+                PackageDefMapSnapshot {
+                    project: self.project,
+                    package_slot,
+                    package,
+                }
+                .render()
+            })
+            .collect::<Vec<_>>();
 
-        std::fmt::Write::write_fmt(&mut dump, format_args!("{module_path}\n"))
-            .expect("string writes should not fail");
+        package_dumps.join("\n\n")
+    }
+}
 
-        let module = def_map
-            .module(module_id)
-            .expect("module id should exist in def map dump");
-        let mut names = module.scope.names.keys().cloned().collect::<Vec<_>>();
-        names.sort();
+/// Package-level DefMap snapshot context.
+/// Renders target sections such as `app [lib]`.
+struct PackageDefMapSnapshot<'a> {
+    project: &'a Project,
+    package_slot: usize,
+    package: &'a Package,
+}
 
-        for name in names {
-            let entry = module
-                .scope
-                .entry(&name)
-                .expect("scope entry should exist while dumping");
-            std::fmt::Write::write_fmt(
-                &mut dump,
-                format_args!("- {name} : {}\n", render_scope_entry(project, entry)),
+impl<'a> PackageDefMapSnapshot<'a> {
+    fn render(&self) -> String {
+        let target_dumps = self
+            .sorted_targets()
+            .into_iter()
+            .map(|target| {
+                let target_ref = TargetRef {
+                    package: crate::def_map::PackageSlot(self.package_slot),
+                    target: target.id,
+                };
+                TargetDefMapSnapshot {
+                    project: self.project,
+                    package: self.package,
+                    target,
+                    target_ref,
+                }
+                .render()
+                .trim_end()
+                .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        format!("package {}\n\n{target_dumps}", self.package.package_name())
+    }
+
+    fn sorted_targets(&self) -> Vec<&'a Target> {
+        let mut targets = self.package.targets().iter().collect::<Vec<_>>();
+        targets.sort_by(|left, right| {
+            (
+                left.kind.sort_order(),
+                left.name.as_str(),
+                left.src_path.as_path(),
             )
-            .expect("string writes should not fail");
-        }
+                .cmp(&(
+                    right.kind.sort_order(),
+                    right.name.as_str(),
+                    right.src_path.as_path(),
+                ))
+        });
+        targets
+    }
+}
 
-        if !module.unresolved_imports.is_empty() {
-            std::fmt::Write::write_str(&mut dump, "unresolved imports\n")
-                .expect("string writes should not fail");
+/// Target-level DefMap snapshot context with access to resolved module paths.
+/// Renders module scopes such as `crate::nested`.
+struct TargetDefMapSnapshot<'a> {
+    project: &'a Project,
+    package: &'a Package,
+    target: &'a Target,
+    target_ref: TargetRef,
+}
 
-            for import_id in &module.unresolved_imports {
-                let import = def_map
-                    .imports
-                    .get(import_id.0)
-                    .expect("unresolved import id should exist while dumping");
-                std::fmt::Write::write_fmt(
-                    &mut dump,
-                    format_args!("- {}\n", render_unresolved_import(import)),
-                )
-                .expect("string writes should not fail");
+impl<'a> TargetDefMapSnapshot<'a> {
+    fn render(&self) -> String {
+        let def_map = self.def_map();
+        let mut dump = format!("{} [{}]\n", self.package.package_name(), self.target.kind);
+
+        for (idx, (module_path, module_id)) in self.sorted_modules().into_iter().enumerate() {
+            if idx > 0 {
+                dump.push('\n');
+            }
+
+            dump.push_str(&module_path);
+            dump.push('\n');
+
+            let module = def_map
+                .module(module_id)
+                .expect("module id should exist in def map dump");
+
+            for name in self.sorted_scope_names(&module.scope) {
+                let entry = module
+                    .scope
+                    .entry(&name)
+                    .expect("scope entry should exist while dumping");
+                dump.push_str(&format!("- {name} : {}\n", self.render_scope_entry(entry)));
+            }
+
+            if !module.unresolved_imports.is_empty() {
+                dump.push_str("unresolved imports\n");
+
+                for import_id in &module.unresolved_imports {
+                    let import = def_map
+                        .imports
+                        .get(import_id.0)
+                        .expect("unresolved import id should exist while dumping");
+                    dump.push_str(&format!("- {}\n", self.render_unresolved_import(import)));
+                }
             }
         }
+
+        dump
     }
 
-    dump
-}
-
-fn render_unresolved_import(import: &ImportData) -> String {
-    let visibility = match &import.visibility {
-        VisibilityLevel::Private => String::new(),
-        visibility => format!("{visibility} "),
-    };
-    let path = match import.kind {
-        ImportKind::Glob => format!("{}::*", import.path),
-        ImportKind::Named | ImportKind::SelfImport => import.path.to_string(),
-    };
-
-    format!("{visibility}use {path}{}", import.binding)
-}
-
-fn render_scope_entry(project: &Project, entry: &ScopeEntry) -> String {
-    let mut parts = Vec::new();
-
-    if !entry.types.is_empty() {
-        parts.push(format!(
-            "type [{}]",
-            render_namespace_bindings(project, &entry.types)
-        ));
+    fn def_map(&self) -> &'a DefMap {
+        self.project
+            .def_map(self.target_ref)
+            .expect("target def map should exist while rendering snapshot")
     }
 
-    if !entry.values.is_empty() {
-        parts.push(format!(
-            "value [{}]",
-            render_namespace_bindings(project, &entry.values)
-        ));
+    fn sorted_modules(&self) -> Vec<(String, ModuleId)> {
+        let mut modules = self
+            .def_map()
+            .modules
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| {
+                let module_id = ModuleId(idx);
+                (self.module_path(self.target_ref, module_id), module_id)
+            })
+            .collect::<Vec<_>>();
+        modules.sort_by(|left, right| left.0.cmp(&right.0));
+        modules
     }
 
-    if !entry.macros.is_empty() {
-        parts.push(format!(
-            "macro [{}]",
-            render_namespace_bindings(project, &entry.macros)
-        ));
+    fn sorted_scope_names(&self, scope: &crate::def_map::ModuleScope) -> Vec<String> {
+        let mut names = scope.names.keys().cloned().collect::<Vec<_>>();
+        names.sort();
+        names
     }
 
-    parts.join(" | ")
+    fn render_scope_entry(&self, entry: &ScopeEntry) -> String {
+        let mut parts = Vec::new();
+
+        if !entry.types.is_empty() {
+            parts.push(format!(
+                "type [{}]",
+                self.render_namespace_bindings(&entry.types)
+            ));
+        }
+
+        if !entry.values.is_empty() {
+            parts.push(format!(
+                "value [{}]",
+                self.render_namespace_bindings(&entry.values)
+            ));
+        }
+
+        if !entry.macros.is_empty() {
+            parts.push(format!(
+                "macro [{}]",
+                self.render_namespace_bindings(&entry.macros)
+            ));
+        }
+
+        parts.join(" | ")
+    }
+
+    fn render_namespace_bindings(&self, bindings: &[ScopeBinding]) -> String {
+        let mut rendered = bindings
+            .iter()
+            .filter_map(|binding| self.binding_origin(binding))
+            .map(|origin| origin.render())
+            .collect::<Vec<_>>();
+        rendered.sort();
+        rendered.join("; ")
+    }
+
+    fn binding_origin(&self, binding: &'a ScopeBinding) -> Option<BindingOrigin<'a>> {
+        let target_ref = match binding.def {
+            DefId::Module(module_ref) => module_ref.target,
+            DefId::Local(local_def_ref) => local_def_ref.target,
+        };
+        self.project.packages().get(target_ref.package.0)?;
+        self.project.def_map(target_ref)?;
+
+        Some(BindingOrigin {
+            project: self.project,
+            def: binding.def,
+            binding_visibility: &binding.visibility,
+        })
+    }
+
+    fn render_unresolved_import(&self, import: &ImportData) -> String {
+        let visibility = match &import.visibility {
+            VisibilityLevel::Private => String::new(),
+            visibility => format!("{visibility} "),
+        };
+        let path = match import.kind {
+            ImportKind::Glob => format!("{}::*", import.path),
+            ImportKind::Named | ImportKind::SelfImport => import.path.to_string(),
+        };
+
+        format!("{visibility}use {path}{}", import.binding)
+    }
+
+    fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {
+        let module = self
+            .project
+            .def_map(target_ref)
+            .expect("target def map should exist while building relative module path")
+            .module(module_id)
+            .expect("module id should exist while building relative module path");
+
+        match module.parent {
+            Some(parent) => {
+                let parent_path = self.module_path(target_ref, parent);
+                let name = module
+                    .name
+                    .as_deref()
+                    .expect("non-root modules should have names");
+                format!("{parent_path}::{name}")
+            }
+            None => "crate".to_string(),
+        }
+    }
 }
 
-fn render_namespace_bindings(project: &Project, bindings: &[ScopeBinding]) -> String {
-    let mut rendered = bindings
-        .iter()
-        .filter_map(|binding| binding_origin(project, binding))
-        .map(|origin| origin.render())
-        .collect::<Vec<_>>();
-    rendered.sort();
-    rendered.join("; ")
-}
-
-fn binding_origin<'a>(
-    project: &'a Project,
-    binding: &'a ScopeBinding,
-) -> Option<BindingOrigin<'a>> {
-    let target_ref = match binding.def {
-        DefId::Module(module_ref) => module_ref.target,
-        DefId::Local(local_def_ref) => local_def_ref.target,
-    };
-    project.packages().get(target_ref.package.0)?;
-    project.def_map(target_ref)?;
-
-    Some(BindingOrigin {
-        project,
-        def: binding.def,
-        binding_visibility: &binding.visibility,
-    })
-}
-
+/// Snapshot-only view of where a resolved scope binding came from.
+/// Renders origins such as `pub fn app[lib]::crate::make`.
 struct BindingOrigin<'a> {
     project: &'a Project,
     def: DefId,
     binding_visibility: &'a VisibilityLevel,
 }
 
-impl<'a> BindingOrigin<'a> {
+impl BindingOrigin<'_> {
     fn render(&self) -> String {
         let visibility = Self::visibility_prefix(self.binding_visibility);
 
@@ -251,8 +320,29 @@ impl<'a> BindingOrigin<'a> {
             "{}[{}]::{}",
             package.package_name(),
             target.kind,
-            module_path(self.project, module_ref.target, module_ref.module),
+            self.module_path(module_ref.target, module_ref.module),
         )
+    }
+
+    fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {
+        let module = self
+            .project
+            .def_map(target_ref)
+            .expect("target def map should exist while building relative module path")
+            .module(module_id)
+            .expect("module id should exist while building relative module path");
+
+        match module.parent {
+            Some(parent) => {
+                let parent_path = self.module_path(target_ref, parent);
+                let name = module
+                    .name
+                    .as_deref()
+                    .expect("non-root modules should have names");
+                format!("{parent_path}::{name}")
+            }
+            None => "crate".to_string(),
+        }
     }
 
     fn visibility_prefix(visibility: &VisibilityLevel) -> String {
@@ -260,25 +350,5 @@ impl<'a> BindingOrigin<'a> {
             VisibilityLevel::Private => String::new(),
             _ => format!("{visibility} "),
         }
-    }
-}
-
-fn module_path(project: &Project, target_ref: TargetRef, module_id: ModuleId) -> String {
-    let module = project
-        .def_map(target_ref)
-        .expect("target def map should exist while building relative module path")
-        .module(module_id)
-        .expect("module id should exist while building relative module path");
-
-    match module.parent {
-        Some(parent) => {
-            let parent_path = module_path(project, target_ref, parent);
-            let name = module
-                .name
-                .as_deref()
-                .expect("non-root modules should have names");
-            format!("{parent_path}::{name}")
-        }
-        None => "crate".to_string(),
     }
 }

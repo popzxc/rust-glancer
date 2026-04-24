@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    fmt,
     path::{Path, PathBuf},
 };
 
@@ -116,18 +115,13 @@ impl WorkspaceMetadata {
 }
 
 /// Stable package identifier derived from Cargo metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display)]
+#[display("{_0}")]
 pub struct PackageId(String);
 
 impl PackageId {
     fn from_cargo(id: &cargo_metadata::PackageId) -> Self {
         Self(id.to_string())
-    }
-}
-
-impl fmt::Display for PackageId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
     }
 }
 
@@ -173,14 +167,21 @@ pub struct PackageDependency {
 /// We intentionally support less kinds than `cargo_metadata`,
 /// since we are only interested in the kinds that are useful
 /// for analysis.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display)]
 pub enum TargetKind {
+    #[display("lib")]
     Lib,
+    #[display("bin")]
     Bin,
+    #[display("example")]
     Example,
+    #[display("test")]
     Test,
+    #[display("bench")]
     Bench,
+    #[display("custom-build")]
     CustomBuild,
+    #[display("{_0}")]
     Other(String),
 }
 
@@ -224,20 +225,5 @@ impl TargetKind {
             Self::CustomBuild => 5,
             Self::Other(_) => 6,
         }
-    }
-}
-
-impl fmt::Display for TargetKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = match self {
-            Self::Lib => "lib",
-            Self::Bin => "bin",
-            Self::Example => "example",
-            Self::Test => "test",
-            Self::Bench => "bench",
-            Self::CustomBuild => "custom-build",
-            Self::Other(kind) => kind,
-        };
-        f.write_str(value)
     }
 }

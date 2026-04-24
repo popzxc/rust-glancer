@@ -78,29 +78,24 @@ pub struct UseImport {
 }
 
 /// Import form before name resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub enum UseImportKind {
+    #[display("named")]
     Named,
+    #[display("self")]
     SelfImport,
+    #[display("glob")]
     Glob,
 }
 
-impl fmt::Display for UseImportKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = match self {
-            Self::Named => "named",
-            Self::SelfImport => "self",
-            Self::Glob => "glob",
-        };
-        write!(f, "{value}")
-    }
-}
-
 /// Explicit import alias, including `as _`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum ImportAlias {
+    #[display("")]
     Inferred,
+    #[display(" as {_0}")]
     Explicit(String),
+    #[display(" as _")]
     Hidden,
 }
 
@@ -118,16 +113,6 @@ impl ImportAlias {
             .name()
             .map(|name| Self::Explicit(name.text().to_string()))
             .unwrap_or(Self::Inferred)
-    }
-}
-
-impl fmt::Display for ImportAlias {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Inferred => Ok(()),
-            Self::Explicit(name) => write!(f, " as {name}"),
-            Self::Hidden => write!(f, " as _"),
-        }
     }
 }
 
@@ -215,21 +200,14 @@ impl fmt::Display for UsePath {
 }
 
 /// One structured path segment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum UsePathSegment {
+    #[display("{_0}")]
     Name(String),
+    #[display("self")]
     SelfKw,
+    #[display("super")]
     SuperKw,
+    #[display("crate")]
     CrateKw,
-}
-
-impl fmt::Display for UsePathSegment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Name(name) => write!(f, "{name}"),
-            Self::SelfKw => write!(f, "self"),
-            Self::SuperKw => write!(f, "super"),
-            Self::CrateKw => write!(f, "crate"),
-        }
-    }
 }

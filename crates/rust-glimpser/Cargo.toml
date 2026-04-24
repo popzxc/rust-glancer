@@ -14,6 +14,7 @@ description.workspace = true
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
 cargo_metadata.workspace = true
+derive_more = { workspace = true, features = ["display"] }
 ra_syntax.workspace = true
 
 [dev-dependencies]

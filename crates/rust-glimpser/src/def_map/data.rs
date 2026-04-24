@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt};
+use std::collections::HashMap;
 
 use crate::{
     item_tree::{ItemTag, VisibilityLevel},
@@ -74,16 +74,25 @@ pub struct LocalDefData {
 }
 
 /// Module-scope definition kind that participates in def-map namespaces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub enum LocalDefKind {
+    #[display("const")]
     Const,
+    #[display("enum")]
     Enum,
+    #[display("fn")]
     Function,
+    #[display("macro_definition")]
     MacroDefinition,
+    #[display("static")]
     Static,
+    #[display("struct")]
     Struct,
+    #[display("trait")]
     Trait,
+    #[display("type_alias")]
     TypeAlias,
+    #[display("union")]
     Union,
 }
 
@@ -218,22 +227,5 @@ impl LocalDefKind {
             }
             Self::MacroDefinition => Namespace::Macros,
         }
-    }
-}
-
-impl fmt::Display for LocalDefKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = match self {
-            Self::Const => "const",
-            Self::Enum => "enum",
-            Self::Function => "fn",
-            Self::MacroDefinition => "macro_definition",
-            Self::Static => "static",
-            Self::Struct => "struct",
-            Self::Trait => "trait",
-            Self::TypeAlias => "type_alias",
-            Self::Union => "union",
-        };
-        write!(f, "{value}")
     }
 }

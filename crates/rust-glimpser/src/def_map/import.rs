@@ -28,10 +28,13 @@ impl ImportData {
 }
 
 /// Binding strategy for one lowered import or extern crate item.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum ImportBinding {
+    #[display("")]
     Inferred,
+    #[display(" as {_0}")]
     Explicit(String),
+    #[display(" as _")]
     Hidden,
 }
 
@@ -49,16 +52,6 @@ impl ImportBinding {
             Self::Inferred => inferred_name,
             Self::Explicit(name) => Some(name.clone()),
             Self::Hidden => None,
-        }
-    }
-}
-
-impl fmt::Display for ImportBinding {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Inferred => Ok(()),
-            Self::Explicit(name) => write!(f, " as {name}"),
-            Self::Hidden => write!(f, " as _"),
         }
     }
 }
@@ -128,11 +121,15 @@ impl fmt::Display for ImportPath {
 }
 
 /// One structured path segment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum PathSegment {
+    #[display("{_0}")]
     Name(String),
+    #[display("self")]
     SelfKw,
+    #[display("super")]
     SuperKw,
+    #[display("crate")]
     CrateKw,
 }
 
@@ -143,17 +140,6 @@ impl PathSegment {
             UsePathSegment::SelfKw => Self::SelfKw,
             UsePathSegment::SuperKw => Self::SuperKw,
             UsePathSegment::CrateKw => Self::CrateKw,
-        }
-    }
-}
-
-impl fmt::Display for PathSegment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Name(name) => write!(f, "{name}"),
-            Self::SelfKw => write!(f, "self"),
-            Self::SuperKw => write!(f, "super"),
-            Self::CrateKw => write!(f, "crate"),
         }
     }
 }
