@@ -12,6 +12,7 @@ use anyhow::Context as _;
 use crate::{
     item_tree::ItemTreeDb,
     parse::{self, package::Package},
+    workspace_metadata::WorkspaceMetadata,
 };
 
 use super::{
@@ -28,10 +29,13 @@ use super::{
 /// `collect_target_states` gives us module trees, local definitions, imports, and the initial
 /// module scopes that contain only directly declared names. This phase adds the implicit
 /// cross-target roots and repeatedly applies imports until the scopes stabilize.
-pub(crate) fn build_db(parse: &parse::ParseDb, item_tree: &ItemTreeDb) -> anyhow::Result<DefMapDb> {
-    let implicit_roots =
-        build_implicit_roots(parse.metadata(), parse.packages(), parse.package_by_id())
-            .context("while attempting to build implicit target roots")?;
+pub(crate) fn build_db(
+    workspace: &WorkspaceMetadata,
+    parse: &parse::ParseDb,
+    item_tree: &ItemTreeDb,
+) -> anyhow::Result<DefMapDb> {
+    let implicit_roots = build_implicit_roots(workspace, parse.packages())
+        .context("while attempting to build implicit target roots")?;
 
     let mut target_states = collect_target_states(parse.packages(), item_tree, &implicit_roots)
         .context("while attempting to collect target definitions and imports")?;
@@ -61,44 +65,50 @@ pub(crate) fn build_db(parse: &parse::ParseDb, item_tree: &ItemTreeDb) -> anyhow
 /// Within the workspace, non-library targets implicitly see their own package's library target.
 /// All targets also see dependency library targets by dependency name.
 fn build_implicit_roots(
-    metadata: &cargo_metadata::Metadata,
+    workspace: &WorkspaceMetadata,
     packages: &[Package],
-    package_by_id: &HashMap<cargo_metadata::PackageId, usize>,
 ) -> anyhow::Result<Vec<Vec<HashMap<String, ModuleRef>>>> {
     let lib_targets = packages
         .iter()
         .enumerate()
-        .map(|(package_slot, package)| {
+        .filter_map(|(package_slot, package)| {
             package
                 .targets
                 .iter()
-                .find(|target| target.cargo_target.is_kind(cargo_metadata::TargetKind::Lib))
-                .map(|target| TargetRef {
-                    package: PackageSlot(package_slot),
-                    target: target.id,
+                .find(|target| target.kind.is_lib())
+                .map(|target| {
+                    (
+                        package.id().clone(),
+                        TargetRef {
+                            package: PackageSlot(package_slot),
+                            target: target.id,
+                        },
+                    )
                 })
         })
-        .collect::<Vec<_>>();
-
-    let resolve = metadata.resolve.as_ref();
+        .collect::<HashMap<_, _>>();
     let mut roots = Vec::with_capacity(packages.len());
 
-    for (package_slot, package) in packages.iter().enumerate() {
+    for package in packages {
         let mut package_roots = Vec::with_capacity(package.targets.len());
-        let package_node = resolve.map(|resolve| &resolve[package.id()]);
+        let workspace_package = workspace.package(package.id()).with_context(|| {
+            format!(
+                "while attempting to fetch workspace metadata for package {}",
+                package.id()
+            )
+        })?;
 
         for target in &package.targets {
             let mut target_roots = HashMap::new();
 
             // A workspace binary/example/test target can refer to its sibling library target by
             // the package library name without going through Cargo metadata dependencies.
-            if let Some(lib_target) = lib_targets[package_slot] {
+            if let Some(&lib_target) = lib_targets.get(package.id()) {
                 if lib_target.target != target.id {
                     let lib_name = package
                         .targets
                         .get(lib_target.target.0)
                         .expect("library target should exist")
-                        .cargo_target
                         .name
                         .clone();
                     target_roots.insert(
@@ -111,28 +121,23 @@ fn build_implicit_roots(
                 }
             }
 
-            if let Some(package_node) = package_node {
-                for dependency in &package_node.deps {
-                    // Step 1 deliberately ignores build-only dependencies in def-map resolution.
-                    if dependency.name.is_empty() || dependency_is_build_only(dependency) {
-                        continue;
-                    }
-
-                    let Some(&dependency_slot) = package_by_id.get(&dependency.pkg) else {
-                        continue;
-                    };
-                    let Some(lib_target) = lib_targets[dependency_slot] else {
-                        continue;
-                    };
-
-                    target_roots.insert(
-                        dependency.name.clone(),
-                        ModuleRef {
-                            target: lib_target,
-                            module: ModuleId(0),
-                        },
-                    );
+            for dependency in &workspace_package.dependencies {
+                // Step 1 deliberately ignores build-only dependencies in def-map resolution.
+                if dependency.name.is_empty() || dependency.is_build_only {
+                    continue;
                 }
+
+                let Some(&lib_target) = lib_targets.get(&dependency.package) else {
+                    continue;
+                };
+
+                target_roots.insert(
+                    dependency.name.clone(),
+                    ModuleRef {
+                        target: lib_target,
+                        module: ModuleId(0),
+                    },
+                );
             }
 
             package_roots.push(target_roots);
@@ -142,15 +147,6 @@ fn build_implicit_roots(
     }
 
     Ok(roots)
-}
-
-/// Returns whether Cargo marks this dependency edge as build-only.
-fn dependency_is_build_only(dependency: &cargo_metadata::NodeDep) -> bool {
-    !dependency.dep_kinds.is_empty()
-        && dependency
-            .dep_kinds
-            .iter()
-            .all(|kind| kind.kind == cargo_metadata::DependencyKind::Build)
 }
 
 /// Resolves imports until every target scope stops changing.

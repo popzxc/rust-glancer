@@ -54,7 +54,7 @@ impl<'db> PackageLowering<'db> {
                 self.lower_file(target.root_file).with_context(|| {
                     format!(
                         "while attempting to lower root file for target {}",
-                        target.cargo_target.name
+                        target.name
                     )
                 })?;
                 Ok(TargetRoot {

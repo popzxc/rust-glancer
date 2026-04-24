@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::{
     parse::ParseDb,
     test_utils::{CrateFixture, fixture_crate, test_file},
+    workspace_metadata::WorkspaceMetadata,
 };
 
 fn test_metadata(path: &str) -> cargo_metadata::Metadata {
@@ -14,8 +15,10 @@ fn test_metadata(path: &str) -> cargo_metadata::Metadata {
 
 #[test]
 fn analyzes_all_workspace_members() {
-    let analysis = ParseDb::build(test_metadata("moderate_workspace"))
-        .expect("workspace fixture should parse");
+    let analysis = ParseDb::build(&WorkspaceMetadata::from_cargo(test_metadata(
+        "moderate_workspace",
+    )))
+    .expect("workspace fixture should parse");
 
     assert_eq!(
         analysis.workspace_packages().count(),
@@ -31,8 +34,8 @@ fn analyzes_all_workspace_members() {
 
 #[test]
 fn resolves_project() {
-    let metadata = test_metadata("moderate_workspace");
-    let analysis = ParseDb::build(metadata).expect("workspace fixture should parse");
+    let metadata = WorkspaceMetadata::from_cargo(test_metadata("moderate_workspace"));
+    let analysis = ParseDb::build(&metadata).expect("workspace fixture should parse");
 
     assert_eq!(
         analysis.packages().len(),
@@ -91,7 +94,8 @@ fn parses_shared_files_once_across_targets() {
         *metadata_package = package;
     }
 
-    let parse = ParseDb::build(metadata).expect("fixture metadata should parse");
+    let parse = ParseDb::build(&WorkspaceMetadata::from_cargo(metadata))
+        .expect("fixture metadata should parse");
     let package = parse
         .packages()
         .first()

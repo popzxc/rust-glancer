@@ -71,7 +71,7 @@ pub(super) fn collect_target_states(
             let target_root = item_tree_package.target_root(target.id).with_context(|| {
                 format!(
                     "while attempting to fetch item tree target root for {}",
-                    target.cargo_target.name
+                    target.name
                 )
             })?;
 
@@ -81,7 +81,7 @@ pub(super) fn collect_target_states(
                 .with_context(|| {
                     format!(
                         "while attempting to collect target scope for {}",
-                        target.cargo_target.name
+                        target.name
                     )
                 })?;
             package_states.push(state);
@@ -143,7 +143,7 @@ impl<'db> TargetScopeCollector<'db> {
 
         Ok(TargetState {
             target: self.target,
-            target_name: target.cargo_target.name.clone(),
+            target_name: target.name.clone(),
             def_map: self.def_map,
             base_scopes: self.base_scopes,
             implicit_roots: self.implicit_roots.clone(),

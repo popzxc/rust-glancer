@@ -8,11 +8,13 @@ use crate::{
     def_map::DefMapDb,
     item_tree::{ItemKind, ItemNode, ItemTreeDb, ModuleSource},
     parse::{self, ParseDb},
+    workspace_metadata::WorkspaceMetadata,
 };
 
 /// Fully built project pipeline state.
 #[derive(Debug, Clone)]
 pub struct Project {
+    pub workspace: WorkspaceMetadata,
     pub parse: ParseDb,
     pub item_tree: ItemTreeDb,
     pub def_map: DefMapDb,
@@ -20,14 +22,15 @@ pub struct Project {
 
 impl Project {
     /// Builds the parse, item-tree, and def-map phases for one metadata graph.
-    pub fn build(metadata: cargo_metadata::Metadata) -> anyhow::Result<Self> {
-        let mut parse = ParseDb::build(metadata).context("while attempting to build parse db")?;
+    pub fn build(workspace: WorkspaceMetadata) -> anyhow::Result<Self> {
+        let mut parse = ParseDb::build(&workspace).context("while attempting to build parse db")?;
         let item_tree =
             ItemTreeDb::build(&mut parse).context("while attempting to build item tree db")?;
-        let def_map =
-            DefMapDb::build(&parse, &item_tree).context("while attempting to build def map db")?;
+        let def_map = DefMapDb::build(&workspace, &parse, &item_tree)
+            .context("while attempting to build def map db")?;
 
         Ok(Self {
+            workspace,
             parse,
             item_tree,
             def_map,
@@ -87,17 +90,17 @@ impl Project {
 
 impl fmt::Display for Project {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let workspace_member_count = self.parse.workspace_packages().count();
+        let workspace_member_count = self.workspace.workspace_packages().count();
         let dependency_count = self
-            .parse
+            .workspace
             .packages()
             .len()
             .saturating_sub(workspace_member_count);
-        writeln!(f, "Project {}", self.parse.metadata().workspace_root)?;
+        writeln!(f, "Project {}", self.workspace.workspace_root().display())?;
         writeln!(
             f,
             "Packages {} (workspace members: {}, dependencies: {})",
-            self.parse.packages().len(),
+            self.workspace.packages().len(),
             workspace_member_count,
             dependency_count,
         )?;
@@ -118,17 +121,12 @@ impl fmt::Display for Project {
                 let parsed_target = package
                     .target(target.target)
                     .expect("target should exist while rendering project");
-                let kinds = if !parsed_target.cargo_target.kind.is_empty() {
-                    format!("{:?}", parsed_target.cargo_target.kind)
-                } else {
-                    "<unknown>".to_string()
-                };
 
                 writeln!(f)?;
                 writeln!(
                     f,
-                    "Target {} ({kinds}) | root {}",
-                    parsed_target.cargo_target.name, root_path
+                    "Target {} ({}) | root {}",
+                    parsed_target.name, parsed_target.kind, root_path
                 )?;
             }
 

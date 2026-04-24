@@ -23,8 +23,12 @@ pub struct DefMapDb {
 
 impl DefMapDb {
     /// Builds target-local def maps from parsed project metadata and lowered item trees.
-    pub(crate) fn build(parse: &parse::ParseDb, item_tree: &ItemTreeDb) -> anyhow::Result<Self> {
-        resolve::build_db(parse, item_tree)
+    pub(crate) fn build(
+        workspace: &crate::workspace_metadata::WorkspaceMetadata,
+        parse: &parse::ParseDb,
+        item_tree: &ItemTreeDb,
+    ) -> anyhow::Result<Self> {
+        resolve::build_db(workspace, parse, item_tree)
     }
 
     /// Returns one package def-map set by package slot.

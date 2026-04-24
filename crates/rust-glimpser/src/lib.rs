@@ -6,11 +6,13 @@ pub(crate) mod def_map;
 pub(crate) mod item_tree;
 pub(crate) mod parse;
 mod project;
+mod workspace_metadata;
 
 #[cfg(test)]
 mod test_utils;
 
 pub use self::project::Project;
+pub use self::workspace_metadata::WorkspaceMetadata;
 
 /// Runs project analysis for the Cargo manifest at `path` and prints extracted item trees.
 pub fn analyze(path: PathBuf) -> anyhow::Result<()> {
@@ -28,7 +30,8 @@ pub fn analyze(path: PathBuf) -> anyhow::Result<()> {
         .exec()
         .context("cargo metadata failed")?;
 
-    let project = Project::build(metadata).context("while attempting to build project")?;
+    let workspace = WorkspaceMetadata::from_cargo(metadata);
+    let project = Project::build(workspace).context("while attempting to build project")?;
     println!("{project}");
 
     Ok(())

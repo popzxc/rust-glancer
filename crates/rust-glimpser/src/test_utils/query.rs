@@ -2,6 +2,7 @@ use crate::{
     Project,
     def_map::{DefId, ScopeBinding, ScopeEntry, TargetRef},
     parse::{Package, Target},
+    workspace_metadata::TargetKind,
 };
 
 /// Project-level test query API built on top of one analyzed fixture.
@@ -15,14 +16,10 @@ pub(crate) struct FixtureProject {
 impl FixtureProject {
     /// Returns the library target for one package.
     pub(crate) fn lib(&self, package_name: &str) -> FixtureTarget<'_> {
-        self.target(package_name, cargo_metadata::TargetKind::Lib)
+        self.target(package_name, TargetKind::Lib)
     }
 
-    fn target(
-        &self,
-        package_name: &str,
-        expected_kind: cargo_metadata::TargetKind,
-    ) -> FixtureTarget<'_> {
+    fn target(&self, package_name: &str, expected_kind: TargetKind) -> FixtureTarget<'_> {
         let (package_slot, package) = self
             .project
             .packages()
@@ -33,13 +30,7 @@ impl FixtureProject {
         let target = package
             .targets()
             .iter()
-            .find(|target| {
-                target
-                    .cargo_target
-                    .kind
-                    .iter()
-                    .any(|target_kind| target_kind == &expected_kind)
-            })
+            .find(|target| target.kind == expected_kind)
             .unwrap_or_else(|| {
                 panic!(
                     "fixture package `{package_name}` should have a {:?} target",
@@ -150,10 +141,7 @@ impl<'a> FixtureEntry<'a> {
     fn context(&self) -> String {
         format!(
             "root scope entry `{}` in package `{}` target `{}` ({:?})",
-            self.name,
-            self.package_name,
-            self.target.cargo_target.name,
-            self.target.cargo_target.kind,
+            self.name, self.package_name, self.target.name, self.target.kind,
         )
     }
 

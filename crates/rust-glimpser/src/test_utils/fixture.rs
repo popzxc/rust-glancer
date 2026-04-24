@@ -6,7 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::Project;
+use crate::{Project, WorkspaceMetadata};
 
 use super::query::FixtureProject;
 
@@ -70,10 +70,16 @@ impl CrateFixture {
             .expect("fixture metadata should load")
     }
 
+    /// Loads normalized workspace metadata for the fixture crate.
+    pub(crate) fn workspace_metadata(&self) -> WorkspaceMetadata {
+        WorkspaceMetadata::from_cargo(self.metadata())
+    }
+
     /// Runs full project analysis for the fixture and exposes a test query API.
     pub(crate) fn analyze(&self) -> FixtureProject {
         FixtureProject {
-            project: Project::build(self.metadata()).expect("fixture project should analyze"),
+            project: Project::build(self.workspace_metadata())
+                .expect("fixture project should analyze"),
         }
     }
 
@@ -90,7 +96,7 @@ impl CrateFixture {
 
     /// Builds the full project pipeline for the fixture crate.
     pub(crate) fn project(&self) -> Project {
-        Project::build(self.metadata()).expect("fixture project should build")
+        Project::build(self.workspace_metadata()).expect("fixture project should build")
     }
 
     fn manifest_path(&self) -> PathBuf {

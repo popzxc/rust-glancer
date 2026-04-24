@@ -5,7 +5,7 @@ use crate::{
     def_map::{DefId, ModuleId, ScopeBinding, ScopeEntry, TargetRef},
     item_tree::VisibilityLevel,
     parse::{Package, Target},
-    test_utils::{TestTargetExt, fixture_crate},
+    test_utils::fixture_crate,
 };
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
@@ -24,14 +24,14 @@ fn render_project_def_map(project: &Project) -> String {
             let mut targets = package.targets().iter().collect::<Vec<_>>();
             targets.sort_by(|left, right| {
                 (
-                    left.cargo_target.sort_order(),
-                    left.cargo_target.name.as_str(),
-                    left.cargo_target.src_path.as_str(),
+                    left.kind.sort_order(),
+                    left.name.as_str(),
+                    left.src_path.as_path(),
                 )
                     .cmp(&(
-                        right.cargo_target.sort_order(),
-                        right.cargo_target.name.as_str(),
-                        right.cargo_target.src_path.as_str(),
+                        right.kind.sort_order(),
+                        right.name.as_str(),
+                        right.src_path.as_path(),
                     ))
             });
 
@@ -83,11 +83,7 @@ fn render_target_def_map(
     let mut dump = String::new();
     std::fmt::Write::write_fmt(
         &mut dump,
-        format_args!(
-            "{} [{}]\n",
-            package.package_name(),
-            target.cargo_target.kind_label()
-        ),
+        format_args!("{} [{}]\n", package.package_name(), target.kind),
     )
     .expect("string writes should not fail");
 
@@ -224,7 +220,7 @@ impl<'a> BindingOrigin<'a> {
         format!(
             "{}[{}]::{}",
             package.package_name(),
-            target.cargo_target.kind_label(),
+            target.kind,
             module_path(self.project, module_ref.target, module_ref.module),
         )
     }

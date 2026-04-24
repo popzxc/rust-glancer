@@ -6,7 +6,7 @@ use crate::{
     Project,
     item_tree::{ItemKind, ItemNode, ModuleSource},
     parse::{Package, Target},
-    test_utils::{TestTargetExt, fixture_crate},
+    test_utils::fixture_crate,
 };
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
@@ -42,14 +42,14 @@ fn render_project_item_tree(project: &Project, include_spans: bool) -> String {
                     .expect("parsed target should exist while sorting");
 
                 (
-                    left_target.cargo_target.sort_order(),
-                    left_target.cargo_target.name.as_str(),
-                    left_target.cargo_target.src_path.as_str(),
+                    left_target.kind.sort_order(),
+                    left_target.name.as_str(),
+                    left_target.src_path.as_path(),
                 )
                     .cmp(&(
-                        right_target.cargo_target.sort_order(),
-                        right_target.cargo_target.name.as_str(),
-                        right_target.cargo_target.src_path.as_str(),
+                        right_target.kind.sort_order(),
+                        right_target.name.as_str(),
+                        right_target.src_path.as_path(),
                     ))
             });
 
@@ -107,9 +107,7 @@ fn render_target_root(
     writeln!(
         &mut dump,
         "- {} [{}] -> {}",
-        target.cargo_target.name,
-        target.cargo_target.kind_label(),
-        root_label
+        target.name, target.kind, root_label
     )
     .expect("string writes should not fail");
 
