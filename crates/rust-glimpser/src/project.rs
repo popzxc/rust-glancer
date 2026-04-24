@@ -2,8 +2,6 @@ use std::fmt;
 
 use anyhow::Context as _;
 
-#[cfg(test)]
-use crate::def_map::{DefMap, TargetRef};
 use crate::{
     def_map::DefMapDb,
     item_tree::{ItemKind, ItemNode, ItemTreeDb, ModuleSource},
@@ -37,22 +35,19 @@ impl Project {
         })
     }
 
-    /// Returns all parsed packages.
-    #[cfg(test)]
-    pub(crate) fn packages(&self) -> &[parse::Package] {
-        self.parse.packages()
+    /// Returns the parse database built for this project.
+    pub(crate) fn parse_db(&self) -> &ParseDb {
+        &self.parse
     }
 
-    /// Returns lowered item trees for test snapshot rendering.
-    #[cfg(test)]
-    pub(crate) fn item_tree(&self) -> &ItemTreeDb {
+    /// Returns the item-tree database built for this project.
+    pub(crate) fn item_tree_db(&self) -> &ItemTreeDb {
         &self.item_tree
     }
 
-    /// Returns the def map for one project-wide target reference.
-    #[cfg(test)]
-    pub(crate) fn def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.def_map.def_map(target)
+    /// Returns the def-map database built for this project.
+    pub(crate) fn def_map_db(&self) -> &DefMapDb {
+        &self.def_map
     }
 
     fn fmt_item(
@@ -111,7 +106,7 @@ impl fmt::Display for Project {
             dependency_count,
         )?;
 
-        let def_map_stats = self.def_map.stats();
+        let def_map_stats = self.def_map_db().stats();
         writeln!(
             f,
             "DefMaps {} targets (modules: {}, local defs: {}, imports: {}, unresolved imports: {})",
@@ -122,11 +117,11 @@ impl fmt::Display for Project {
             def_map_stats.unresolved_import_count,
         )?;
 
-        for (package_slot, package) in self.parse.packages().iter().enumerate() {
+        for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
             writeln!(f)?;
             writeln!(f, "Package {} [{}]", package.package_name(), package.id())?;
 
-            let Some(package_trees) = self.item_tree.package(package_slot) else {
+            let Some(package_trees) = self.item_tree_db().package(package_slot) else {
                 continue;
             };
 

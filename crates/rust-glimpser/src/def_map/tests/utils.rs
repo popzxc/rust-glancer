@@ -31,6 +31,7 @@ impl<'a> ProjectDefMapSnapshot<'a> {
     fn render(&self) -> String {
         let mut packages = self
             .project
+            .parse_db()
             .packages()
             .iter()
             .enumerate()
@@ -157,6 +158,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
 
     fn def_map(&self) -> &'a DefMap {
         self.project
+            .def_map_db()
             .def_map(self.target_ref)
             .expect("target def map should exist while rendering snapshot")
     }
@@ -224,8 +226,11 @@ impl<'a> TargetDefMapSnapshot<'a> {
             DefId::Module(module_ref) => module_ref.target,
             DefId::Local(local_def_ref) => local_def_ref.target,
         };
-        self.project.packages().get(target_ref.package.0)?;
-        self.project.def_map(target_ref)?;
+        self.project
+            .parse_db()
+            .packages()
+            .get(target_ref.package.0)?;
+        self.project.def_map_db().def_map(target_ref)?;
 
         Some(BindingOrigin {
             project: self.project,
@@ -250,6 +255,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
     fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {
         let module = self
             .project
+            .def_map_db()
             .def_map(target_ref)
             .expect("target def map should exist while building relative module path")
             .module(module_id)
@@ -288,6 +294,7 @@ impl BindingOrigin<'_> {
             DefId::Local(local_def_ref) => {
                 let local_def = self
                     .project
+                    .def_map_db()
                     .def_map(local_def_ref.target)
                     .expect("target def map should exist while dumping")
                     .local_defs
@@ -309,6 +316,7 @@ impl BindingOrigin<'_> {
     fn render_module_path(&self, module_ref: crate::def_map::ModuleRef) -> String {
         let package = self
             .project
+            .parse_db()
             .packages()
             .get(module_ref.target.package.0)
             .expect("package slot should exist while dumping");
@@ -327,6 +335,7 @@ impl BindingOrigin<'_> {
     fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {
         let module = self
             .project
+            .def_map_db()
             .def_map(target_ref)
             .expect("target def map should exist while building relative module path")
             .module(module_id)

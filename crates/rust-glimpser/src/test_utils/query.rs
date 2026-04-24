@@ -22,6 +22,7 @@ impl FixtureProject {
     fn target(&self, package_name: &str, expected_kind: TargetKind) -> FixtureTarget<'_> {
         let (package_slot, package) = self
             .project
+            .parse_db()
             .packages()
             .iter()
             .enumerate()
@@ -79,6 +80,7 @@ impl<'a> FixtureTarget<'a> {
 
     fn def_map(&self) -> &'a crate::def_map::DefMap {
         self.project
+            .def_map_db()
             .def_map(self.target_ref)
             .expect("target def map should exist in fixture project")
     }
@@ -159,8 +161,11 @@ impl<'a> FixtureEntry<'a> {
             DefId::Module(module_ref) => module_ref.target,
             DefId::Local(local_def_ref) => local_def_ref.target,
         };
-        self.project.packages().get(target_ref.package.0)?;
-        self.project.def_map(target_ref)?;
+        self.project
+            .parse_db()
+            .packages()
+            .get(target_ref.package.0)?;
+        self.project.def_map_db().def_map(target_ref)?;
 
         Some(FixtureBindingOrigin {
             project: self.project,
@@ -182,6 +187,7 @@ impl<'a> FixtureBindingOrigin<'a> {
         };
 
         self.project
+            .def_map_db()
             .def_map(module_ref.target)?
             .module(module_ref.module)
             .and_then(|module| module.name.as_deref())

@@ -31,38 +31,55 @@ impl DefMapDb {
         resolve::build_db(workspace, parse, item_tree)
     }
 
+    /// Returns all package-level def-map sets.
+    pub(crate) fn packages(&self) -> &[Package] {
+        &self.packages
+    }
+
+    /// Iterates over every target def map together with its project-wide target reference.
+    pub(crate) fn target_maps(&self) -> impl Iterator<Item = (TargetRef, &DefMap)> {
+        self.packages()
+            .iter()
+            .enumerate()
+            .flat_map(move |(package_idx, package)| {
+                (0..package.targets().len()).filter_map(move |target_idx| {
+                    let target_ref = TargetRef {
+                        package: PackageSlot(package_idx),
+                        target: crate::parse::TargetId(target_idx),
+                    };
+                    self.def_map(target_ref)
+                        .map(|def_map| (target_ref, def_map))
+                })
+            })
+    }
+
     /// Returns coarse DefMap totals for the current project report.
     pub(crate) fn stats(&self) -> DefMapStats {
         let mut stats = DefMapStats::default();
 
-        for package in &self.packages {
-            stats.target_count += package.targets.len();
-
-            for target in &package.targets {
-                stats.module_count += target.modules.len();
-                stats.local_def_count += target.local_defs.len();
-                stats.import_count += target.imports.len();
-                stats.unresolved_import_count += target
-                    .modules
-                    .iter()
-                    .map(|module| module.unresolved_imports.len())
-                    .sum::<usize>();
-            }
+        for (_, target) in self.target_maps() {
+            stats.target_count += 1;
+            stats.module_count += target.modules().len();
+            stats.local_def_count += target.local_defs().len();
+            stats.import_count += target.imports().len();
+            stats.unresolved_import_count += target
+                .modules()
+                .iter()
+                .map(|module| module.unresolved_imports.len())
+                .sum::<usize>();
         }
 
         stats
     }
 
     /// Returns one package def-map set by package slot.
-    #[cfg(test)]
-    pub(crate) fn package(&self, package_slot: usize) -> Option<&Package> {
-        self.packages.get(package_slot)
+    pub(crate) fn package(&self, package_slot: PackageSlot) -> Option<&Package> {
+        self.packages.get(package_slot.0)
     }
 
     /// Returns one target def map by project-wide target reference.
-    #[cfg(test)]
     pub(crate) fn def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.package(target.package.0)?.target(target.target)
+        self.package(target.package)?.target(target.target)
     }
 }
 
@@ -83,8 +100,12 @@ pub struct Package {
 }
 
 impl Package {
+    /// Returns all target def maps in target-id order.
+    pub(crate) fn targets(&self) -> &[DefMap] {
+        &self.targets
+    }
+
     /// Returns one target def map by target id.
-    #[cfg(test)]
     pub(crate) fn target(&self, target_id: crate::parse::TargetId) -> Option<&DefMap> {
         self.targets.get(target_id.0)
     }

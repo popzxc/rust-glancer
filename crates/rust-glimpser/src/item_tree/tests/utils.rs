@@ -41,6 +41,7 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
     fn render(&self) -> String {
         let mut packages = self
             .project
+            .parse_db()
             .packages()
             .iter()
             .enumerate()
@@ -52,7 +53,7 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
             .map(|(package_slot, package)| {
                 let item_trees = self
                     .project
-                    .item_tree()
+                    .item_tree_db()
                     .package(package_slot)
                     .expect("package item trees should exist while rendering snapshot");
                 PackageItemTreeSnapshot {

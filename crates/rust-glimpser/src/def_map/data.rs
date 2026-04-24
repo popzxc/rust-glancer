@@ -22,9 +22,24 @@ impl DefMap {
         self.root_module
     }
 
+    /// Returns all modules in stable module-id order.
+    pub fn modules(&self) -> &[ModuleData] {
+        &self.modules
+    }
+
     /// Returns module data by id.
     pub fn module(&self, module_id: ModuleId) -> Option<&ModuleData> {
         self.modules.get(module_id.0)
+    }
+
+    /// Returns all local definitions in stable local-def-id order.
+    pub fn local_defs(&self) -> &[LocalDefData] {
+        &self.local_defs
+    }
+
+    /// Returns all imports in stable import-id order.
+    pub fn imports(&self) -> &[ImportData] {
+        &self.imports
     }
 
     pub(super) fn set_root_module(&mut self, root_module: ModuleId) {
