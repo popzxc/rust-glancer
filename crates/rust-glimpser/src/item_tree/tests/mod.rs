@@ -75,6 +75,45 @@ fn main() {
 }
 
 #[test]
+fn resolves_out_of_line_files_inside_inline_modules() {
+    utils::check_project_item_tree(
+        r#"
+//- /Cargo.toml
+[package]
+name = "nested_module_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod outer {
+    pub mod child;
+}
+
+pub use outer::child::work;
+
+//- /src/outer/child.rs
+pub fn work() {}
+"#,
+        expect![[r#"
+            package nested_module_fixture
+
+            targets
+            - nested_module_fixture [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - pub module outer [inline]
+              - pub module child [out_of_line child.rs]
+            - pub use outer::child::work
+              - import named outer::child::work
+
+            file child.rs
+            - pub fn work
+        "#]],
+    );
+}
+
+#[test]
 fn dumps_import_payloads() {
     utils::check_project_item_tree(
         r#"

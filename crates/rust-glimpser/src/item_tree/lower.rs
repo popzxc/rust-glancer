@@ -4,7 +4,10 @@
 //! and targets only point at their root file. Out-of-line modules therefore reuse the same lowered
 //! file tree whenever multiple targets reach them.
 
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context as _;
 use ra_syntax::{
@@ -82,7 +85,7 @@ impl<'db> PackageLowering<'db> {
             return Ok(());
         }
 
-        let (items, line_index) = {
+        let (items, line_index, module_file_context) = {
             let parsed_file = self.files.parsed_file(current_file_id).with_context(|| {
                 format!(
                     "while attempting to fetch parsed file {:?}",
@@ -92,11 +95,12 @@ impl<'db> PackageLowering<'db> {
             (
                 parsed_file.tree.items().collect::<Vec<_>>(),
                 parsed_file.line_index.clone(),
+                ModuleFileContext::from_definition_file(&parsed_file.path),
             )
         };
 
         let nodes = self
-            .collect_items(items, current_file_id, &line_index)
+            .collect_items(items, current_file_id, &line_index, &module_file_context)
             .with_context(|| {
                 format!(
                     "while attempting to collect file items for {:?}",
@@ -126,12 +130,13 @@ impl<'db> PackageLowering<'db> {
         items: Vec<ast::Item>,
         current_file_id: FileId,
         line_index: &LineIndex,
+        module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Vec<ItemNode>> {
         let mut nodes = Vec::new();
 
         for item in items {
             let node = self
-                .lower_item(item, current_file_id, line_index)
+                .lower_item(item, current_file_id, line_index, module_file_context)
                 .with_context(|| {
                     format!("while attempting to lower item in {:?}", current_file_id)
                 })?;
@@ -151,6 +156,7 @@ impl<'db> PackageLowering<'db> {
         item: ast::Item,
         current_file_id: FileId,
         line_index: &LineIndex,
+        module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<ItemNode>> {
         let node = match item {
             ast::Item::AsmExpr(item) => Some(ItemNode::new(
@@ -234,7 +240,7 @@ impl<'db> PackageLowering<'db> {
             ast::Item::Module(item) => {
                 let module_name = item.name().map(|name| name.text().to_string());
                 let module_item = self
-                    .collect_module(&item, current_file_id, line_index)
+                    .collect_module(&item, current_file_id, line_index, module_file_context)
                     .with_context(|| {
                         format!(
                             "while attempting to collect module item for {}",
@@ -309,12 +315,23 @@ impl<'db> PackageLowering<'db> {
         item: &ast::Module,
         current_file_id: FileId,
         line_index: &LineIndex,
+        module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<ModuleItem> {
         if let Some(item_list) = item.item_list() {
-            // Inline modules reuse the current file and embed their lowered child items directly.
+            // Inline modules reuse the current file, but their out-of-line descendants are
+            // resolved under a directory named after the inline module path.
+            let inline_module_context = item
+                .name()
+                .map(|name| module_file_context.descend(name.text().as_str()))
+                .unwrap_or_else(|| module_file_context.clone());
             let inline_items = item_list.items().collect::<Vec<_>>();
             let items = self
-                .collect_items(inline_items, current_file_id, line_index)
+                .collect_items(
+                    inline_items,
+                    current_file_id,
+                    line_index,
+                    &inline_module_context,
+                )
                 .context("while attempting to collect inline module items")?;
             return Ok(ModuleItem {
                 source: ModuleSource::Inline { items },
@@ -329,15 +346,8 @@ impl<'db> PackageLowering<'db> {
                 },
             });
         };
-        let current_file_path = self.files.file_path(current_file_id).with_context(|| {
-            format!(
-                "while attempting to resolve current file {:?}",
-                current_file_id
-            )
-        })?;
-
         // TODO: support `#[path = "..."]` and other advanced module-resolution rules when needed.
-        let Some(module_file_path) = resolve_module_file(current_file_path, &module_name) else {
+        let Some(module_file_path) = module_file_context.resolve_child_file(&module_name) else {
             return Ok(ModuleItem {
                 source: ModuleSource::OutOfLine {
                     definition_file: None,
@@ -368,6 +378,58 @@ impl<'db> PackageLowering<'db> {
                 definition_file: Some(module_file_id),
             },
         })
+    }
+}
+
+/// Filesystem context for resolving out-of-line child modules of the current logical module.
+#[derive(Debug, Clone)]
+struct ModuleFileContext {
+    child_module_dir: PathBuf,
+}
+
+impl ModuleFileContext {
+    /// Builds the child-module directory for a file-backed module.
+    fn from_definition_file(definition_file: &Path) -> Self {
+        let parent_dir = definition_file
+            .parent()
+            .expect("definition file should have a parent directory");
+        let file_name = definition_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("definition file name should be UTF-8");
+        let file_stem = definition_file
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("definition file stem should be UTF-8");
+
+        let child_module_dir = match file_name {
+            "lib.rs" | "main.rs" | "mod.rs" => parent_dir.to_path_buf(),
+            _ => parent_dir.join(file_stem),
+        };
+
+        Self { child_module_dir }
+    }
+
+    /// Builds the child-module directory for an inline child module.
+    fn descend(&self, module_name: &str) -> Self {
+        Self {
+            child_module_dir: self.child_module_dir.join(module_name),
+        }
+    }
+
+    /// Resolves `mod name;` according to conventional Rust module file rules.
+    fn resolve_child_file(&self, module_name: &str) -> Option<PathBuf> {
+        let flat_file = self.child_module_dir.join(format!("{module_name}.rs"));
+        if flat_file.exists() {
+            return Some(flat_file);
+        }
+
+        let nested_file = self.child_module_dir.join(module_name).join("mod.rs");
+        if nested_file.exists() {
+            return Some(nested_file);
+        }
+
+        None
     }
 }
 
@@ -405,28 +467,4 @@ fn lower_visibility(visibility: Option<ast::Visibility>) -> VisibilityLevel {
         "self" => VisibilityLevel::Self_,
         _ => VisibilityLevel::Unknown(visibility.syntax().text().to_string()),
     }
-}
-
-/// Resolves `mod foo;` according to conventional Rust module file rules.
-fn resolve_module_file(current_file_path: &Path, module_name: &str) -> Option<std::path::PathBuf> {
-    let parent_dir = current_file_path.parent()?;
-    let file_name = current_file_path.file_name()?.to_str()?;
-    let file_stem = current_file_path.file_stem()?.to_str()?;
-
-    let module_parent = match file_name {
-        "lib.rs" | "main.rs" | "mod.rs" => parent_dir.to_path_buf(),
-        _ => parent_dir.join(file_stem),
-    };
-
-    let flat_file = module_parent.join(format!("{module_name}.rs"));
-    if flat_file.exists() {
-        return Some(flat_file);
-    }
-
-    let nested_file = module_parent.join(module_name).join("mod.rs");
-    if nested_file.exists() {
-        return Some(nested_file);
-    }
-
-    None
 }

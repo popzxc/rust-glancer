@@ -122,6 +122,43 @@ fn main() {
 }
 
 #[test]
+fn resolves_reexports_from_out_of_line_files_inside_inline_modules() {
+    utils::check_project_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "nested_module_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod outer {
+    pub mod child;
+}
+
+pub use outer::child::work;
+
+//- /src/outer/child.rs
+pub fn work() {}
+"#,
+        expect![[r#"
+            package nested_module_fixture
+
+            nested_module_fixture [lib]
+            crate
+            - outer : type [pub module nested_module_fixture[lib]::crate::outer]
+            - work : value [pub fn nested_module_fixture[lib]::crate::outer::child::work]
+
+            crate::outer
+            - child : type [pub module nested_module_fixture[lib]::crate::outer::child]
+
+            crate::outer::child
+            - work : value [pub fn nested_module_fixture[lib]::crate::outer::child::work]
+        "#]],
+    );
+}
+
+#[test]
 fn keeps_type_and_value_bindings_separate() {
     let fixture = fixture_crate!(
         r#"
