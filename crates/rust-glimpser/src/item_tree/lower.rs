@@ -12,14 +12,21 @@ use std::{
 use anyhow::Context as _;
 use ra_syntax::{
     AstNode as _,
-    ast::{self, HasModuleItem, HasName, HasVisibility},
+    ast::{
+        self, HasGenericArgs, HasGenericParams, HasModuleItem, HasName, HasTypeBounds,
+        HasVisibility,
+    },
 };
 
 use crate::parse::{FileDb, FileId, Target as ParseTarget, span::LineIndex};
 
 use super::{
-    ExternCrateItem, FileTree, ItemKind, ItemNode, ModuleItem, ModuleSource, Package, TargetRoot,
-    UseItem, VisibilityLevel,
+    ConstItem, ConstParamData, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldList,
+    FileTree, FunctionItem, FunctionQualifiers, GenericArg, GenericParams, ImplItem, ItemKind,
+    ItemNode, ItemTreeId, LifetimeParamData, ModuleItem, ModuleSource, Mutability, Package,
+    ParamItem, ParamKind, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, TypeBound,
+    TypeParamData, TypePath, TypePathSegment, TypeRef, UnionItem, UseItem, VisibilityLevel,
+    WherePredicate,
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
@@ -99,8 +106,9 @@ impl<'db> PackageLowering<'db> {
             )
         };
 
-        let nodes = self
-            .collect_items(items, current_file_id, &line_index, &module_file_context)
+        let mut builder = FileTreeBuilder::new(current_file_id, &line_index);
+        let top_level = self
+            .collect_items(&mut builder, items, &module_file_context)
             .with_context(|| {
                 format!(
                     "while attempting to collect file items for {:?}",
@@ -110,7 +118,8 @@ impl<'db> PackageLowering<'db> {
 
         self.file_trees[current_file_id.0] = Some(FileTree {
             file: current_file_id,
-            items: nodes,
+            top_level,
+            items: builder.items,
         });
         self.active_stack.remove(&current_file_id);
         Ok(())
@@ -127,194 +136,198 @@ impl<'db> PackageLowering<'db> {
     /// Lowers all top-level items from one file into item-tree nodes.
     fn collect_items(
         &mut self,
+        builder: &mut FileTreeBuilder<'_>,
         items: Vec<ast::Item>,
-        current_file_id: FileId,
-        line_index: &LineIndex,
         module_file_context: &ModuleFileContext,
-    ) -> anyhow::Result<Vec<ItemNode>> {
-        let mut nodes = Vec::new();
+    ) -> anyhow::Result<Vec<ItemTreeId>> {
+        let mut item_ids = Vec::new();
 
         for item in items {
-            let node = self
-                .lower_item(item, current_file_id, line_index, module_file_context)
+            let item_id = self
+                .lower_item(builder, item, module_file_context)
                 .with_context(|| {
-                    format!("while attempting to lower item in {:?}", current_file_id)
+                    format!(
+                        "while attempting to lower item in {:?}",
+                        builder.current_file_id
+                    )
                 })?;
 
-            if let Some(node) = node {
-                nodes.push(node);
+            if let Some(item_id) = item_id {
+                item_ids.push(item_id);
             }
         }
 
-        Ok(nodes)
+        Ok(item_ids)
     }
 
     /// Lowers one syntax item into the corresponding item-tree node, when this item kind matters
     /// to later phases.
     fn lower_item(
         &mut self,
+        builder: &mut FileTreeBuilder<'_>,
         item: ast::Item,
-        current_file_id: FileId,
-        line_index: &LineIndex,
         module_file_context: &ModuleFileContext,
-    ) -> anyhow::Result<Option<ItemNode>> {
-        let node = match item {
-            ast::Item::AsmExpr(item) => Some(ItemNode::new(
+    ) -> anyhow::Result<Option<ItemTreeId>> {
+        let item_id = match item {
+            ast::Item::AsmExpr(item) => Some(builder.alloc_item(
                 ItemKind::AsmExpr,
                 None,
                 VisibilityLevel::Private,
                 item.syntax().text_range(),
-                current_file_id,
-                line_index,
             )),
-            ast::Item::Const(item) => Some(ItemNode::new(
-                ItemKind::Const,
+            ast::Item::Const(item) => Some(builder.alloc_item(
+                ItemKind::Const(Box::new(ConstItem {
+                    generics: lower_generic_params(&item),
+                    ty: item.ty().map(lower_type_ref),
+                })),
                 item.name().map(|name| name.text().to_string()),
                 lower_visibility(item.visibility()),
                 item.syntax().text_range(),
-                current_file_id,
-                line_index,
             )),
-            ast::Item::Enum(item) => Some(ItemNode::new(
-                ItemKind::Enum,
+            ast::Item::Enum(item) => Some(builder.alloc_item(
+                ItemKind::Enum(Box::new(EnumItem {
+                    generics: lower_generic_params(&item),
+                    variants: lower_enum_variants(&item),
+                })),
                 item.name().map(|name| name.text().to_string()),
                 lower_visibility(item.visibility()),
                 item.syntax().text_range(),
-                current_file_id,
-                line_index,
             )),
-            ast::Item::ExternBlock(item) => Some(ItemNode::new(
+            ast::Item::ExternBlock(item) => Some(builder.alloc_item(
                 ItemKind::ExternBlock,
                 None,
                 VisibilityLevel::Private,
                 item.syntax().text_range(),
-                current_file_id,
-                line_index,
             )),
-            ast::Item::ExternCrate(item) => Some(ItemNode::new(
-                ItemKind::ExternCrate(Box::new(ExternCrateItem::from_ast(&item))),
-                item.name_ref()
-                    .map(|name_ref| name_ref.syntax().text().to_string()),
-                lower_visibility(item.visibility()),
-                item.syntax().text_range(),
-                current_file_id,
-                line_index,
-            )),
-            ast::Item::Fn(item) => Some(ItemNode::new(
-                ItemKind::Function,
+            ast::Item::ExternCrate(item) => Some(
+                builder.alloc_item(
+                    ItemKind::ExternCrate(Box::new(ExternCrateItem::from_ast(&item))),
+                    item.name_ref()
+                        .map(|name_ref| name_ref.syntax().text().to_string()),
+                    lower_visibility(item.visibility()),
+                    item.syntax().text_range(),
+                ),
+            ),
+            ast::Item::Fn(item) => Some(builder.alloc_item(
+                ItemKind::Function(Box::new(lower_function_item(&item))),
                 item.name().map(|name| name.text().to_string()),
                 lower_visibility(item.visibility()),
                 item.syntax().text_range(),
-                current_file_id,
-                line_index,
             )),
             ast::Item::Impl(item) => {
-                // Associated items are intentionally not lowered here yet; they are not module-scope
-                // definitions, and should become a separate item-tree concept once we need them.
-                Some(ItemNode::new(
-                    ItemKind::Impl,
+                let impl_item = self
+                    .lower_impl_item(builder, &item)
+                    .context("while attempting to lower impl declaration")?;
+                Some(builder.alloc_item(
+                    ItemKind::Impl(Box::new(impl_item)),
                     None,
                     lower_visibility(item.visibility()),
                     item.syntax().text_range(),
-                    current_file_id,
-                    line_index,
                 ))
             }
             ast::Item::MacroCall(_) => None,
-            ast::Item::MacroDef(item) => Some(ItemNode::new(
+            ast::Item::MacroDef(item) => Some(builder.alloc_item(
                 ItemKind::MacroDefinition,
                 item.name().map(|name| name.text().to_string()),
                 lower_visibility(item.visibility()),
                 item.syntax().text_range(),
-                current_file_id,
-                line_index,
             )),
-            ast::Item::MacroRules(item) => Some(ItemNode::new(
+            ast::Item::MacroRules(item) => Some(builder.alloc_item(
                 ItemKind::MacroDefinition,
                 item.name().map(|name| name.text().to_string()),
                 lower_visibility(item.visibility()),
                 item.syntax().text_range(),
-                current_file_id,
-                line_index,
             )),
             ast::Item::Module(item) => {
                 let module_name = item.name().map(|name| name.text().to_string());
                 let module_item = self
-                    .collect_module(&item, current_file_id, line_index, module_file_context)
+                    .collect_module(builder, &item, module_file_context)
                     .with_context(|| {
                         format!(
                             "while attempting to collect module item for {}",
                             module_name.as_deref().unwrap_or("<unnamed>")
                         )
                     })?;
-                Some(ItemNode::new(
+                Some(builder.alloc_item(
                     ItemKind::Module(Box::new(module_item)),
                     module_name,
                     lower_visibility(item.visibility()),
                     item.syntax().text_range(),
-                    current_file_id,
-                    line_index,
                 ))
             }
-            ast::Item::Static(item) => Some(ItemNode::new(
-                ItemKind::Static,
+            ast::Item::Static(item) => Some(builder.alloc_item(
+                ItemKind::Static(Box::new(StaticItem {
+                    ty: item.ty().map(lower_type_ref),
+                    mutability: if item.mut_token().is_some() {
+                        Mutability::Mutable
+                    } else {
+                        Mutability::Shared
+                    },
+                })),
                 item.name().map(|name| name.text().to_string()),
                 lower_visibility(item.visibility()),
                 item.syntax().text_range(),
-                current_file_id,
-                line_index,
             )),
-            ast::Item::Struct(item) => Some(ItemNode::new(
-                ItemKind::Struct,
+            ast::Item::Struct(item) => Some(builder.alloc_item(
+                ItemKind::Struct(Box::new(StructItem {
+                    generics: lower_generic_params(&item),
+                    fields: lower_field_list(item.field_list()),
+                })),
                 item.name().map(|name| name.text().to_string()),
                 lower_visibility(item.visibility()),
                 item.syntax().text_range(),
-                current_file_id,
-                line_index,
             )),
-            ast::Item::Trait(item) => Some(ItemNode::new(
-                ItemKind::Trait,
+            ast::Item::Trait(item) => {
+                let trait_item = self
+                    .lower_trait_item(builder, &item)
+                    .context("while attempting to lower trait declaration")?;
+                Some(builder.alloc_item(
+                    ItemKind::Trait(Box::new(trait_item)),
+                    item.name().map(|name| name.text().to_string()),
+                    lower_visibility(item.visibility()),
+                    item.syntax().text_range(),
+                ))
+            }
+            ast::Item::TypeAlias(item) => Some(builder.alloc_item(
+                ItemKind::TypeAlias(Box::new(TypeAliasItem {
+                    generics: lower_generic_params(&item),
+                    bounds: lower_type_bound_list(item.type_bound_list()),
+                    aliased_ty: item.ty().map(lower_type_ref),
+                })),
                 item.name().map(|name| name.text().to_string()),
                 lower_visibility(item.visibility()),
                 item.syntax().text_range(),
-                current_file_id,
-                line_index,
             )),
-            ast::Item::TypeAlias(item) => Some(ItemNode::new(
-                ItemKind::TypeAlias,
-                item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
-                item.syntax().text_range(),
-                current_file_id,
-                line_index,
-            )),
-            ast::Item::Union(item) => Some(ItemNode::new(
-                ItemKind::Union,
-                item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
-                item.syntax().text_range(),
-                current_file_id,
-                line_index,
-            )),
-            ast::Item::Use(item) => Some(ItemNode::new(
+            ast::Item::Union(item) => Some(
+                builder.alloc_item(
+                    ItemKind::Union(Box::new(UnionItem {
+                        generics: lower_generic_params(&item),
+                        fields: item
+                            .record_field_list()
+                            .map(lower_record_fields)
+                            .unwrap_or_default(),
+                    })),
+                    item.name().map(|name| name.text().to_string()),
+                    lower_visibility(item.visibility()),
+                    item.syntax().text_range(),
+                ),
+            ),
+            ast::Item::Use(item) => Some(builder.alloc_item(
                 ItemKind::Use(Box::new(UseItem::from_ast(&item))),
                 normalized_use_name(&item),
                 lower_visibility(item.visibility()),
                 item.syntax().text_range(),
-                current_file_id,
-                line_index,
             )),
         };
 
-        Ok(node)
+        Ok(item_id)
     }
 
     /// Lowers one module declaration into either an inline item list or an out-of-line file link.
     fn collect_module(
         &mut self,
+        builder: &mut FileTreeBuilder<'_>,
         item: &ast::Module,
-        current_file_id: FileId,
-        line_index: &LineIndex,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<ModuleItem> {
         if let Some(item_list) = item.item_list() {
@@ -326,12 +339,7 @@ impl<'db> PackageLowering<'db> {
                 .unwrap_or_else(|| module_file_context.clone());
             let inline_items = item_list.items().collect::<Vec<_>>();
             let items = self
-                .collect_items(
-                    inline_items,
-                    current_file_id,
-                    line_index,
-                    &inline_module_context,
-                )
+                .collect_items(builder, inline_items, &inline_module_context)
                 .context("while attempting to collect inline module items")?;
             return Ok(ModuleItem {
                 source: ModuleSource::Inline { items },
@@ -379,6 +387,522 @@ impl<'db> PackageLowering<'db> {
             },
         })
     }
+
+    fn lower_trait_item(
+        &mut self,
+        builder: &mut FileTreeBuilder<'_>,
+        item: &ast::Trait,
+    ) -> anyhow::Result<TraitItem> {
+        let assoc_items = item
+            .assoc_item_list()
+            .map(|item_list| item_list.assoc_items().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let items = self
+            .collect_assoc_items(builder, assoc_items)
+            .context("while attempting to lower trait associated items")?;
+
+        Ok(TraitItem {
+            generics: lower_generic_params(item),
+            super_traits: lower_type_bound_list(item.type_bound_list()),
+            items,
+            is_unsafe: item.unsafe_token().is_some(),
+        })
+    }
+
+    fn lower_impl_item(
+        &mut self,
+        builder: &mut FileTreeBuilder<'_>,
+        item: &ast::Impl,
+    ) -> anyhow::Result<ImplItem> {
+        let assoc_items = item
+            .assoc_item_list()
+            .map(|item_list| item_list.assoc_items().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let items = self
+            .collect_assoc_items(builder, assoc_items)
+            .context("while attempting to lower impl associated items")?;
+        let (trait_ref, self_ty) = lower_impl_header(item);
+
+        Ok(ImplItem {
+            generics: lower_generic_params(item),
+            trait_ref,
+            self_ty,
+            items,
+            is_unsafe: item.unsafe_token().is_some(),
+        })
+    }
+
+    fn collect_assoc_items(
+        &mut self,
+        builder: &mut FileTreeBuilder<'_>,
+        items: Vec<ast::AssocItem>,
+    ) -> anyhow::Result<Vec<ItemTreeId>> {
+        let mut item_ids = Vec::new();
+
+        for item in items {
+            if let Some(item_id) = self.lower_assoc_item(builder, item)? {
+                item_ids.push(item_id);
+            }
+        }
+
+        Ok(item_ids)
+    }
+
+    fn lower_assoc_item(
+        &mut self,
+        builder: &mut FileTreeBuilder<'_>,
+        item: ast::AssocItem,
+    ) -> anyhow::Result<Option<ItemTreeId>> {
+        let item_id = match item {
+            ast::AssocItem::Const(item) => Some(builder.alloc_item(
+                ItemKind::Const(Box::new(ConstItem {
+                    generics: lower_generic_params(&item),
+                    ty: item.ty().map(lower_type_ref),
+                })),
+                item.name().map(|name| name.text().to_string()),
+                lower_visibility(item.visibility()),
+                item.syntax().text_range(),
+            )),
+            ast::AssocItem::Fn(item) => Some(builder.alloc_item(
+                ItemKind::Function(Box::new(lower_function_item(&item))),
+                item.name().map(|name| name.text().to_string()),
+                lower_visibility(item.visibility()),
+                item.syntax().text_range(),
+            )),
+            ast::AssocItem::MacroCall(_) => None,
+            ast::AssocItem::TypeAlias(item) => Some(builder.alloc_item(
+                ItemKind::TypeAlias(Box::new(TypeAliasItem {
+                    generics: lower_generic_params(&item),
+                    bounds: lower_type_bound_list(item.type_bound_list()),
+                    aliased_ty: item.ty().map(lower_type_ref),
+                })),
+                item.name().map(|name| name.text().to_string()),
+                lower_visibility(item.visibility()),
+                item.syntax().text_range(),
+            )),
+        };
+
+        Ok(item_id)
+    }
+}
+
+/// File-local item arena under construction.
+struct FileTreeBuilder<'a> {
+    current_file_id: FileId,
+    line_index: &'a LineIndex,
+    items: Vec<ItemNode>,
+}
+
+impl<'a> FileTreeBuilder<'a> {
+    fn new(current_file_id: FileId, line_index: &'a LineIndex) -> Self {
+        Self {
+            current_file_id,
+            line_index,
+            items: Vec::new(),
+        }
+    }
+
+    fn alloc_item(
+        &mut self,
+        kind: ItemKind,
+        name: Option<String>,
+        visibility: VisibilityLevel,
+        text_range: ra_syntax::TextRange,
+    ) -> ItemTreeId {
+        let item_id = ItemTreeId(self.items.len());
+        self.items.push(ItemNode::new(
+            kind,
+            name,
+            visibility,
+            text_range,
+            self.current_file_id,
+            self.line_index,
+        ));
+        item_id
+    }
+}
+
+fn lower_function_item(item: &ast::Fn) -> FunctionItem {
+    FunctionItem {
+        generics: lower_generic_params(item),
+        params: lower_params(item.param_list()),
+        ret_ty: item
+            .ret_type()
+            .and_then(|ret_ty| ret_ty.ty())
+            .map(lower_type_ref),
+        qualifiers: FunctionQualifiers {
+            is_async: item.async_token().is_some(),
+            is_const: item.const_token().is_some(),
+            is_unsafe: item.unsafe_token().is_some(),
+        },
+    }
+}
+
+fn lower_params(param_list: Option<ast::ParamList>) -> Vec<ParamItem> {
+    let Some(param_list) = param_list else {
+        return Vec::new();
+    };
+
+    let mut params = Vec::new();
+
+    if let Some(self_param) = param_list.self_param() {
+        params.push(ParamItem {
+            pat: normalized_syntax(&self_param),
+            ty: self_param.ty().map(lower_type_ref),
+            kind: ParamKind::SelfParam,
+        });
+    }
+
+    for param in param_list.params() {
+        params.push(ParamItem {
+            pat: param
+                .pat()
+                .map(|pat| normalized_syntax(&pat))
+                .unwrap_or_else(|| "<missing>".to_string()),
+            ty: param.ty().map(lower_type_ref),
+            kind: ParamKind::Normal,
+        });
+    }
+
+    params
+}
+
+fn lower_impl_header(item: &ast::Impl) -> (Option<TypeRef>, TypeRef) {
+    let types = item
+        .syntax()
+        .children()
+        .filter_map(ast::Type::cast)
+        .collect::<Vec<_>>();
+
+    if item.for_token().is_some() {
+        let trait_ref = types.first().cloned().map(lower_type_ref);
+        let self_ty = types
+            .get(1)
+            .cloned()
+            .map(lower_type_ref)
+            .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
+        return (trait_ref, self_ty);
+    }
+
+    let self_ty = types
+        .first()
+        .cloned()
+        .map(lower_type_ref)
+        .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
+    (None, self_ty)
+}
+
+fn lower_enum_variants(item: &ast::Enum) -> Vec<EnumVariantItem> {
+    item.variant_list()
+        .map(|variant_list| {
+            variant_list
+                .variants()
+                .map(|variant| EnumVariantItem {
+                    name: variant
+                        .name()
+                        .map(|name| name.text().to_string())
+                        .unwrap_or_else(|| "<missing>".to_string()),
+                    fields: lower_field_list(variant.field_list()),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn lower_field_list(field_list: Option<ast::FieldList>) -> FieldList {
+    match field_list {
+        Some(ast::FieldList::RecordFieldList(fields)) => {
+            FieldList::Named(lower_record_fields(fields))
+        }
+        Some(ast::FieldList::TupleFieldList(fields)) => {
+            FieldList::Tuple(lower_tuple_fields(fields))
+        }
+        None => FieldList::Unit,
+    }
+}
+
+fn lower_record_fields(fields: ast::RecordFieldList) -> Vec<FieldItem> {
+    fields
+        .fields()
+        .map(|field| FieldItem {
+            name: field.name().map(|name| name.text().to_string()),
+            visibility: lower_visibility(field.visibility()),
+            ty: field
+                .ty()
+                .map(lower_type_ref)
+                .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
+        })
+        .collect()
+}
+
+fn lower_tuple_fields(fields: ast::TupleFieldList) -> Vec<FieldItem> {
+    fields
+        .fields()
+        .map(|field| FieldItem {
+            name: None,
+            visibility: lower_visibility(field.visibility()),
+            ty: field
+                .ty()
+                .map(lower_type_ref)
+                .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
+        })
+        .collect()
+}
+
+fn lower_generic_params<T>(item: &T) -> GenericParams
+where
+    T: HasGenericParams,
+{
+    let mut params = GenericParams::default();
+
+    if let Some(param_list) = item.generic_param_list() {
+        for param in param_list.generic_params() {
+            match param {
+                ast::GenericParam::ConstParam(param) => {
+                    params.consts.push(ConstParamData {
+                        name: param
+                            .name()
+                            .map(|name| name.text().to_string())
+                            .unwrap_or_else(|| "<missing>".to_string()),
+                        ty: param.ty().map(lower_type_ref),
+                        default: param.default_val().map(|value| normalized_syntax(&value)),
+                    });
+                }
+                ast::GenericParam::LifetimeParam(param) => {
+                    params.lifetimes.push(LifetimeParamData {
+                        name: param
+                            .lifetime()
+                            .map(|lifetime| normalized_syntax(&lifetime))
+                            .unwrap_or_else(|| "<missing>".to_string()),
+                        bounds: lower_lifetime_bounds(param.type_bound_list()),
+                    });
+                }
+                ast::GenericParam::TypeParam(param) => {
+                    params.types.push(TypeParamData {
+                        name: param
+                            .name()
+                            .map(|name| name.text().to_string())
+                            .unwrap_or_else(|| "<missing>".to_string()),
+                        bounds: lower_type_bound_list(param.type_bound_list()),
+                        default: param.default_type().map(lower_type_ref),
+                    });
+                }
+            }
+        }
+    }
+
+    if let Some(where_clause) = item.where_clause() {
+        params.where_predicates = where_clause
+            .predicates()
+            .map(|predicate| {
+                if let Some(lifetime) = predicate.lifetime() {
+                    return WherePredicate::Lifetime {
+                        lifetime: normalized_syntax(&lifetime),
+                        bounds: lower_lifetime_bounds(predicate.type_bound_list()),
+                    };
+                }
+
+                if let Some(ty) = predicate.ty() {
+                    return WherePredicate::Type {
+                        ty: lower_type_ref(ty),
+                        bounds: lower_type_bound_list(predicate.type_bound_list()),
+                    };
+                }
+
+                WherePredicate::Unsupported(normalized_syntax(&predicate))
+            })
+            .collect();
+    }
+
+    params
+}
+
+fn lower_lifetime_bounds(bound_list: Option<ast::TypeBoundList>) -> Vec<String> {
+    bound_list
+        .into_iter()
+        .flat_map(|bound_list| bound_list.bounds())
+        .filter_map(|bound| {
+            bound
+                .lifetime()
+                .map(|lifetime| normalized_syntax(&lifetime))
+        })
+        .collect()
+}
+
+fn lower_type_bound_list(bound_list: Option<ast::TypeBoundList>) -> Vec<TypeBound> {
+    bound_list
+        .into_iter()
+        .flat_map(|bound_list| bound_list.bounds())
+        .map(lower_type_bound)
+        .collect()
+}
+
+fn lower_type_bound(bound: ast::TypeBound) -> TypeBound {
+    if let Some(lifetime) = bound.lifetime() {
+        return TypeBound::Lifetime(normalized_syntax(&lifetime));
+    }
+
+    if let Some(ty) = bound.ty() {
+        return TypeBound::Trait(lower_type_ref(ty));
+    }
+
+    TypeBound::Unsupported(normalized_syntax(&bound))
+}
+
+fn lower_type_ref(ty: ast::Type) -> TypeRef {
+    match ty {
+        ast::Type::ArrayType(ty) => TypeRef::Array {
+            inner: Box::new(
+                ty.ty()
+                    .map(lower_type_ref)
+                    .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
+            ),
+            len: ty.const_arg().map(|arg| normalized_syntax(&arg)),
+        },
+        ast::Type::DynTraitType(ty) => {
+            TypeRef::DynTrait(lower_type_bound_list(ty.type_bound_list()))
+        }
+        ast::Type::FnPtrType(ty) => TypeRef::FnPointer {
+            params: lower_params(ty.param_list())
+                .into_iter()
+                .map(|param| param.ty.unwrap_or_else(|| TypeRef::Unknown(String::new())))
+                .collect(),
+            ret: Box::new(
+                ty.ret_type()
+                    .and_then(|ret_ty| ret_ty.ty())
+                    .map(lower_type_ref)
+                    .unwrap_or(TypeRef::Unit),
+            ),
+        },
+        ast::Type::ForType(ty) => ty
+            .ty()
+            .map(lower_type_ref)
+            .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
+        ast::Type::ImplTraitType(ty) => {
+            TypeRef::ImplTrait(lower_type_bound_list(ty.type_bound_list()))
+        }
+        ast::Type::InferType(_) => TypeRef::Infer,
+        ast::Type::MacroType(ty) => TypeRef::unknown_from_text(normalized_syntax(&ty)),
+        ast::Type::NeverType(_) => TypeRef::Never,
+        ast::Type::ParenType(ty) => ty
+            .ty()
+            .map(lower_type_ref)
+            .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
+        ast::Type::PathType(ty) => ty
+            .path()
+            .map(lower_type_path)
+            .map(TypeRef::Path)
+            .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
+        ast::Type::PtrType(ty) => TypeRef::RawPointer {
+            mutability: if ty.mut_token().is_some() {
+                Mutability::Mutable
+            } else {
+                Mutability::Shared
+            },
+            inner: Box::new(
+                ty.ty()
+                    .map(lower_type_ref)
+                    .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
+            ),
+        },
+        ast::Type::RefType(ty) => TypeRef::Reference {
+            lifetime: ty.lifetime().map(|lifetime| normalized_syntax(&lifetime)),
+            mutability: if ty.mut_token().is_some() {
+                Mutability::Mutable
+            } else {
+                Mutability::Shared
+            },
+            inner: Box::new(
+                ty.ty()
+                    .map(lower_type_ref)
+                    .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
+            ),
+        },
+        ast::Type::SliceType(ty) => TypeRef::Slice(Box::new(
+            ty.ty()
+                .map(lower_type_ref)
+                .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
+        )),
+        ast::Type::TupleType(ty) => {
+            let fields = ty.fields().map(lower_type_ref).collect::<Vec<_>>();
+            if fields.is_empty() {
+                TypeRef::Unit
+            } else {
+                TypeRef::Tuple(fields)
+            }
+        }
+    }
+}
+
+fn lower_type_path(path: ast::Path) -> TypePath {
+    let absolute = path
+        .first_segment()
+        .is_some_and(|segment| segment.coloncolon_token().is_some());
+    let mut segments = Vec::new();
+    collect_path_segments(&path, &mut segments);
+
+    TypePath { absolute, segments }
+}
+
+fn collect_path_segments(path: &ast::Path, segments: &mut Vec<TypePathSegment>) {
+    if let Some(qualifier) = path.qualifier() {
+        collect_path_segments(&qualifier, segments);
+    }
+
+    if let Some(segment) = path.segment() {
+        segments.push(lower_type_path_segment(&segment));
+    }
+}
+
+fn lower_type_path_segment(segment: &ast::PathSegment) -> TypePathSegment {
+    let name = segment
+        .name_ref()
+        .map(|name| name.syntax().text().to_string())
+        .unwrap_or_else(|| normalized_syntax(segment));
+    let mut args = Vec::new();
+
+    if let Some(arg_list) = segment.generic_arg_list() {
+        args.extend(arg_list.generic_args().map(lower_generic_arg));
+    }
+
+    if let Some(parenthesized_args) = segment.parenthesized_arg_list() {
+        args.push(GenericArg::Unsupported(normalized_syntax(
+            &parenthesized_args,
+        )));
+    }
+
+    TypePathSegment { name, args }
+}
+
+fn lower_generic_arg(arg: ast::GenericArg) -> GenericArg {
+    match arg {
+        ast::GenericArg::AssocTypeArg(arg) => GenericArg::AssocType {
+            name: arg
+                .name_ref()
+                .map(|name| name.syntax().text().to_string())
+                .unwrap_or_else(|| "<missing>".to_string()),
+            ty: arg.ty().map(lower_type_ref),
+        },
+        ast::GenericArg::ConstArg(arg) => GenericArg::Const(normalized_syntax(&arg)),
+        ast::GenericArg::LifetimeArg(arg) => arg
+            .lifetime()
+            .map(|lifetime| GenericArg::Lifetime(normalized_syntax(&lifetime)))
+            .unwrap_or_else(|| GenericArg::Unsupported(normalized_syntax(&arg))),
+        ast::GenericArg::TypeArg(arg) => arg
+            .ty()
+            .map(lower_type_ref)
+            .map(GenericArg::Type)
+            .unwrap_or_else(|| GenericArg::Unsupported(normalized_syntax(&arg))),
+    }
+}
+
+fn normalized_syntax(node: &impl ra_syntax::AstNode) -> String {
+    node.syntax()
+        .text()
+        .to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Filesystem context for resolving out-of-line child modules of the current logical module.

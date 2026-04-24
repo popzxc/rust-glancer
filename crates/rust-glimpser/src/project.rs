@@ -4,8 +4,9 @@ use anyhow::Context as _;
 
 use crate::{
     def_map::DefMapDb,
-    item_tree::{ItemKind, ItemNode, ItemTreeDb, ModuleSource},
+    item_tree::{FileTree, ItemKind, ItemNode, ItemTreeDb, ModuleSource},
     parse::{self, ParseDb},
+    semantic_ir::SemanticIrDb,
     workspace_metadata::WorkspaceMetadata,
 };
 
@@ -16,6 +17,7 @@ pub struct Project {
     parse: ParseDb,
     item_tree: ItemTreeDb,
     def_map: DefMapDb,
+    semantic_ir: SemanticIrDb,
 }
 
 impl Project {
@@ -26,12 +28,15 @@ impl Project {
             ItemTreeDb::build(&mut parse).context("while attempting to build item tree db")?;
         let def_map = DefMapDb::build(&workspace, &parse, &item_tree)
             .context("while attempting to build def map db")?;
+        let semantic_ir = SemanticIrDb::build(&item_tree, &def_map)
+            .context("while attempting to build semantic ir db")?;
 
         Ok(Self {
             workspace,
             parse,
             item_tree,
             def_map,
+            semantic_ir,
         })
     }
 
@@ -50,10 +55,16 @@ impl Project {
         &self.def_map
     }
 
+    /// Returns the semantic IR database built for this project.
+    pub(crate) fn semantic_ir_db(&self) -> &SemanticIrDb {
+        &self.semantic_ir
+    }
+
     fn fmt_item(
         &self,
         f: &mut fmt::Formatter<'_>,
         package: &parse::Package,
+        file_tree: &FileTree,
         item: &ItemNode,
         depth: usize,
     ) -> fmt::Result {
@@ -79,8 +90,11 @@ impl Project {
 
         if let ItemKind::Module(module) = &item.kind {
             if let ModuleSource::Inline { items } = &module.source {
-                for child in items {
-                    self.fmt_item(f, package, child, depth + 1)?;
+                for child_id in items {
+                    let child = file_tree
+                        .item(*child_id)
+                        .expect("inline child item id should exist while rendering project");
+                    self.fmt_item(f, package, file_tree, child, depth + 1)?;
                 }
             }
         }
@@ -109,12 +123,29 @@ impl fmt::Display for Project {
         let def_map_stats = self.def_map_db().stats();
         writeln!(
             f,
-            "DefMaps {} targets (modules: {}, local defs: {}, imports: {}, unresolved imports: {})",
+            "DefMaps {} targets (modules: {}, local defs: {}, impls: {}, imports: {}, unresolved imports: {})",
             def_map_stats.target_count,
             def_map_stats.module_count,
             def_map_stats.local_def_count,
+            def_map_stats.local_impl_count,
             def_map_stats.import_count,
             def_map_stats.unresolved_import_count,
+        )?;
+
+        let semantic_ir_stats = self.semantic_ir_db().stats();
+        writeln!(
+            f,
+            "SemanticIR {} targets (structs: {}, unions: {}, enums: {}, traits: {}, impls: {}, fns: {}, aliases: {}, consts: {}, statics: {})",
+            semantic_ir_stats.target_count,
+            semantic_ir_stats.struct_count,
+            semantic_ir_stats.union_count,
+            semantic_ir_stats.enum_count,
+            semantic_ir_stats.trait_count,
+            semantic_ir_stats.impl_count,
+            semantic_ir_stats.function_count,
+            semantic_ir_stats.type_alias_count,
+            semantic_ir_stats.const_count,
+            semantic_ir_stats.static_count,
         )?;
 
         for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
@@ -149,8 +180,11 @@ impl fmt::Display for Project {
                     .unwrap_or_else(|| "<unknown>".to_string());
                 writeln!(f)?;
                 writeln!(f, "File {file_path}")?;
-                for item in &file_tree.items {
-                    self.fmt_item(f, package, item, 0)?;
+                for item_id in &file_tree.top_level {
+                    let item = file_tree
+                        .item(*item_id)
+                        .expect("top-level item id should exist while rendering project");
+                    self.fmt_item(f, package, file_tree, item, 0)?;
                 }
             }
 

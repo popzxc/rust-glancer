@@ -15,16 +15,16 @@ use anyhow::Context as _;
 
 use crate::{
     item_tree::{
-        ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ModuleSource, Package as ItemTreePackage,
-        UseImport, UseItem,
+        ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef, ModuleSource,
+        Package as ItemTreePackage, UseImport, UseItem,
     },
     parse::{Package, Target},
 };
 
 use super::{
     DefId, DefMap, ImportBinding, ImportData, ImportId, ImportKind, ImportPath, LocalDefData,
-    LocalDefId, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleOrigin, ModuleRef,
-    ModuleScope, PackageSlot, ScopeBinding, TargetRef, data::Namespace,
+    LocalDefId, LocalDefKind, LocalDefRef, LocalImplData, LocalImplId, ModuleData, ModuleId,
+    ModuleOrigin, ModuleRef, ModuleScope, PackageSlot, ScopeBinding, TargetRef, data::Namespace,
 };
 
 /// Collected state for one target before fixed-point import resolution.
@@ -138,7 +138,7 @@ impl<'db> TargetScopeCollector<'db> {
                 root_file
             )
         })?;
-        self.collect_items(item_tree, root_module, &root_file_tree.items)
+        self.collect_items(item_tree, root_module, root_file, &root_file_tree.top_level)
             .context("while attempting to collect root file items")?;
 
         Ok(TargetState {
@@ -163,6 +163,7 @@ impl<'db> TargetScopeCollector<'db> {
             parent,
             children: Vec::new(),
             local_defs: Vec::new(),
+            impls: Vec::new(),
             imports: Vec::new(),
             unresolved_imports: Vec::new(),
             scope: ModuleScope::default(),
@@ -177,9 +178,17 @@ impl<'db> TargetScopeCollector<'db> {
         &mut self,
         item_tree: &ItemTreePackage,
         module_id: ModuleId,
-        items: &[ItemNode],
+        file_id: crate::parse::FileId,
+        items: &[ItemTreeId],
     ) -> anyhow::Result<()> {
-        for item in items {
+        for item_id in items {
+            let source = ItemTreeRef {
+                file_id,
+                item: *item_id,
+            };
+            let item = item_tree
+                .item(source)
+                .expect("item tree id should exist while collecting def map");
             match &item.kind {
                 ItemKind::ExternCrate(extern_crate) => {
                     self.collect_extern_crate(module_id, item, extern_crate);
@@ -196,7 +205,8 @@ impl<'db> TargetScopeCollector<'db> {
                 ItemKind::Use(use_item) => {
                     self.collect_use(module_id, item, use_item);
                 }
-                _ => self.collect_local_def(module_id, item),
+                ItemKind::Impl(_) => self.collect_local_impl(module_id, item, source),
+                _ => self.collect_local_def(module_id, item, source),
             }
         }
 
@@ -204,7 +214,7 @@ impl<'db> TargetScopeCollector<'db> {
     }
 
     /// Records one module-scope local definition and inserts its direct binding into the base scope.
-    fn collect_local_def(&mut self, module_id: ModuleId, item: &ItemNode) {
+    fn collect_local_def(&mut self, module_id: ModuleId, item: &ItemNode, source: ItemTreeRef) {
         let Some(kind) = LocalDefKind::from_item_tag(item.kind.tag()) else {
             return;
         };
@@ -219,6 +229,7 @@ impl<'db> TargetScopeCollector<'db> {
             name: name.clone(),
             kind,
             visibility: item.visibility.clone(),
+            source,
             file_id: item.file_id,
             span: item.span,
         });
@@ -246,6 +257,23 @@ impl<'db> TargetScopeCollector<'db> {
                     },
                 },
             );
+    }
+
+    /// Records one module-scope impl block without inserting a namespace binding.
+    fn collect_local_impl(&mut self, module_id: ModuleId, item: &ItemNode, source: ItemTreeRef) {
+        let local_impl_id = LocalImplId(self.def_map.local_impls.len());
+        self.def_map.local_impls.push(LocalImplData {
+            module: module_id,
+            source,
+            file_id: item.file_id,
+            span: item.span,
+        });
+        self.def_map
+            .modules
+            .get_mut(module_id.0)
+            .expect("module should exist for collected impl block")
+            .impls
+            .push(local_impl_id);
     }
 
     /// Creates a child module node and recursively walks its item source when available.
@@ -283,7 +311,7 @@ impl<'db> TargetScopeCollector<'db> {
         match source {
             ModuleSource::Inline { items } => {
                 // Inline modules already carry their lowered items inside the parent file tree.
-                self.collect_items(item_tree, child_module, items)
+                self.collect_items(item_tree, child_module, item.file_id, items)
                     .context("while attempting to collect inline module items")?;
             }
             ModuleSource::OutOfLine {
@@ -296,8 +324,13 @@ impl<'db> TargetScopeCollector<'db> {
                         definition_file
                     )
                 })?;
-                self.collect_items(item_tree, child_module, &file_tree.items)
-                    .context("while attempting to collect out-of-line module items")?;
+                self.collect_items(
+                    item_tree,
+                    child_module,
+                    *definition_file,
+                    &file_tree.top_level,
+                )
+                .context("while attempting to collect out-of-line module items")?;
             }
             ModuleSource::OutOfLine {
                 definition_file: None,

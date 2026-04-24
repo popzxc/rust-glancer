@@ -1,6 +1,6 @@
 use crate::parse::FileId;
 
-use super::ItemNode;
+use super::ItemTreeId;
 
 /// Syntactic module facts attached to `ItemKind::Module`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,6 +11,6 @@ pub struct ModuleItem {
 /// How a module declaration obtains its item list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModuleSource {
-    Inline { items: Vec<ItemNode> },
+    Inline { items: Vec<ItemTreeId> },
     OutOfLine { definition_file: Option<FileId> },
 }

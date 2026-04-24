@@ -9,8 +9,12 @@ use anyhow::Context as _;
 use crate::parse::{FileId, ParseDb, TargetId};
 
 pub(crate) use self::item::{
-    ExternCrateItem, ImportAlias, ItemKind, ItemNode, ItemTag, ModuleItem, ModuleSource, UseImport,
-    UseImportKind, UseItem, UsePath, UsePathSegment, VisibilityLevel,
+    ConstItem, ConstParamData, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldList,
+    FunctionItem, FunctionQualifiers, GenericArg, GenericParams, ImplItem, ImportAlias, ItemKind,
+    ItemNode, ItemTag, ItemTreeId, ItemTreeRef, LifetimeParamData, ModuleItem, ModuleSource,
+    Mutability, ParamItem, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem, TypeBound,
+    TypeParamData, TypePath, TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind,
+    UseItem, UsePath, UsePathSegment, VisibilityLevel, WherePredicate,
 };
 
 /// Lowered item trees for all parsed packages.
@@ -63,6 +67,11 @@ impl Package {
         self.files.get(file_id.0)?.as_ref()
     }
 
+    /// Returns one lowered item by stable item-tree reference.
+    pub(crate) fn item(&self, item_ref: ItemTreeRef) -> Option<&ItemNode> {
+        self.file(item_ref.file_id)?.item(item_ref.item)
+    }
+
     /// Returns all target roots.
     pub(crate) fn target_roots(&self) -> &[TargetRoot] {
         &self.target_roots
@@ -80,7 +89,15 @@ impl Package {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileTree {
     pub file: FileId,
+    pub top_level: Vec<ItemTreeId>,
     pub items: Vec<ItemNode>,
+}
+
+impl FileTree {
+    /// Returns one file-local item-tree node by id.
+    pub(crate) fn item(&self, item_id: ItemTreeId) -> Option<&ItemNode> {
+        self.items.get(item_id.0)
+    }
 }
 
 /// Target entrypoint into file-local item trees.

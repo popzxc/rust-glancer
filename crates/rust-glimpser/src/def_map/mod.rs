@@ -7,10 +7,13 @@ mod resolve;
 
 pub use self::{
     data::{
-        DefMap, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin, ModuleScope, ScopeBinding,
-        ScopeEntry,
+        DefMap, LocalDefData, LocalDefKind, LocalImplData, ModuleData, ModuleOrigin, ModuleScope,
+        ScopeBinding, ScopeEntry,
     },
-    ids::{DefId, ImportId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, PackageSlot, TargetRef},
+    ids::{
+        DefId, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
+        PackageSlot, TargetRef,
+    },
     import::{ImportBinding, ImportData, ImportKind, ImportPath, PathSegment},
 };
 use crate::{item_tree::ItemTreeDb, parse};
@@ -61,6 +64,7 @@ impl DefMapDb {
             stats.target_count += 1;
             stats.module_count += target.modules().len();
             stats.local_def_count += target.local_defs().len();
+            stats.local_impl_count += target.local_impls().len();
             stats.import_count += target.imports().len();
             stats.unresolved_import_count += target
                 .modules()
@@ -89,6 +93,7 @@ pub(crate) struct DefMapStats {
     pub(crate) target_count: usize,
     pub(crate) module_count: usize,
     pub(crate) local_def_count: usize,
+    pub(crate) local_impl_count: usize,
     pub(crate) import_count: usize,
     pub(crate) unresolved_import_count: usize,
 }

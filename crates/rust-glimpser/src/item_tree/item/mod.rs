@@ -6,18 +6,37 @@ use crate::parse::{
 };
 
 pub(crate) use self::{
+    decl::{
+        ConstItem, ConstParamData, EnumItem, EnumVariantItem, FieldItem, FieldList, FunctionItem,
+        FunctionQualifiers, GenericParams, ImplItem, LifetimeParamData, ParamItem, ParamKind,
+        StaticItem, StructItem, TraitItem, TypeAliasItem, TypeParamData, UnionItem, WherePredicate,
+    },
     import::{
         ExternCrateItem, ImportAlias, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
     },
     kind::{ItemKind, ItemTag},
     module::{ModuleItem, ModuleSource},
+    type_ref::{GenericArg, Mutability, TypeBound, TypePath, TypePathSegment, TypeRef},
     visibility::VisibilityLevel,
 };
 
+mod decl;
 mod import;
 mod kind;
 mod module;
+mod type_ref;
 mod visibility;
+
+/// Stable file-local identifier for one lowered item-tree node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ItemTreeId(pub usize);
+
+/// Stable project-local reference to one item-tree node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ItemTreeRef {
+    pub file_id: FileId,
+    pub item: ItemTreeId,
+}
 
 /// AST-independent item-tree node used by later lowering stages.
 #[derive(Debug, Clone, PartialEq, Eq)]

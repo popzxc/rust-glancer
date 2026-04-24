@@ -1,4 +1,8 @@
 use super::{
+    decl::{
+        ConstItem, EnumItem, FunctionItem, ImplItem, StaticItem, StructItem, TraitItem,
+        TypeAliasItem, UnionItem,
+    },
     import::{ExternCrateItem, UseItem},
     module::ModuleItem,
 };
@@ -13,31 +17,31 @@ pub enum ItemKind {
     #[display("asm")]
     AsmExpr,
     #[display("const")]
-    Const,
+    Const(Box<ConstItem>),
     #[display("enum")]
-    Enum,
+    Enum(Box<EnumItem>),
     #[display("extern_block")]
     ExternBlock,
     #[display("extern_crate")]
     ExternCrate(Box<ExternCrateItem>),
     #[display("fn")]
-    Function,
+    Function(Box<FunctionItem>),
     #[display("impl")]
-    Impl,
+    Impl(Box<ImplItem>),
     #[display("macro_definition")]
     MacroDefinition,
     #[display("module")]
     Module(Box<ModuleItem>),
     #[display("static")]
-    Static,
+    Static(Box<StaticItem>),
     #[display("struct")]
-    Struct,
+    Struct(Box<StructItem>),
     #[display("trait")]
-    Trait,
+    Trait(Box<TraitItem>),
     #[display("type_alias")]
-    TypeAlias,
+    TypeAlias(Box<TypeAliasItem>),
     #[display("union")]
-    Union,
+    Union(Box<UnionItem>),
     #[display("use")]
     Use(Box<UseItem>),
 }
@@ -47,19 +51,19 @@ impl ItemKind {
     pub(crate) fn tag(&self) -> ItemTag {
         match self {
             Self::AsmExpr => ItemTag::AsmExpr,
-            Self::Const => ItemTag::Const,
-            Self::Enum => ItemTag::Enum,
+            Self::Const(_) => ItemTag::Const,
+            Self::Enum(_) => ItemTag::Enum,
             Self::ExternBlock => ItemTag::ExternBlock,
             Self::ExternCrate(_) => ItemTag::ExternCrate,
-            Self::Function => ItemTag::Function,
-            Self::Impl => ItemTag::Impl,
+            Self::Function(_) => ItemTag::Function,
+            Self::Impl(_) => ItemTag::Impl,
             Self::MacroDefinition => ItemTag::MacroDefinition,
             Self::Module(_) => ItemTag::Module,
-            Self::Static => ItemTag::Static,
-            Self::Struct => ItemTag::Struct,
-            Self::Trait => ItemTag::Trait,
-            Self::TypeAlias => ItemTag::TypeAlias,
-            Self::Union => ItemTag::Union,
+            Self::Static(_) => ItemTag::Static,
+            Self::Struct(_) => ItemTag::Struct,
+            Self::Trait(_) => ItemTag::Trait,
+            Self::TypeAlias(_) => ItemTag::TypeAlias,
+            Self::Union(_) => ItemTag::Union,
             Self::Use(_) => ItemTag::Use,
         }
     }

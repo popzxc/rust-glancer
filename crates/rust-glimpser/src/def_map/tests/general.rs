@@ -158,6 +158,45 @@ pub fn work() {}
 }
 
 #[test]
+fn records_impl_blocks_without_scope_bindings() {
+    utils::check_project_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "impl_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Root;
+
+impl Root {}
+
+pub mod nested {
+    pub struct Nested;
+
+    impl Nested {}
+}
+"#,
+        expect![[r#"
+            package impl_fixture
+
+            impl_fixture [lib]
+            crate
+            - Root : type [pub struct impl_fixture[lib]::crate::Root]
+            - nested : type [pub module impl_fixture[lib]::crate::nested]
+            impls
+            - impl lib.rs#1
+
+            crate::nested
+            - Nested : type [pub struct impl_fixture[lib]::crate::nested::Nested]
+            impls
+            - impl lib.rs#3
+        "#]],
+    );
+}
+
+#[test]
 fn keeps_type_and_value_bindings_separate() {
     let fixture = fixture_crate!(
         r#"

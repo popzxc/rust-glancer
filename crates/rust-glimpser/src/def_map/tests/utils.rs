@@ -151,6 +151,21 @@ impl<'a> TargetDefMapSnapshot<'a> {
                     dump.push_str(&format!("- {}\n", self.render_unresolved_import(import)));
                 }
             }
+
+            if !module.impls.is_empty() {
+                dump.push_str("impls\n");
+
+                for impl_id in &module.impls {
+                    let local_impl = def_map
+                        .local_impls()
+                        .get(impl_id.0)
+                        .expect("local impl id should exist while dumping");
+                    dump.push_str(&format!(
+                        "- impl {}\n",
+                        self.render_item_tree_ref(local_impl.source)
+                    ));
+                }
+            }
         }
 
         dump
@@ -250,6 +265,16 @@ impl<'a> TargetDefMapSnapshot<'a> {
         };
 
         format!("{visibility}use {path}{}", import.binding)
+    }
+
+    fn render_item_tree_ref(&self, item_ref: crate::item_tree::ItemTreeRef) -> String {
+        let file_label = self
+            .package
+            .file_path(item_ref.file_id)
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("<unknown>");
+        format!("{file_label}#{}", item_ref.item.0)
     }
 
     fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {

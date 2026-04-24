@@ -196,6 +196,105 @@ pub fn decorate(input: &str) -> &str {
 }
 
 #[test]
+fn dumps_declaration_payloads() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "declaration_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User<T>
+where
+    T: Clone,
+{
+    pub id: UserId,
+    payload: Option<T>,
+}
+
+pub enum LoadState<E> {
+    Empty,
+    Loaded(User),
+    Failed { error: E },
+}
+
+pub trait Repository<T>: Send
+where
+    T: Clone,
+{
+    type Error;
+    const KIND: &'static str;
+    fn get(&self, id: UserId) -> Result<T, Self::Error>;
+}
+
+impl<T> Repository<T> for DbRepository<T>
+where
+    T: Clone,
+{
+    type Error = DbError;
+    const KIND: &'static str = "db";
+    fn get(&self, id: UserId) -> Result<T, DbError> {
+        todo!()
+    }
+}
+
+pub type UserResult<T> = Result<User<T>, DbError>;
+pub const DEFAULT_ID: UserId = UserId(0);
+pub static mut CACHE_READY: bool = false;
+"#,
+        expect![[r#"
+            package declaration_fixture
+
+            targets
+            - declaration_fixture [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - pub struct User
+              - generics <T> where T: Clone
+              - pub field id: UserId
+              - field payload: Option<T>
+            - pub enum LoadState
+              - generics <E>
+              - variant Empty
+              - variant Loaded
+                - field #0: User
+              - variant Failed
+                - field error: E
+            - pub trait Repository
+              - generics <T> where T: Clone
+              - supertraits Send
+              - type_alias Error
+              - const KIND
+                - ty &'static str
+              - fn get
+                - params (&self, id: UserId)
+                - ret Result<T, Self::Error>
+            - impl
+              - generics <T> where T: Clone
+              - trait Repository<T>
+              - self DbRepository<T>
+              - type_alias Error
+                - aliased DbError
+              - const KIND
+                - ty &'static str
+              - fn get
+                - params (&self, id: UserId)
+                - ret Result<T, DbError>
+            - pub type_alias UserResult
+              - generics <T>
+              - aliased Result<User<T>, DbError>
+            - pub const DEFAULT_ID
+              - ty UserId
+            - pub static CACHE_READY
+              - ty bool
+        "#]],
+    );
+}
+
+#[test]
 fn dumps_item_spans() {
     utils::check_project_item_tree_with_spans(
         r#"

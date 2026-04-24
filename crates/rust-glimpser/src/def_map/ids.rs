@@ -8,6 +8,10 @@ pub struct ModuleId(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LocalDefId(pub usize);
 
+/// Stable identifier of one impl block inside a target map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LocalImplId(pub usize);
+
 /// Stable identifier of one lowered import inside a target map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ImportId(pub usize);
@@ -35,6 +39,13 @@ pub struct ModuleRef {
 pub struct LocalDefRef {
     pub target: TargetRef,
     pub local_def: LocalDefId,
+}
+
+/// Stable reference to one impl block across the whole project analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LocalImplRef {
+    pub target: TargetRef,
+    pub local_impl: LocalImplId,
 }
 
 /// Namespace-resolved target-level definition reference.

@@ -6,6 +6,7 @@ pub(crate) mod def_map;
 pub(crate) mod item_tree;
 pub(crate) mod parse;
 mod project;
+pub(crate) mod semantic_ir;
 mod workspace_metadata;
 
 #[cfg(test)]

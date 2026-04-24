@@ -4,21 +4,31 @@ use expect_test::Expect;
 
 use crate::{
     Project,
-    item_tree::{ItemKind, ItemNode, ModuleSource},
+    item_tree::{
+        FieldItem, FieldList, ItemKind, ItemNode, ItemTreeId, ModuleSource, ParamKind,
+        VisibilityLevel,
+    },
     parse::{Package, Target},
     test_utils::fixture_crate,
 };
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
     let project = fixture_crate!(fixture).project();
-    let actual = ProjectItemTreeSnapshot::new(&project, false).render();
+    let actual = ProjectItemTreeSnapshot::new(&project, SnapshotMode::Structure).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) fn check_project_item_tree_with_declarations(fixture: &str, expect: Expect) {
+    let project = fixture_crate!(fixture).project();
+    let actual = ProjectItemTreeSnapshot::new(&project, SnapshotMode::Declarations).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
 
 pub(super) fn check_project_item_tree_with_spans(fixture: &str, expect: Expect) {
     let project = fixture_crate!(fixture).project();
-    let actual = ProjectItemTreeSnapshot::new(&project, true).render();
+    let actual = ProjectItemTreeSnapshot::new(&project, SnapshotMode::Spans).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
@@ -27,15 +37,12 @@ pub(super) fn check_project_item_tree_with_spans(fixture: &str, expect: Expect) 
 /// Renders package sections such as `package demo`.
 struct ProjectItemTreeSnapshot<'a> {
     project: &'a Project,
-    include_spans: bool,
+    mode: SnapshotMode,
 }
 
 impl<'a> ProjectItemTreeSnapshot<'a> {
-    fn new(project: &'a Project, include_spans: bool) -> Self {
-        Self {
-            project,
-            include_spans,
-        }
+    fn new(project: &'a Project, mode: SnapshotMode) -> Self {
+        Self { project, mode }
     }
 
     fn render(&self) -> String {
@@ -59,7 +66,7 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
                 PackageItemTreeSnapshot {
                     package,
                     item_trees,
-                    include_spans: self.include_spans,
+                    mode: self.mode,
                 }
                 .render()
             })
@@ -74,7 +81,7 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
 struct PackageItemTreeSnapshot<'a> {
     package: &'a Package,
     item_trees: &'a crate::item_tree::Package,
-    include_spans: bool,
+    mode: SnapshotMode,
 }
 
 impl<'a> PackageItemTreeSnapshot<'a> {
@@ -98,7 +105,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             .sorted_files()
             .into_iter()
             .map(|file_tree| {
-                self.render_file_item_tree(file_tree.file, &file_tree.items)
+                self.render_file_item_tree(file_tree, &file_tree.top_level)
                     .trim_end()
                     .to_string()
             })
@@ -167,19 +174,32 @@ impl<'a> PackageItemTreeSnapshot<'a> {
         dump
     }
 
-    fn render_file_item_tree(&self, file_id: crate::parse::FileId, items: &[ItemNode]) -> String {
+    fn render_file_item_tree(
+        &self,
+        file_tree: &crate::item_tree::FileTree,
+        items: &[ItemTreeId],
+    ) -> String {
         let mut dump = String::new();
-        writeln!(&mut dump, "file {}", self.file_label(file_id))
+        writeln!(&mut dump, "file {}", self.file_label(file_tree.file))
             .expect("string writes should not fail");
 
-        for item in items {
-            self.render_item(item, 0, &mut dump);
+        for item_id in items {
+            let item = file_tree
+                .item(*item_id)
+                .expect("item id should exist while rendering item tree");
+            self.render_item(file_tree, item, 0, &mut dump);
         }
 
         dump
     }
 
-    fn render_item(&self, item: &ItemNode, depth: usize, dump: &mut String) {
+    fn render_item(
+        &self,
+        file_tree: &crate::item_tree::FileTree,
+        item: &ItemNode,
+        depth: usize,
+        dump: &mut String,
+    ) {
         let indent = "  ".repeat(depth);
         let mut line = format!("{indent}- ");
 
@@ -203,7 +223,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             line.push_str(&format!(" [{name}{}]", extern_crate.alias));
         }
 
-        if self.include_spans {
+        if matches!(self.mode, SnapshotMode::Spans) {
             line.push_str(&format!(
                 " [{} {}:{}-{}:{} ({}..{})]",
                 self.file_label(item.file_id),
@@ -217,6 +237,10 @@ impl<'a> PackageItemTreeSnapshot<'a> {
         }
 
         writeln!(dump, "{line}").expect("string writes should not fail");
+
+        if matches!(self.mode, SnapshotMode::Declarations) {
+            self.render_declaration_payload(file_tree, item, depth, dump);
+        }
 
         if let ItemKind::Use(use_item) = &item.kind {
             for import in &use_item.imports {
@@ -238,10 +262,174 @@ impl<'a> PackageItemTreeSnapshot<'a> {
 
         if let ItemKind::Module(module) = &item.kind {
             if let ModuleSource::Inline { items } = &module.source {
-                for child in items {
-                    self.render_item(child, depth + 1, dump);
+                for child_id in items {
+                    let child = file_tree
+                        .item(*child_id)
+                        .expect("inline child item id should exist while rendering");
+                    self.render_item(file_tree, child, depth + 1, dump);
                 }
             }
+        }
+    }
+
+    fn render_declaration_payload(
+        &self,
+        file_tree: &crate::item_tree::FileTree,
+        item: &ItemNode,
+        depth: usize,
+        dump: &mut String,
+    ) {
+        let indent = "  ".repeat(depth);
+
+        match &item.kind {
+            ItemKind::Const(const_item) => {
+                self.render_generics(&const_item.generics, depth, dump);
+                if let Some(ty) = &const_item.ty {
+                    writeln!(dump, "{indent}  - ty {ty}").expect("string writes should not fail");
+                }
+            }
+            ItemKind::Enum(enum_item) => {
+                self.render_generics(&enum_item.generics, depth, dump);
+                for variant in &enum_item.variants {
+                    writeln!(dump, "{indent}  - variant {}", variant.name)
+                        .expect("string writes should not fail");
+                    self.render_fields(&variant.fields, depth + 2, dump);
+                }
+            }
+            ItemKind::Function(function_item) => {
+                self.render_generics(&function_item.generics, depth, dump);
+                let params = function_item
+                    .params
+                    .iter()
+                    .map(render_param)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                writeln!(dump, "{indent}  - params ({params})")
+                    .expect("string writes should not fail");
+                if let Some(ret_ty) = &function_item.ret_ty {
+                    writeln!(dump, "{indent}  - ret {ret_ty}")
+                        .expect("string writes should not fail");
+                }
+            }
+            ItemKind::Impl(impl_item) => {
+                self.render_generics(&impl_item.generics, depth, dump);
+                if let Some(trait_ref) = &impl_item.trait_ref {
+                    writeln!(dump, "{indent}  - trait {trait_ref}")
+                        .expect("string writes should not fail");
+                }
+                writeln!(dump, "{indent}  - self {}", impl_item.self_ty)
+                    .expect("string writes should not fail");
+                for child_id in &impl_item.items {
+                    let child = file_tree
+                        .item(*child_id)
+                        .expect("impl child item id should exist while rendering declarations");
+                    self.render_item(file_tree, child, depth + 1, dump);
+                }
+            }
+            ItemKind::Static(static_item) => {
+                if let Some(ty) = &static_item.ty {
+                    writeln!(dump, "{indent}  - ty {ty}").expect("string writes should not fail");
+                }
+            }
+            ItemKind::Struct(struct_item) => {
+                self.render_generics(&struct_item.generics, depth, dump);
+                self.render_fields(&struct_item.fields, depth + 1, dump);
+            }
+            ItemKind::Trait(trait_item) => {
+                self.render_generics(&trait_item.generics, depth, dump);
+                if !trait_item.super_traits.is_empty() {
+                    writeln!(
+                        dump,
+                        "{indent}  - supertraits {}",
+                        trait_item
+                            .super_traits
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" + ")
+                    )
+                    .expect("string writes should not fail");
+                }
+                for child_id in &trait_item.items {
+                    let child = file_tree
+                        .item(*child_id)
+                        .expect("trait child item id should exist while rendering declarations");
+                    self.render_item(file_tree, child, depth + 1, dump);
+                }
+            }
+            ItemKind::TypeAlias(type_alias) => {
+                self.render_generics(&type_alias.generics, depth, dump);
+                if !type_alias.bounds.is_empty() {
+                    writeln!(
+                        dump,
+                        "{indent}  - bounds {}",
+                        type_alias
+                            .bounds
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" + ")
+                    )
+                    .expect("string writes should not fail");
+                }
+                if let Some(aliased_ty) = &type_alias.aliased_ty {
+                    writeln!(dump, "{indent}  - aliased {aliased_ty}")
+                        .expect("string writes should not fail");
+                }
+            }
+            ItemKind::Union(union_item) => {
+                self.render_generics(&union_item.generics, depth, dump);
+                self.render_named_fields(&union_item.fields, depth + 1, dump);
+            }
+            _ => {}
+        }
+    }
+
+    fn render_generics(
+        &self,
+        generics: &crate::item_tree::GenericParams,
+        depth: usize,
+        dump: &mut String,
+    ) {
+        let generics = generics.to_string();
+        if generics.is_empty() {
+            return;
+        }
+
+        writeln!(dump, "{}  - generics {generics}", "  ".repeat(depth))
+            .expect("string writes should not fail");
+    }
+
+    fn render_fields(&self, fields: &FieldList, depth: usize, dump: &mut String) {
+        match fields {
+            FieldList::Named(fields) => self.render_named_fields(fields, depth, dump),
+            FieldList::Tuple(fields) => {
+                for (idx, field) in fields.iter().enumerate() {
+                    writeln!(
+                        dump,
+                        "{}- {}field #{idx}: {}",
+                        "  ".repeat(depth),
+                        visibility_prefix(&field.visibility),
+                        field.ty,
+                    )
+                    .expect("string writes should not fail");
+                }
+            }
+            FieldList::Unit => {}
+        }
+    }
+
+    fn render_named_fields(&self, fields: &[FieldItem], depth: usize, dump: &mut String) {
+        for field in fields {
+            writeln!(
+                dump,
+                "{}- {}field {}: {}",
+                "  ".repeat(depth),
+                visibility_prefix(&field.visibility),
+                field.name.as_deref().unwrap_or("<missing>"),
+                field.ty,
+            )
+            .expect("string writes should not fail");
         }
     }
 
@@ -266,5 +454,27 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             .and_then(|name| name.to_str())
             .unwrap_or("<unknown>")
             .to_string()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SnapshotMode {
+    Structure,
+    Declarations,
+    Spans,
+}
+
+fn render_param(param: &crate::item_tree::ParamItem) -> String {
+    match (param.kind, &param.ty) {
+        (ParamKind::SelfParam, _) => param.pat.clone(),
+        (ParamKind::Normal, Some(ty)) => format!("{}: {ty}", param.pat),
+        (ParamKind::Normal, None) => param.pat.clone(),
+    }
+}
+
+fn visibility_prefix(visibility: &VisibilityLevel) -> String {
+    match visibility {
+        VisibilityLevel::Private => String::new(),
+        _ => format!("{visibility} "),
     }
 }

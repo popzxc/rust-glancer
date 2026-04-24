@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use crate::{
-    item_tree::{ItemTag, VisibilityLevel},
+    item_tree::{ItemTag, ItemTreeRef, VisibilityLevel},
     parse::{file::FileId, span::Span},
 };
 
-use super::{DefId, ImportData, ImportId, LocalDefId, ModuleId, ModuleRef};
+use super::{DefId, ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef};
 
 /// Frozen namespace map for one analyzed target.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -13,6 +13,7 @@ pub struct DefMap {
     root_module: Option<ModuleId>,
     pub modules: Vec<ModuleData>,
     pub local_defs: Vec<LocalDefData>,
+    pub local_impls: Vec<LocalImplData>,
     pub imports: Vec<ImportData>,
 }
 
@@ -37,6 +38,11 @@ impl DefMap {
         &self.local_defs
     }
 
+    /// Returns all impl blocks in stable local-impl-id order.
+    pub fn local_impls(&self) -> &[LocalImplData] {
+        &self.local_impls
+    }
+
     /// Returns all imports in stable import-id order.
     pub fn imports(&self) -> &[ImportData] {
         &self.imports
@@ -54,6 +60,7 @@ pub struct ModuleData {
     pub parent: Option<ModuleId>,
     pub children: Vec<(String, ModuleId)>,
     pub local_defs: Vec<LocalDefId>,
+    pub impls: Vec<LocalImplId>,
     pub imports: Vec<ImportId>,
     pub unresolved_imports: Vec<ImportId>,
     pub scope: ModuleScope,
@@ -84,6 +91,16 @@ pub struct LocalDefData {
     pub name: String,
     pub kind: LocalDefKind,
     pub visibility: VisibilityLevel,
+    pub source: ItemTreeRef,
+    pub file_id: FileId,
+    pub span: Span,
+}
+
+/// One module-owned impl block collected from source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalImplData {
+    pub module: ModuleId,
+    pub source: ItemTreeRef,
     pub file_id: FileId,
     pub span: Span,
 }
