@@ -371,12 +371,16 @@ pub enum ExprKind {
     },
     MethodCall {
         receiver: Option<ExprId>,
+        dot_span: Option<Span>,
         method_name: String,
+        method_name_span: Option<Span>,
         args: Vec<ExprId>,
     },
     Field {
         base: Option<ExprId>,
+        dot_span: Option<Span>,
         field_name: String,
+        field_name_span: Option<Span>,
     },
     Literal {
         text: String,

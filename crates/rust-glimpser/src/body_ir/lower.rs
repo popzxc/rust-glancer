@@ -520,10 +520,17 @@ impl<'a> FunctionBodyLowering<'a> {
         let receiver = method_call
             .receiver()
             .map(|receiver| self.lower_expr(receiver, scope));
-        let method_name = method_call
-            .name_ref()
+        let dot_span = method_call
+            .dot_token()
+            .map(|dot| Span::from_text_range(dot.text_range(), self.line_index));
+        let name_ref = method_call.name_ref();
+        let method_name = name_ref
+            .as_ref()
             .map(|name| name.syntax().text().to_string())
             .unwrap_or_else(|| "<missing>".to_string());
+        let method_name_span = name_ref
+            .as_ref()
+            .map(|name| self.source(name.syntax()).span);
         let args = method_call
             .arg_list()
             .into_iter()
@@ -536,7 +543,9 @@ impl<'a> FunctionBodyLowering<'a> {
             scope,
             ExprKind::MethodCall {
                 receiver,
+                dot_span,
                 method_name,
+                method_name_span,
                 args,
             },
         )
@@ -544,12 +553,28 @@ impl<'a> FunctionBodyLowering<'a> {
 
     fn lower_field_expr(&mut self, field: ast::FieldExpr, scope: ScopeId) -> ExprId {
         let base = field.expr().map(|base| self.lower_expr(base, scope));
-        let field_name = field
-            .name_ref()
+        let dot_span = field
+            .dot_token()
+            .map(|dot| Span::from_text_range(dot.text_range(), self.line_index));
+        let name_ref = field.name_ref();
+        let field_name = name_ref
+            .as_ref()
             .map(|name| name.syntax().text().to_string())
             .unwrap_or_else(|| "<missing>".to_string());
+        let field_name_span = name_ref
+            .as_ref()
+            .map(|name| self.source(name.syntax()).span);
 
-        self.alloc_expr(field.syntax(), scope, ExprKind::Field { base, field_name })
+        self.alloc_expr(
+            field.syntax(),
+            scope,
+            ExprKind::Field {
+                base,
+                dot_span,
+                field_name,
+                field_name_span,
+            },
+        )
     }
 
     fn lower_literal(&mut self, literal: ast::Literal, scope: ScopeId) -> ExprId {

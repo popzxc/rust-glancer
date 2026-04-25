@@ -40,18 +40,9 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> Option<SymbolAt> {
-        self.source_node_at(target, file_id, offset)
-            .map(|node| match (node.expr, node.binding) {
-                (Some(expr), _) => SymbolAt::Expr {
-                    body: node.body,
-                    expr,
-                },
-                (None, Some(binding)) => SymbolAt::Binding {
-                    body: node.body,
-                    binding,
-                },
-                (None, None) => SymbolAt::Body { body: node.body },
-            })
+        let node = self.source_node_at(target, file_id, offset)?;
+        let body = self.body_data(node.body)?;
+        Some(self.symbol_for_source_node(body, node))
     }
 
     /// Resolves a previously found body symbol to navigation targets.
@@ -95,18 +86,16 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> Option<BodyTy> {
-        let node = self.source_node_at(target, file_id, offset)?;
-        if let Some(expr) = node.expr {
-            return self
-                .body_data(node.body)?
-                .expr(expr)
-                .map(|data| data.ty.clone());
+        match self.symbol_at(target, file_id, offset)? {
+            SymbolAt::Expr { body, expr } => {
+                self.body_data(body)?.expr(expr).map(|data| data.ty.clone())
+            }
+            SymbolAt::Binding { body, binding } => self
+                .body_data(body)?
+                .binding(binding)
+                .map(|data| data.ty.clone()),
+            SymbolAt::Body { .. } => None,
         }
-
-        let binding = node.binding?;
-        self.body_data(node.body)?
-            .binding(binding)
-            .map(|data| data.ty.clone())
     }
 
     /// Returns method-like completion candidates for a receiver before a dot.
@@ -171,7 +160,7 @@ impl<'a> Analysis<'a> {
             .iter()
             .enumerate()
             .filter(|(_, expr)| expr.source.file_id == file_id)
-            .filter(|(_, expr)| contains_offset(expr.source.span, offset))
+            .filter(|(_, expr)| contains_offset_or_end(expr.source.span, offset))
             .min_by_key(|(_, expr)| span_len(expr.source.span))
             .map(|(idx, _)| ExprId(idx))
     }
@@ -186,7 +175,7 @@ impl<'a> Analysis<'a> {
             .iter()
             .enumerate()
             .filter(|(_, binding)| binding.source.file_id == file_id)
-            .filter(|(_, binding)| contains_offset(binding.source.span, offset))
+            .filter(|(_, binding)| contains_offset_or_end(binding.source.span, offset))
             .min_by_key(|(_, binding)| span_len(binding.source.span))
             .map(|(idx, _)| BindingId(idx))
     }
@@ -229,6 +218,35 @@ impl<'a> Analysis<'a> {
 
     fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
         self.project.body_ir_db().body_data(body_ref)
+    }
+
+    fn symbol_for_source_node(&self, body: &BodyData, node: SourceNodeAt) -> SymbolAt {
+        let expr = node.expr.and_then(|expr| {
+            body.expr(expr)
+                .map(|data| (expr, span_len(data.source.span)))
+        });
+        let binding = node.binding.and_then(|binding| {
+            body.binding(binding)
+                .map(|data| (binding, span_len(data.source.span)))
+        });
+
+        match (expr, binding) {
+            (Some((expr, expr_len)), Some((_, binding_len))) if expr_len < binding_len => {
+                SymbolAt::Expr {
+                    body: node.body,
+                    expr,
+                }
+            }
+            (Some(_), Some((binding, _))) | (None, Some((binding, _))) => SymbolAt::Binding {
+                body: node.body,
+                binding,
+            },
+            (Some((expr, _)), None) => SymbolAt::Expr {
+                body: node.body,
+                expr,
+            },
+            (None, None) => SymbolAt::Body { body: node.body },
+        }
     }
 
     fn navigation_targets_for_resolution(
@@ -332,7 +350,7 @@ impl<'a> Analysis<'a> {
         }
         if completions
             .iter()
-            .any(|completion| completion.label == data.name)
+            .any(|completion| completion.function == function)
         {
             return;
         }
@@ -360,18 +378,22 @@ fn function_has_self_receiver(data: &FunctionData) -> bool {
 }
 
 fn offset_in_dot_expr(expr: &ExprData, body: &BodyData, offset: u32) -> bool {
-    if !contains_offset_or_end(expr.source.span, offset) {
-        return false;
-    }
-
     let Some(receiver) = receiver_expr(expr) else {
         return false;
     };
     let Some(receiver_data) = body.expr(receiver) else {
         return false;
     };
+    let Some(dot_span) = dot_span(expr) else {
+        return false;
+    };
+    let completion_end = member_name_span(expr)
+        .map(|span| span.text.end)
+        .unwrap_or(expr.source.span.text.end);
 
-    receiver_data.source.span.text.end <= offset && offset <= expr.source.span.text.end
+    receiver_data.source.span.text.end <= dot_span.text.start
+        && dot_span.text.end <= offset
+        && offset <= completion_end
 }
 
 fn receiver_expr(expr: &ExprData) -> Option<ExprId> {
@@ -384,6 +406,26 @@ fn receiver_expr(expr: &ExprData) -> Option<ExprId> {
             base: Some(receiver),
             ..
         } => Some(*receiver),
+        _ => None,
+    }
+}
+
+fn member_name_span(expr: &ExprData) -> Option<Span> {
+    match &expr.kind {
+        ExprKind::MethodCall {
+            method_name_span, ..
+        } => *method_name_span,
+        ExprKind::Field {
+            field_name_span, ..
+        } => *field_name_span,
+        _ => None,
+    }
+}
+
+fn dot_span(expr: &ExprData) -> Option<Span> {
+    match &expr.kind {
+        ExprKind::MethodCall { dot_span, .. } => *dot_span,
+        ExprKind::Field { dot_span, .. } => *dot_span,
         _ => None,
     }
 }
