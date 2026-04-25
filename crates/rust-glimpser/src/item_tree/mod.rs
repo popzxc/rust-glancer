@@ -9,13 +9,15 @@ use anyhow::Context as _;
 use crate::parse::{FileId, ParseDb, TargetId};
 
 pub(crate) use self::item::{
-    ConstItem, ConstParamData, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldList,
-    FunctionItem, FunctionQualifiers, GenericArg, GenericParams, ImplItem, ImportAlias, ItemKind,
-    ItemNode, ItemTag, ItemTreeId, ItemTreeRef, LifetimeParamData, ModuleItem, ModuleSource,
-    Mutability, ParamItem, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem, TypeBound,
-    TypeParamData, TypePath, TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind,
-    UseItem, UsePath, UsePathSegment, VisibilityLevel, WherePredicate,
+    ConstItem, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldList, FunctionItem,
+    GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag, ItemTreeId, ItemTreeRef,
+    ModuleItem, ModuleSource, Mutability, StaticItem, StructItem, TraitItem, TypeAliasItem,
+    TypeBound, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
+    VisibilityLevel,
 };
+
+#[cfg(test)]
+pub(crate) use self::item::{ParamItem, ParamKind};
 
 /// Lowered item trees for all parsed packages.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

@@ -12,21 +12,15 @@ use std::{
 use anyhow::Context as _;
 use ra_syntax::{
     AstNode as _,
-    ast::{
-        self, HasGenericArgs, HasGenericParams, HasModuleItem, HasName, HasTypeBounds,
-        HasVisibility,
-    },
+    ast::{self, HasModuleItem, HasName, HasVisibility},
 };
 
 use crate::parse::{FileDb, FileId, Target as ParseTarget, span::LineIndex};
 
 use super::{
-    ConstItem, ConstParamData, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldList,
-    FileTree, FunctionItem, FunctionQualifiers, GenericArg, GenericParams, ImplItem, ItemKind,
-    ItemNode, ItemTreeId, LifetimeParamData, ModuleItem, ModuleSource, Mutability, Package,
-    ParamItem, ParamKind, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, TypeBound,
-    TypeParamData, TypePath, TypePathSegment, TypeRef, UnionItem, UseItem, VisibilityLevel,
-    WherePredicate,
+    ConstItem, EnumItem, ExternCrateItem, FileTree, FunctionItem, ImplItem, ItemKind, ItemNode,
+    ItemTreeId, ModuleItem, ModuleSource, Package, StaticItem, StructItem, TargetRoot, TraitItem,
+    TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
@@ -176,21 +170,15 @@ impl<'db> PackageLowering<'db> {
                 item.syntax().text_range(),
             )),
             ast::Item::Const(item) => Some(builder.alloc_item(
-                ItemKind::Const(Box::new(ConstItem {
-                    generics: lower_generic_params(&item),
-                    ty: item.ty().map(lower_type_ref),
-                })),
+                ItemKind::Const(Box::new(ConstItem::from_ast(&item))),
                 item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
             ast::Item::Enum(item) => Some(builder.alloc_item(
-                ItemKind::Enum(Box::new(EnumItem {
-                    generics: lower_generic_params(&item),
-                    variants: lower_enum_variants(&item),
-                })),
+                ItemKind::Enum(Box::new(EnumItem::from_ast(&item))),
                 item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
             ast::Item::ExternBlock(item) => Some(builder.alloc_item(
@@ -204,14 +192,14 @@ impl<'db> PackageLowering<'db> {
                     ItemKind::ExternCrate(Box::new(ExternCrateItem::from_ast(&item))),
                     item.name_ref()
                         .map(|name_ref| name_ref.syntax().text().to_string()),
-                    lower_visibility(item.visibility()),
+                    VisibilityLevel::from_ast(item.visibility()),
                     item.syntax().text_range(),
                 ),
             ),
             ast::Item::Fn(item) => Some(builder.alloc_item(
-                ItemKind::Function(Box::new(lower_function_item(&item))),
+                ItemKind::Function(Box::new(FunctionItem::from_ast(&item))),
                 item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
             ast::Item::Impl(item) => {
@@ -221,7 +209,7 @@ impl<'db> PackageLowering<'db> {
                 Some(builder.alloc_item(
                     ItemKind::Impl(Box::new(impl_item)),
                     None,
-                    lower_visibility(item.visibility()),
+                    VisibilityLevel::from_ast(item.visibility()),
                     item.syntax().text_range(),
                 ))
             }
@@ -229,13 +217,13 @@ impl<'db> PackageLowering<'db> {
             ast::Item::MacroDef(item) => Some(builder.alloc_item(
                 ItemKind::MacroDefinition,
                 item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
             ast::Item::MacroRules(item) => Some(builder.alloc_item(
                 ItemKind::MacroDefinition,
                 item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
             ast::Item::Module(item) => {
@@ -251,30 +239,20 @@ impl<'db> PackageLowering<'db> {
                 Some(builder.alloc_item(
                     ItemKind::Module(Box::new(module_item)),
                     module_name,
-                    lower_visibility(item.visibility()),
+                    VisibilityLevel::from_ast(item.visibility()),
                     item.syntax().text_range(),
                 ))
             }
             ast::Item::Static(item) => Some(builder.alloc_item(
-                ItemKind::Static(Box::new(StaticItem {
-                    ty: item.ty().map(lower_type_ref),
-                    mutability: if item.mut_token().is_some() {
-                        Mutability::Mutable
-                    } else {
-                        Mutability::Shared
-                    },
-                })),
+                ItemKind::Static(Box::new(StaticItem::from_ast(&item))),
                 item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
             ast::Item::Struct(item) => Some(builder.alloc_item(
-                ItemKind::Struct(Box::new(StructItem {
-                    generics: lower_generic_params(&item),
-                    fields: lower_field_list(item.field_list()),
-                })),
+                ItemKind::Struct(Box::new(StructItem::from_ast(&item))),
                 item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
             ast::Item::Trait(item) => {
@@ -284,38 +262,26 @@ impl<'db> PackageLowering<'db> {
                 Some(builder.alloc_item(
                     ItemKind::Trait(Box::new(trait_item)),
                     item.name().map(|name| name.text().to_string()),
-                    lower_visibility(item.visibility()),
+                    VisibilityLevel::from_ast(item.visibility()),
                     item.syntax().text_range(),
                 ))
             }
             ast::Item::TypeAlias(item) => Some(builder.alloc_item(
-                ItemKind::TypeAlias(Box::new(TypeAliasItem {
-                    generics: lower_generic_params(&item),
-                    bounds: lower_type_bound_list(item.type_bound_list()),
-                    aliased_ty: item.ty().map(lower_type_ref),
-                })),
+                ItemKind::TypeAlias(Box::new(TypeAliasItem::from_ast(&item))),
                 item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
-            ast::Item::Union(item) => Some(
-                builder.alloc_item(
-                    ItemKind::Union(Box::new(UnionItem {
-                        generics: lower_generic_params(&item),
-                        fields: item
-                            .record_field_list()
-                            .map(lower_record_fields)
-                            .unwrap_or_default(),
-                    })),
-                    item.name().map(|name| name.text().to_string()),
-                    lower_visibility(item.visibility()),
-                    item.syntax().text_range(),
-                ),
-            ),
+            ast::Item::Union(item) => Some(builder.alloc_item(
+                ItemKind::Union(Box::new(UnionItem::from_ast(&item))),
+                item.name().map(|name| name.text().to_string()),
+                VisibilityLevel::from_ast(item.visibility()),
+                item.syntax().text_range(),
+            )),
             ast::Item::Use(item) => Some(builder.alloc_item(
                 ItemKind::Use(Box::new(UseItem::from_ast(&item))),
                 normalized_use_name(&item),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
         };
@@ -401,12 +367,7 @@ impl<'db> PackageLowering<'db> {
             .collect_assoc_items(builder, assoc_items)
             .context("while attempting to lower trait associated items")?;
 
-        Ok(TraitItem {
-            generics: lower_generic_params(item),
-            super_traits: lower_type_bound_list(item.type_bound_list()),
-            items,
-            is_unsafe: item.unsafe_token().is_some(),
-        })
+        Ok(TraitItem::from_ast(item, items))
     }
 
     fn lower_impl_item(
@@ -421,15 +382,7 @@ impl<'db> PackageLowering<'db> {
         let items = self
             .collect_assoc_items(builder, assoc_items)
             .context("while attempting to lower impl associated items")?;
-        let (trait_ref, self_ty) = lower_impl_header(item);
-
-        Ok(ImplItem {
-            generics: lower_generic_params(item),
-            trait_ref,
-            self_ty,
-            items,
-            is_unsafe: item.unsafe_token().is_some(),
-        })
+        Ok(ImplItem::from_ast(item, items))
     }
 
     fn collect_assoc_items(
@@ -455,29 +408,22 @@ impl<'db> PackageLowering<'db> {
     ) -> anyhow::Result<Option<ItemTreeId>> {
         let item_id = match item {
             ast::AssocItem::Const(item) => Some(builder.alloc_item(
-                ItemKind::Const(Box::new(ConstItem {
-                    generics: lower_generic_params(&item),
-                    ty: item.ty().map(lower_type_ref),
-                })),
+                ItemKind::Const(Box::new(ConstItem::from_ast(&item))),
                 item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
             ast::AssocItem::Fn(item) => Some(builder.alloc_item(
-                ItemKind::Function(Box::new(lower_function_item(&item))),
+                ItemKind::Function(Box::new(FunctionItem::from_ast(&item))),
                 item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
             ast::AssocItem::MacroCall(_) => None,
             ast::AssocItem::TypeAlias(item) => Some(builder.alloc_item(
-                ItemKind::TypeAlias(Box::new(TypeAliasItem {
-                    generics: lower_generic_params(&item),
-                    bounds: lower_type_bound_list(item.type_bound_list()),
-                    aliased_ty: item.ty().map(lower_type_ref),
-                })),
+                ItemKind::TypeAlias(Box::new(TypeAliasItem::from_ast(&item))),
                 item.name().map(|name| name.text().to_string()),
-                lower_visibility(item.visibility()),
+                VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
             )),
         };
@@ -520,389 +466,6 @@ impl<'a> FileTreeBuilder<'a> {
         ));
         item_id
     }
-}
-
-fn lower_function_item(item: &ast::Fn) -> FunctionItem {
-    FunctionItem {
-        generics: lower_generic_params(item),
-        params: lower_params(item.param_list()),
-        ret_ty: item
-            .ret_type()
-            .and_then(|ret_ty| ret_ty.ty())
-            .map(lower_type_ref),
-        qualifiers: FunctionQualifiers {
-            is_async: item.async_token().is_some(),
-            is_const: item.const_token().is_some(),
-            is_unsafe: item.unsafe_token().is_some(),
-        },
-    }
-}
-
-fn lower_params(param_list: Option<ast::ParamList>) -> Vec<ParamItem> {
-    let Some(param_list) = param_list else {
-        return Vec::new();
-    };
-
-    let mut params = Vec::new();
-
-    if let Some(self_param) = param_list.self_param() {
-        params.push(ParamItem {
-            pat: normalized_syntax(&self_param),
-            ty: self_param.ty().map(lower_type_ref),
-            kind: ParamKind::SelfParam,
-        });
-    }
-
-    for param in param_list.params() {
-        params.push(ParamItem {
-            pat: param
-                .pat()
-                .map(|pat| normalized_syntax(&pat))
-                .unwrap_or_else(|| "<missing>".to_string()),
-            ty: param.ty().map(lower_type_ref),
-            kind: ParamKind::Normal,
-        });
-    }
-
-    params
-}
-
-fn lower_impl_header(item: &ast::Impl) -> (Option<TypeRef>, TypeRef) {
-    let types = item
-        .syntax()
-        .children()
-        .filter_map(ast::Type::cast)
-        .collect::<Vec<_>>();
-
-    if item.for_token().is_some() {
-        let trait_ref = types.first().cloned().map(lower_type_ref);
-        let self_ty = types
-            .get(1)
-            .cloned()
-            .map(lower_type_ref)
-            .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
-        return (trait_ref, self_ty);
-    }
-
-    let self_ty = types
-        .first()
-        .cloned()
-        .map(lower_type_ref)
-        .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
-    (None, self_ty)
-}
-
-fn lower_enum_variants(item: &ast::Enum) -> Vec<EnumVariantItem> {
-    item.variant_list()
-        .map(|variant_list| {
-            variant_list
-                .variants()
-                .map(|variant| EnumVariantItem {
-                    name: variant
-                        .name()
-                        .map(|name| name.text().to_string())
-                        .unwrap_or_else(|| "<missing>".to_string()),
-                    fields: lower_field_list(variant.field_list()),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn lower_field_list(field_list: Option<ast::FieldList>) -> FieldList {
-    match field_list {
-        Some(ast::FieldList::RecordFieldList(fields)) => {
-            FieldList::Named(lower_record_fields(fields))
-        }
-        Some(ast::FieldList::TupleFieldList(fields)) => {
-            FieldList::Tuple(lower_tuple_fields(fields))
-        }
-        None => FieldList::Unit,
-    }
-}
-
-fn lower_record_fields(fields: ast::RecordFieldList) -> Vec<FieldItem> {
-    fields
-        .fields()
-        .map(|field| FieldItem {
-            name: field.name().map(|name| name.text().to_string()),
-            visibility: lower_visibility(field.visibility()),
-            ty: field
-                .ty()
-                .map(lower_type_ref)
-                .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
-        })
-        .collect()
-}
-
-fn lower_tuple_fields(fields: ast::TupleFieldList) -> Vec<FieldItem> {
-    fields
-        .fields()
-        .map(|field| FieldItem {
-            name: None,
-            visibility: lower_visibility(field.visibility()),
-            ty: field
-                .ty()
-                .map(lower_type_ref)
-                .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
-        })
-        .collect()
-}
-
-fn lower_generic_params<T>(item: &T) -> GenericParams
-where
-    T: HasGenericParams,
-{
-    let mut params = GenericParams::default();
-
-    if let Some(param_list) = item.generic_param_list() {
-        for param in param_list.generic_params() {
-            match param {
-                ast::GenericParam::ConstParam(param) => {
-                    params.consts.push(ConstParamData {
-                        name: param
-                            .name()
-                            .map(|name| name.text().to_string())
-                            .unwrap_or_else(|| "<missing>".to_string()),
-                        ty: param.ty().map(lower_type_ref),
-                        default: param.default_val().map(|value| normalized_syntax(&value)),
-                    });
-                }
-                ast::GenericParam::LifetimeParam(param) => {
-                    params.lifetimes.push(LifetimeParamData {
-                        name: param
-                            .lifetime()
-                            .map(|lifetime| normalized_syntax(&lifetime))
-                            .unwrap_or_else(|| "<missing>".to_string()),
-                        bounds: lower_lifetime_bounds(param.type_bound_list()),
-                    });
-                }
-                ast::GenericParam::TypeParam(param) => {
-                    params.types.push(TypeParamData {
-                        name: param
-                            .name()
-                            .map(|name| name.text().to_string())
-                            .unwrap_or_else(|| "<missing>".to_string()),
-                        bounds: lower_type_bound_list(param.type_bound_list()),
-                        default: param.default_type().map(lower_type_ref),
-                    });
-                }
-            }
-        }
-    }
-
-    if let Some(where_clause) = item.where_clause() {
-        params.where_predicates = where_clause
-            .predicates()
-            .map(|predicate| {
-                if let Some(lifetime) = predicate.lifetime() {
-                    return WherePredicate::Lifetime {
-                        lifetime: normalized_syntax(&lifetime),
-                        bounds: lower_lifetime_bounds(predicate.type_bound_list()),
-                    };
-                }
-
-                if let Some(ty) = predicate.ty() {
-                    return WherePredicate::Type {
-                        ty: lower_type_ref(ty),
-                        bounds: lower_type_bound_list(predicate.type_bound_list()),
-                    };
-                }
-
-                WherePredicate::Unsupported(normalized_syntax(&predicate))
-            })
-            .collect();
-    }
-
-    params
-}
-
-fn lower_lifetime_bounds(bound_list: Option<ast::TypeBoundList>) -> Vec<String> {
-    bound_list
-        .into_iter()
-        .flat_map(|bound_list| bound_list.bounds())
-        .filter_map(|bound| {
-            bound
-                .lifetime()
-                .map(|lifetime| normalized_syntax(&lifetime))
-        })
-        .collect()
-}
-
-fn lower_type_bound_list(bound_list: Option<ast::TypeBoundList>) -> Vec<TypeBound> {
-    bound_list
-        .into_iter()
-        .flat_map(|bound_list| bound_list.bounds())
-        .map(lower_type_bound)
-        .collect()
-}
-
-fn lower_type_bound(bound: ast::TypeBound) -> TypeBound {
-    if let Some(lifetime) = bound.lifetime() {
-        return TypeBound::Lifetime(normalized_syntax(&lifetime));
-    }
-
-    if let Some(ty) = bound.ty() {
-        return TypeBound::Trait(lower_type_ref(ty));
-    }
-
-    TypeBound::Unsupported(normalized_syntax(&bound))
-}
-
-fn lower_type_ref(ty: ast::Type) -> TypeRef {
-    match ty {
-        ast::Type::ArrayType(ty) => TypeRef::Array {
-            inner: Box::new(
-                ty.ty()
-                    .map(lower_type_ref)
-                    .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
-            ),
-            len: ty.const_arg().map(|arg| normalized_syntax(&arg)),
-        },
-        ast::Type::DynTraitType(ty) => {
-            TypeRef::DynTrait(lower_type_bound_list(ty.type_bound_list()))
-        }
-        ast::Type::FnPtrType(ty) => TypeRef::FnPointer {
-            params: lower_params(ty.param_list())
-                .into_iter()
-                .map(|param| param.ty.unwrap_or_else(|| TypeRef::Unknown(String::new())))
-                .collect(),
-            ret: Box::new(
-                ty.ret_type()
-                    .and_then(|ret_ty| ret_ty.ty())
-                    .map(lower_type_ref)
-                    .unwrap_or(TypeRef::Unit),
-            ),
-        },
-        ast::Type::ForType(ty) => ty
-            .ty()
-            .map(lower_type_ref)
-            .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
-        ast::Type::ImplTraitType(ty) => {
-            TypeRef::ImplTrait(lower_type_bound_list(ty.type_bound_list()))
-        }
-        ast::Type::InferType(_) => TypeRef::Infer,
-        ast::Type::MacroType(ty) => TypeRef::unknown_from_text(normalized_syntax(&ty)),
-        ast::Type::NeverType(_) => TypeRef::Never,
-        ast::Type::ParenType(ty) => ty
-            .ty()
-            .map(lower_type_ref)
-            .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
-        ast::Type::PathType(ty) => ty
-            .path()
-            .map(lower_type_path)
-            .map(TypeRef::Path)
-            .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
-        ast::Type::PtrType(ty) => TypeRef::RawPointer {
-            mutability: if ty.mut_token().is_some() {
-                Mutability::Mutable
-            } else {
-                Mutability::Shared
-            },
-            inner: Box::new(
-                ty.ty()
-                    .map(lower_type_ref)
-                    .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
-            ),
-        },
-        ast::Type::RefType(ty) => TypeRef::Reference {
-            lifetime: ty.lifetime().map(|lifetime| normalized_syntax(&lifetime)),
-            mutability: if ty.mut_token().is_some() {
-                Mutability::Mutable
-            } else {
-                Mutability::Shared
-            },
-            inner: Box::new(
-                ty.ty()
-                    .map(lower_type_ref)
-                    .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
-            ),
-        },
-        ast::Type::SliceType(ty) => TypeRef::Slice(Box::new(
-            ty.ty()
-                .map(lower_type_ref)
-                .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&ty))),
-        )),
-        ast::Type::TupleType(ty) => {
-            let fields = ty.fields().map(lower_type_ref).collect::<Vec<_>>();
-            if fields.is_empty() {
-                TypeRef::Unit
-            } else {
-                TypeRef::Tuple(fields)
-            }
-        }
-    }
-}
-
-fn lower_type_path(path: ast::Path) -> TypePath {
-    let absolute = path
-        .first_segment()
-        .is_some_and(|segment| segment.coloncolon_token().is_some());
-    let mut segments = Vec::new();
-    collect_path_segments(&path, &mut segments);
-
-    TypePath { absolute, segments }
-}
-
-fn collect_path_segments(path: &ast::Path, segments: &mut Vec<TypePathSegment>) {
-    if let Some(qualifier) = path.qualifier() {
-        collect_path_segments(&qualifier, segments);
-    }
-
-    if let Some(segment) = path.segment() {
-        segments.push(lower_type_path_segment(&segment));
-    }
-}
-
-fn lower_type_path_segment(segment: &ast::PathSegment) -> TypePathSegment {
-    let name = segment
-        .name_ref()
-        .map(|name| name.syntax().text().to_string())
-        .unwrap_or_else(|| normalized_syntax(segment));
-    let mut args = Vec::new();
-
-    if let Some(arg_list) = segment.generic_arg_list() {
-        args.extend(arg_list.generic_args().map(lower_generic_arg));
-    }
-
-    if let Some(parenthesized_args) = segment.parenthesized_arg_list() {
-        args.push(GenericArg::Unsupported(normalized_syntax(
-            &parenthesized_args,
-        )));
-    }
-
-    TypePathSegment { name, args }
-}
-
-fn lower_generic_arg(arg: ast::GenericArg) -> GenericArg {
-    match arg {
-        ast::GenericArg::AssocTypeArg(arg) => GenericArg::AssocType {
-            name: arg
-                .name_ref()
-                .map(|name| name.syntax().text().to_string())
-                .unwrap_or_else(|| "<missing>".to_string()),
-            ty: arg.ty().map(lower_type_ref),
-        },
-        ast::GenericArg::ConstArg(arg) => GenericArg::Const(normalized_syntax(&arg)),
-        ast::GenericArg::LifetimeArg(arg) => arg
-            .lifetime()
-            .map(|lifetime| GenericArg::Lifetime(normalized_syntax(&lifetime)))
-            .unwrap_or_else(|| GenericArg::Unsupported(normalized_syntax(&arg))),
-        ast::GenericArg::TypeArg(arg) => arg
-            .ty()
-            .map(lower_type_ref)
-            .map(GenericArg::Type)
-            .unwrap_or_else(|| GenericArg::Unsupported(normalized_syntax(&arg))),
-    }
-}
-
-fn normalized_syntax(node: &impl ra_syntax::AstNode) -> String {
-    node.syntax()
-        .text()
-        .to_string()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// Filesystem context for resolving out-of-line child modules of the current logical module.
@@ -964,31 +527,4 @@ fn normalized_use_name(use_item: &ast::Use) -> Option<String> {
 
     // Normalize all whitespace in an extracted syntax fragment to single spaces.
     Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
-}
-
-/// Lowers syntax-level visibility into the smaller set currently tracked by the item tree.
-fn lower_visibility(visibility: Option<ast::Visibility>) -> VisibilityLevel {
-    let Some(visibility) = visibility else {
-        return VisibilityLevel::Private;
-    };
-
-    let Some(inner) = visibility.visibility_inner() else {
-        return VisibilityLevel::Public;
-    };
-
-    let Some(path) = inner.path() else {
-        return VisibilityLevel::Unknown(visibility.syntax().text().to_string());
-    };
-    let path_text = path.syntax().text().to_string();
-
-    if inner.in_token().is_some() {
-        return VisibilityLevel::Restricted(path_text);
-    }
-
-    match path_text.as_str() {
-        "crate" => VisibilityLevel::Crate,
-        "super" => VisibilityLevel::Super,
-        "self" => VisibilityLevel::Self_,
-        _ => VisibilityLevel::Unknown(visibility.syntax().text().to_string()),
-    }
 }

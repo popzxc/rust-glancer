@@ -7,18 +7,20 @@ use crate::parse::{
 
 pub(crate) use self::{
     decl::{
-        ConstItem, ConstParamData, EnumItem, EnumVariantItem, FieldItem, FieldList, FunctionItem,
-        FunctionQualifiers, GenericParams, ImplItem, LifetimeParamData, ParamItem, ParamKind,
-        StaticItem, StructItem, TraitItem, TypeAliasItem, TypeParamData, UnionItem, WherePredicate,
+        ConstItem, EnumItem, EnumVariantItem, FieldItem, FieldList, FunctionItem, GenericParams,
+        ImplItem, StaticItem, StructItem, TraitItem, TypeAliasItem, UnionItem,
     },
     import::{
         ExternCrateItem, ImportAlias, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
     },
     kind::{ItemKind, ItemTag},
     module::{ModuleItem, ModuleSource},
-    type_ref::{GenericArg, Mutability, TypeBound, TypePath, TypePathSegment, TypeRef},
+    type_ref::{Mutability, TypeBound, TypeRef},
     visibility::VisibilityLevel,
 };
+
+#[cfg(test)]
+pub(crate) use self::decl::{ParamItem, ParamKind};
 
 mod decl;
 mod import;
@@ -69,4 +71,13 @@ impl ItemNode {
             span: Span::from_text_range(text_range, line_index),
         }
     }
+}
+
+pub(crate) fn normalized_syntax(node: &impl ra_syntax::AstNode) -> String {
+    node.syntax()
+        .text()
+        .to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
