@@ -4,10 +4,10 @@ use expect_test::Expect;
 
 use crate::{
     Project,
-    analysis::{CompletionItem, NavigationTarget},
-    body_ir::BodyTy,
+    analysis::{CompletionItem, NavigationTarget, SymbolAt},
+    body_ir::{BodyTy, ExprData, ExprKind},
     def_map::{ModuleRef, PackageSlot, TargetRef},
-    parse::FileId,
+    parse::{FileId, span::Span},
     semantic_ir::{TypeDefId, TypeDefRef},
     test_utils::{FixtureMarkers, fixture_crate_with_markers},
     workspace_metadata::TargetKind,
@@ -28,6 +28,22 @@ pub(super) struct AnalysisQuery {
 }
 
 impl AnalysisQuery {
+    pub(super) fn symbol(title: &'static str, marker: &'static str) -> Self {
+        Self {
+            title,
+            marker,
+            kind: AnalysisQueryKind::SymbolAt,
+        }
+    }
+
+    pub(super) fn resolve(title: &'static str, marker: &'static str) -> Self {
+        Self {
+            title,
+            marker,
+            kind: AnalysisQueryKind::ResolveSymbol,
+        }
+    }
+
     pub(super) fn goto(title: &'static str, marker: &'static str) -> Self {
         Self {
             title,
@@ -55,6 +71,8 @@ impl AnalysisQuery {
 
 #[derive(Debug, Clone, Copy)]
 enum AnalysisQueryKind {
+    SymbolAt,
+    ResolveSymbol,
     GotoDefinition,
     TypeAt,
     CompletionsAtDot,
@@ -87,6 +105,20 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         let (target, file_id, offset) = self.query_location(query.marker);
         let mut dump = query.title.to_string();
         match query.kind {
+            AnalysisQueryKind::SymbolAt => {
+                self.render_symbol(
+                    self.project.analysis().symbol_at(target, file_id, offset),
+                    &mut dump,
+                );
+            }
+            AnalysisQueryKind::ResolveSymbol => {
+                let Some(symbol) = self.project.analysis().symbol_at(target, file_id, offset)
+                else {
+                    self.render_targets(Vec::new(), &mut dump);
+                    return dump;
+                };
+                self.render_targets(self.project.analysis().resolve_symbol(symbol), &mut dump);
+            }
             AnalysisQueryKind::GotoDefinition => {
                 self.render_targets(
                     self.project
@@ -164,6 +196,78 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         )
     }
 
+    fn render_symbol(&self, symbol: Option<SymbolAt>, dump: &mut String) {
+        let Some(symbol) = symbol else {
+            writeln!(dump, "\n- <none>").expect("string writes should not fail");
+            return;
+        };
+
+        match symbol {
+            SymbolAt::Body { body } => {
+                let body_data = self
+                    .project
+                    .body_ir_db()
+                    .body_data(body)
+                    .expect("body ref should exist while rendering analysis symbol");
+                writeln!(
+                    dump,
+                    "\n- body @ {}",
+                    self.render_source_span(body_data.source.span)
+                )
+                .expect("string writes should not fail");
+            }
+            SymbolAt::Binding { body, binding } => {
+                let body_data = self
+                    .project
+                    .body_ir_db()
+                    .body_data(body)
+                    .expect("body ref should exist while rendering analysis symbol");
+                let binding_data = body_data
+                    .binding(binding)
+                    .expect("binding id should exist while rendering analysis symbol");
+                writeln!(
+                    dump,
+                    "\n- binding {} {} @ {}",
+                    binding_data.kind,
+                    binding_data.name.as_deref().unwrap_or("<unsupported>"),
+                    self.render_source_span(binding_data.source.span)
+                )
+                .expect("string writes should not fail");
+            }
+            SymbolAt::Expr { body, expr } => {
+                let body_data = self
+                    .project
+                    .body_ir_db()
+                    .body_data(body)
+                    .expect("body ref should exist while rendering analysis symbol");
+                let expr_data = body_data
+                    .expr(expr)
+                    .expect("expr id should exist while rendering analysis symbol");
+                writeln!(dump, "\n- {}", self.render_expr_symbol(expr_data))
+                    .expect("string writes should not fail");
+            }
+        }
+    }
+
+    fn render_expr_symbol(&self, expr: &ExprData) -> String {
+        let label = match &expr.kind {
+            ExprKind::Block { .. } => "block".to_string(),
+            ExprKind::Path { path } => format!("path {path}"),
+            ExprKind::Call { .. } => "call".to_string(),
+            ExprKind::MethodCall { method_name, .. } => {
+                format!("method_call {method_name}")
+            }
+            ExprKind::Field { field_name, .. } => format!("field {field_name}"),
+            ExprKind::Literal { kind, text } => format!("literal {kind} {text}"),
+            ExprKind::Unknown { text, .. } => format!("unknown {text}"),
+        };
+
+        format!(
+            "expr {label} @ {}",
+            self.render_source_span(expr.source.span)
+        )
+    }
+
     fn render_targets(&self, mut targets: Vec<NavigationTarget>, dump: &mut String) {
         targets.sort_by_key(|target| {
             (
@@ -186,16 +290,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 "- {} {} @ {}",
                 target.kind,
                 target.name,
-                target
-                    .span
-                    .map(|span| format!(
-                        "{}:{}-{}:{}",
-                        span.line_column.start.line + 1,
-                        span.line_column.start.column + 1,
-                        span.line_column.end.line + 1,
-                        span.line_column.end.column + 1,
-                    ))
-                    .unwrap_or_else(|| "<root>".to_string())
+                self.render_optional_span(target.span)
             )
             .expect("string writes should not fail");
         }
@@ -323,5 +418,20 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             None => "crate".to_string(),
         }
+    }
+
+    fn render_optional_span(&self, span: Option<Span>) -> String {
+        span.map(|span| self.render_source_span(span))
+            .unwrap_or_else(|| "<root>".to_string())
+    }
+
+    fn render_source_span(&self, span: Span) -> String {
+        format!(
+            "{}:{}-{}:{}",
+            span.line_column.start.line + 1,
+            span.line_column.start.column + 1,
+            span.line_column.end.line + 1,
+            span.line_column.end.column + 1,
+        )
     }
 }
