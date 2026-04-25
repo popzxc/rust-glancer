@@ -237,6 +237,8 @@ impl<'a> TargetLowering<'a> {
             generics: impl_item.generics.clone(),
             trait_ref: impl_item.trait_ref.clone(),
             self_ty: impl_item.self_ty.clone(),
+            resolved_self_tys: Vec::new(),
+            resolved_trait_refs: Vec::new(),
             items: Vec::new(),
             is_unsafe: impl_item.is_unsafe,
         });

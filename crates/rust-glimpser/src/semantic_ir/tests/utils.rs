@@ -4,9 +4,11 @@ use expect_test::Expect;
 
 use crate::{
     Project,
-    def_map::{ModuleId, TargetRef},
+    def_map::{ModuleId, ModuleRef, Path, PathSegment, TargetRef},
     item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel},
+    semantic_ir::ids::{FunctionRef, ImplRef, TraitRef, TypeDefId, TypeDefRef},
     test_utils::{fixture_crate, snapshot},
+    workspace_metadata::TargetKind,
 };
 
 use super::super::{
@@ -19,6 +21,43 @@ pub(super) fn check_project_semantic_ir(fixture: &str, expect: Expect) {
     let actual = ProjectSemanticIrSnapshot::new(&project).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
+}
+
+pub(super) fn check_project_semantic_queries(
+    fixture: &str,
+    queries: &[SemanticQuery],
+    expect: Expect,
+) {
+    let project = fixture_crate(fixture).project();
+    let actual = ProjectSemanticQuerySnapshot::new(&project, queries).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) struct SemanticQuery {
+    package_name: &'static str,
+    target_kind: TargetKind,
+    module_path: &'static str,
+    path: &'static str,
+}
+
+impl SemanticQuery {
+    pub(super) fn lib(package_name: &'static str, path: &'static str) -> Self {
+        Self::lib_from(package_name, "crate", path)
+    }
+
+    pub(super) fn lib_from(
+        package_name: &'static str,
+        module_path: &'static str,
+        path: &'static str,
+    ) -> Self {
+        Self {
+            package_name,
+            target_kind: TargetKind::Lib,
+            module_path,
+            path,
+        }
+    }
 }
 
 struct ProjectSemanticIrSnapshot<'a> {
@@ -55,6 +94,352 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
             })
             .collect::<Vec<_>>()
             .join("\n\n")
+    }
+}
+
+struct ProjectSemanticQuerySnapshot<'a> {
+    project: &'a Project,
+    queries: &'a [SemanticQuery],
+}
+
+impl<'a> ProjectSemanticQuerySnapshot<'a> {
+    fn new(project: &'a Project, queries: &'a [SemanticQuery]) -> Self {
+        Self { project, queries }
+    }
+
+    fn render(&self) -> String {
+        self.queries
+            .iter()
+            .map(|query| self.render_query(query))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    fn render_query(&self, query: &SemanticQuery) -> String {
+        let (target_ref, target) = self.target_ref(query);
+        let module_id = self.module_id(target_ref, query.module_path);
+        let path = Self::parse_path(query.path);
+        let mut type_defs = self.project.semantic_ir_db().type_defs_for_path(
+            self.project.def_map_db(),
+            ModuleRef {
+                target: target_ref,
+                module: module_id,
+            },
+            &path,
+        );
+        type_defs.sort_by_key(|ty| self.render_type_def_ref(*ty));
+
+        if type_defs.is_empty() {
+            return format!(
+                "query {} [{}] {} resolves {} -> <unresolved>",
+                query.package_name, target.kind, query.module_path, path,
+            );
+        }
+
+        type_defs
+            .into_iter()
+            .map(|ty| {
+                let mut dump = format!(
+                    "query {} [{}] {} resolves {} -> {}",
+                    query.package_name,
+                    target.kind,
+                    query.module_path,
+                    path,
+                    self.render_type_def_ref(ty),
+                );
+                self.render_query_section(
+                    &mut dump,
+                    "impls",
+                    self.project
+                        .semantic_ir_db()
+                        .impls_for_type(ty)
+                        .into_iter()
+                        .map(|impl_ref| self.render_impl_ref(impl_ref))
+                        .collect(),
+                );
+                self.render_query_section(
+                    &mut dump,
+                    "trait impls",
+                    self.project
+                        .semantic_ir_db()
+                        .trait_impls_for_type(ty)
+                        .into_iter()
+                        .map(|trait_impl| {
+                            format!(
+                                "{} => {}",
+                                self.render_impl_ref(trait_impl.impl_ref),
+                                self.render_trait_ref(trait_impl.trait_ref),
+                            )
+                        })
+                        .collect(),
+                );
+                self.render_query_section(
+                    &mut dump,
+                    "traits",
+                    self.project
+                        .semantic_ir_db()
+                        .traits_for_type(ty)
+                        .into_iter()
+                        .map(|trait_ref| self.render_trait_ref(trait_ref))
+                        .collect(),
+                );
+                self.render_query_section(
+                    &mut dump,
+                    "inherent functions",
+                    self.project
+                        .semantic_ir_db()
+                        .inherent_functions_for_type(ty)
+                        .into_iter()
+                        .map(|function_ref| self.render_function_ref(function_ref))
+                        .collect(),
+                );
+                self.render_query_section(
+                    &mut dump,
+                    "trait functions",
+                    self.project
+                        .semantic_ir_db()
+                        .trait_functions_for_type(ty)
+                        .into_iter()
+                        .map(|function_ref| self.render_function_ref(function_ref))
+                        .collect(),
+                );
+                self.render_query_section(
+                    &mut dump,
+                    "trait impl functions",
+                    self.project
+                        .semantic_ir_db()
+                        .trait_impl_functions_for_type(ty)
+                        .into_iter()
+                        .map(|function_ref| self.render_function_ref(function_ref))
+                        .collect(),
+                );
+                dump
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    fn render_query_section(&self, dump: &mut String, title: &str, mut lines: Vec<String>) {
+        if !dump.ends_with('\n') {
+            writeln!(dump).expect("string writes should not fail");
+        }
+        writeln!(dump, "{title}").expect("string writes should not fail");
+        lines.sort();
+
+        if lines.is_empty() {
+            writeln!(dump, "- <none>").expect("string writes should not fail");
+            return;
+        }
+
+        for line in lines {
+            writeln!(dump, "- {line}").expect("string writes should not fail");
+        }
+    }
+
+    fn target_ref(&self, query: &SemanticQuery) -> (TargetRef, &'a crate::parse::Target) {
+        let (package_slot, package) = self
+            .project
+            .parse_db()
+            .packages()
+            .iter()
+            .enumerate()
+            .find(|(_, package)| package.package_name() == query.package_name)
+            .unwrap_or_else(|| panic!("fixture package `{}` should exist", query.package_name));
+        let target = package
+            .targets()
+            .iter()
+            .find(|target| target.kind == query.target_kind)
+            .unwrap_or_else(|| {
+                panic!(
+                    "fixture package `{}` should have a {} target",
+                    query.package_name, query.target_kind
+                )
+            });
+
+        (
+            TargetRef {
+                package: crate::def_map::PackageSlot(package_slot),
+                target: target.id,
+            },
+            target,
+        )
+    }
+
+    fn module_id(&self, target_ref: TargetRef, module_path: &str) -> ModuleId {
+        let def_map = self
+            .project
+            .def_map_db()
+            .def_map(target_ref)
+            .expect("target def map should exist while rendering semantic query");
+
+        def_map
+            .modules()
+            .iter()
+            .enumerate()
+            .find_map(|(module_idx, _)| {
+                let module_id = ModuleId(module_idx);
+                (self.module_path(ModuleRef {
+                    target: target_ref,
+                    module: module_id,
+                }) == module_path)
+                    .then_some(module_id)
+            })
+            .unwrap_or_else(|| panic!("module `{module_path}` should exist in fixture target"))
+    }
+
+    fn parse_path(text: &str) -> Path {
+        let (absolute, text) = match text.strip_prefix("::") {
+            Some(stripped) => (true, stripped),
+            None => (false, text),
+        };
+        let segments = text
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .map(|segment| match segment {
+                "self" => PathSegment::SelfKw,
+                "super" => PathSegment::SuperKw,
+                "crate" => PathSegment::CrateKw,
+                name => PathSegment::Name(name.to_string()),
+            })
+            .collect::<Vec<_>>();
+
+        Path { absolute, segments }
+    }
+
+    fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
+        let target_ir = self
+            .project
+            .semantic_ir_db()
+            .target_ir(ty.target)
+            .expect("target semantic IR should exist while rendering type ref");
+
+        match ty.id {
+            TypeDefId::Struct(id) => {
+                let data = target_ir
+                    .items()
+                    .struct_data(id)
+                    .expect("struct id should exist while rendering query");
+                format!(
+                    "struct {}::{}",
+                    self.render_module_ref(data.owner),
+                    data.name
+                )
+            }
+            TypeDefId::Enum(id) => {
+                let data = target_ir
+                    .items()
+                    .enum_data(id)
+                    .expect("enum id should exist while rendering query");
+                format!("enum {}::{}", self.render_module_ref(data.owner), data.name)
+            }
+            TypeDefId::Union(id) => {
+                let data = target_ir
+                    .items()
+                    .union_data(id)
+                    .expect("union id should exist while rendering query");
+                format!(
+                    "union {}::{}",
+                    self.render_module_ref(data.owner),
+                    data.name
+                )
+            }
+        }
+    }
+
+    fn render_trait_ref(&self, trait_ref: TraitRef) -> String {
+        let data = self
+            .project
+            .semantic_ir_db()
+            .trait_data(trait_ref)
+            .expect("trait id should exist while rendering query");
+
+        format!(
+            "trait {}::{}",
+            self.render_module_ref(data.owner),
+            data.name
+        )
+    }
+
+    fn render_impl_ref(&self, impl_ref: ImplRef) -> String {
+        let data = self
+            .project
+            .semantic_ir_db()
+            .impl_data(impl_ref)
+            .expect("impl id should exist while rendering query");
+
+        match &data.trait_ref {
+            Some(trait_ref) => format!("impl {trait_ref} for {}", data.self_ty),
+            None => format!("impl {}", data.self_ty),
+        }
+    }
+
+    fn render_function_ref(&self, function_ref: FunctionRef) -> String {
+        let data = self
+            .project
+            .semantic_ir_db()
+            .function_data(function_ref)
+            .expect("function id should exist while rendering query");
+        let owner = match data.owner {
+            crate::semantic_ir::ids::ItemOwner::Module(module_ref) => {
+                self.render_module_ref(module_ref)
+            }
+            crate::semantic_ir::ids::ItemOwner::Trait(trait_id) => {
+                self.render_trait_ref(TraitRef {
+                    target: function_ref.target,
+                    id: trait_id,
+                })
+            }
+            crate::semantic_ir::ids::ItemOwner::Impl(impl_id) => self.render_impl_ref(ImplRef {
+                target: function_ref.target,
+                id: impl_id,
+            }),
+        };
+
+        format!("fn {owner}::{}", data.name)
+    }
+
+    fn render_module_ref(&self, module_ref: ModuleRef) -> String {
+        let package = self
+            .project
+            .parse_db()
+            .packages()
+            .get(module_ref.target.package.0)
+            .expect("package slot should exist while rendering query");
+        let target = package
+            .target(module_ref.target.target)
+            .expect("target id should exist while rendering query");
+
+        format!(
+            "{}[{}]::{}",
+            package.package_name(),
+            target.kind,
+            self.module_path(module_ref),
+        )
+    }
+
+    fn module_path(&self, module_ref: ModuleRef) -> String {
+        let module = self
+            .project
+            .def_map_db()
+            .def_map(module_ref.target)
+            .expect("target def map should exist while rendering query module path")
+            .module(module_ref.module)
+            .expect("module id should exist while rendering query module path");
+
+        match module.parent {
+            Some(parent) => {
+                let parent_path = self.module_path(ModuleRef {
+                    target: module_ref.target,
+                    module: parent,
+                });
+                let name = module
+                    .name
+                    .as_deref()
+                    .expect("non-root modules should have names");
+                format!("{parent_path}::{name}")
+            }
+            None => "crate".to_string(),
+        }
     }
 }
 

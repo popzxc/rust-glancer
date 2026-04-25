@@ -1,5 +1,7 @@
 use crate::{
-    def_map::{LocalDefId, LocalDefRef, LocalImplRef, ModuleRef, PackageSlot, TargetRef},
+    def_map::{
+        DefMapDb, LocalDefId, LocalDefRef, LocalImplRef, ModuleRef, PackageSlot, Path, TargetRef,
+    },
     item_tree::{
         ConstItem, FieldList, FunctionItem, GenericParams, ItemTreeRef, Mutability, TypeAliasItem,
         TypeBound, TypeRef, VisibilityLevel,
@@ -9,10 +11,11 @@ use crate::{
 
 use super::{
     ids::{
-        AssocItemId, ConstId, EnumId, FunctionId, ImplId, ItemId, ItemOwner, StaticId, StructId,
-        TraitId, TypeAliasId, UnionId,
+        AssocItemId, ConstId, EnumId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, ItemOwner,
+        StaticId, StructId, TraitId, TraitImplRef, TraitRef, TypeAliasId, TypeDefId, TypeDefRef,
+        UnionId,
     },
-    lower,
+    lower, resolution,
 };
 
 /// Semantic item graph for all analyzed packages and targets.
@@ -26,7 +29,9 @@ impl SemanticIrDb {
         item_tree: &crate::item_tree::ItemTreeDb,
         def_map: &crate::def_map::DefMapDb,
     ) -> anyhow::Result<Self> {
-        lower::build_db(item_tree, def_map)
+        let mut db = lower::build_db(item_tree, def_map)?;
+        resolution::resolve_impl_headers(&mut db, def_map);
+        Ok(db)
     }
 
     pub(crate) fn new(packages: Vec<PackageIr>) -> Self {
@@ -74,6 +79,192 @@ impl SemanticIrDb {
     pub(crate) fn target_ir(&self, target: TargetRef) -> Option<&TargetIr> {
         self.package(target.package)?.target(target.target)
     }
+
+    pub(crate) fn type_defs_for_path(
+        &self,
+        def_map: &DefMapDb,
+        from: ModuleRef,
+        path: &Path,
+    ) -> Vec<TypeDefRef> {
+        resolution::resolve_type_defs_for_path(self, def_map, from, path)
+    }
+
+    pub(crate) fn type_def_for_local_def(&self, def: LocalDefRef) -> Option<TypeDefRef> {
+        let item = self
+            .target_ir(def.target)?
+            .item_for_local_def(def.local_def)?;
+        let id = match item {
+            ItemId::Struct(id) => TypeDefId::Struct(id),
+            ItemId::Enum(id) => TypeDefId::Enum(id),
+            ItemId::Union(id) => TypeDefId::Union(id),
+            ItemId::Trait(_)
+            | ItemId::Function(_)
+            | ItemId::TypeAlias(_)
+            | ItemId::Const(_)
+            | ItemId::Static(_) => return None,
+        };
+
+        Some(TypeDefRef {
+            target: def.target,
+            id,
+        })
+    }
+
+    pub(crate) fn trait_for_local_def(&self, def: LocalDefRef) -> Option<TraitRef> {
+        let item = self
+            .target_ir(def.target)?
+            .item_for_local_def(def.local_def)?;
+        let ItemId::Trait(id) = item else {
+            return None;
+        };
+
+        Some(TraitRef {
+            target: def.target,
+            id,
+        })
+    }
+
+    pub(crate) fn impl_data(&self, impl_ref: ImplRef) -> Option<&ImplData> {
+        self.target_ir(impl_ref.target)?
+            .items()
+            .impl_data(impl_ref.id)
+    }
+
+    pub(crate) fn trait_data(&self, trait_ref: TraitRef) -> Option<&TraitData> {
+        self.target_ir(trait_ref.target)?
+            .items()
+            .trait_data(trait_ref.id)
+    }
+
+    pub(crate) fn function_data(&self, function_ref: FunctionRef) -> Option<&FunctionData> {
+        self.target_ir(function_ref.target)?
+            .items()
+            .function_data(function_ref.id)
+    }
+
+    pub(crate) fn impls_for_type(&self, ty: TypeDefRef) -> Vec<ImplRef> {
+        self.impl_refs()
+            .into_iter()
+            .filter(|impl_ref| {
+                self.impl_data(*impl_ref)
+                    .is_some_and(|data| data.resolved_self_tys.contains(&ty))
+            })
+            .collect()
+    }
+
+    pub(crate) fn inherent_impls_for_type(&self, ty: TypeDefRef) -> Vec<ImplRef> {
+        self.impls_for_type(ty)
+            .into_iter()
+            .filter(|impl_ref| {
+                self.impl_data(*impl_ref)
+                    .is_some_and(|data| data.trait_ref.is_none())
+            })
+            .collect()
+    }
+
+    pub(crate) fn trait_impls_for_type(&self, ty: TypeDefRef) -> Vec<TraitImplRef> {
+        let mut trait_impls = Vec::new();
+
+        for impl_ref in self.impls_for_type(ty) {
+            let Some(data) = self.impl_data(impl_ref) else {
+                continue;
+            };
+
+            for trait_ref in &data.resolved_trait_refs {
+                push_unique(
+                    &mut trait_impls,
+                    TraitImplRef {
+                        impl_ref,
+                        trait_ref: *trait_ref,
+                    },
+                );
+            }
+        }
+
+        trait_impls
+    }
+
+    pub(crate) fn traits_for_type(&self, ty: TypeDefRef) -> Vec<TraitRef> {
+        let mut traits = Vec::new();
+
+        for trait_impl in self.trait_impls_for_type(ty) {
+            push_unique(&mut traits, trait_impl.trait_ref);
+        }
+
+        traits
+    }
+
+    pub(crate) fn inherent_functions_for_type(&self, ty: TypeDefRef) -> Vec<FunctionRef> {
+        let mut functions = Vec::new();
+
+        for impl_ref in self.inherent_impls_for_type(ty) {
+            let Some(data) = self.impl_data(impl_ref) else {
+                continue;
+            };
+
+            for item in &data.items {
+                if let AssocItemId::Function(id) = item {
+                    push_unique(
+                        &mut functions,
+                        FunctionRef {
+                            target: impl_ref.target,
+                            id: *id,
+                        },
+                    );
+                }
+            }
+        }
+
+        functions
+    }
+
+    pub(crate) fn trait_functions_for_type(&self, ty: TypeDefRef) -> Vec<FunctionRef> {
+        let mut functions = Vec::new();
+
+        for trait_ref in self.traits_for_type(ty) {
+            let Some(data) = self.trait_data(trait_ref) else {
+                continue;
+            };
+
+            for item in &data.items {
+                if let AssocItemId::Function(id) = item {
+                    push_unique(
+                        &mut functions,
+                        FunctionRef {
+                            target: trait_ref.target,
+                            id: *id,
+                        },
+                    );
+                }
+            }
+        }
+
+        functions
+    }
+
+    pub(crate) fn trait_impl_functions_for_type(&self, ty: TypeDefRef) -> Vec<FunctionRef> {
+        let mut functions = Vec::new();
+
+        for trait_impl in self.trait_impls_for_type(ty) {
+            let Some(data) = self.impl_data(trait_impl.impl_ref) else {
+                continue;
+            };
+
+            for item in &data.items {
+                if let AssocItemId::Function(id) = item {
+                    push_unique(
+                        &mut functions,
+                        FunctionRef {
+                            target: trait_impl.impl_ref.target,
+                            id: *id,
+                        },
+                    );
+                }
+            }
+        }
+
+        functions
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -109,6 +300,48 @@ impl PackageIr {
 impl PackageIr {
     pub(crate) fn target(&self, target: TargetId) -> Option<&TargetIr> {
         self.targets.get(target.0)
+    }
+}
+
+impl SemanticIrDb {
+    pub(super) fn impl_refs(&self) -> Vec<ImplRef> {
+        self.packages
+            .iter()
+            .enumerate()
+            .flat_map(|(package_idx, package)| {
+                package
+                    .targets
+                    .iter()
+                    .enumerate()
+                    .flat_map(move |(target_idx, target)| {
+                        (0..target.items.impls.len()).map(move |impl_idx| ImplRef {
+                            target: TargetRef {
+                                package: PackageSlot(package_idx),
+                                target: TargetId(target_idx),
+                            },
+                            id: ImplId(impl_idx),
+                        })
+                    })
+            })
+            .collect()
+    }
+
+    pub(super) fn impl_data_mut(&mut self, impl_ref: ImplRef) -> Option<&mut ImplData> {
+        self.package_mut(impl_ref.target.package)?
+            .target_mut(impl_ref.target.target)?
+            .items_mut()
+            .impls
+            .get_mut(impl_ref.id.0)
+    }
+
+    fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageIr> {
+        self.packages.get_mut(package.0)
+    }
+}
+
+impl PackageIr {
+    fn target_mut(&mut self, target: TargetId) -> Option<&mut TargetIr> {
+        self.targets.get_mut(target.0)
     }
 }
 
@@ -268,6 +501,8 @@ pub struct ImplData {
     pub generics: GenericParams,
     pub trait_ref: Option<TypeRef>,
     pub self_ty: TypeRef,
+    pub resolved_self_tys: Vec<TypeDefRef>,
+    pub resolved_trait_refs: Vec<TraitRef>,
     pub items: Vec<AssocItemId>,
     pub is_unsafe: bool,
 }
@@ -366,5 +601,11 @@ impl ItemStore {
         let id = StaticId(self.statics.len());
         self.statics.push(data);
         id
+    }
+}
+
+fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
+    if !items.contains(&item) {
+        items.push(item);
     }
 }

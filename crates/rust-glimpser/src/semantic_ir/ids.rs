@@ -1,4 +1,4 @@
-use crate::def_map::ModuleRef;
+use crate::def_map::{ModuleRef, TargetRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StructId(pub usize);
@@ -26,6 +26,43 @@ pub struct ConstId(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StaticId(pub usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TypeDefId {
+    Struct(StructId),
+    Enum(EnumId),
+    Union(UnionId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TypeDefRef {
+    pub target: TargetRef,
+    pub id: TypeDefId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TraitRef {
+    pub target: TargetRef,
+    pub id: TraitId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ImplRef {
+    pub target: TargetRef,
+    pub id: ImplId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FunctionRef {
+    pub target: TargetRef,
+    pub id: FunctionId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TraitImplRef {
+    pub impl_ref: ImplRef,
+    pub trait_ref: TraitRef,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemId {
