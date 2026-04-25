@@ -271,7 +271,13 @@ fn resolve_path_with_env(
         };
     };
 
-    let mut current_defs = resolve_first_segment(env, importing_module, absolute, first_segment);
+    let mut current_defs = resolve_first_segment(
+        env,
+        importing_module,
+        absolute,
+        first_segment,
+        !remaining_segments.is_empty(),
+    );
 
     if current_defs.is_empty() {
         return ResolvePathResult {
@@ -281,7 +287,13 @@ fn resolve_path_with_env(
     }
 
     for (segment_idx, segment) in remaining_segments.iter().enumerate() {
-        current_defs = resolve_next_segment(env, importing_module, current_defs, segment);
+        current_defs = resolve_next_segment(
+            env,
+            importing_module,
+            current_defs,
+            segment,
+            segment_idx + 1 < remaining_segments.len(),
+        );
 
         if current_defs.is_empty() {
             return ResolvePathResult {
@@ -306,6 +318,7 @@ fn resolve_first_segment(
     importing_module: ModuleRef,
     absolute: bool,
     segment: &super::PathSegment,
+    path_prefix: bool,
 ) -> Vec<DefId> {
     if absolute {
         return match segment {
@@ -332,8 +345,15 @@ fn resolve_first_segment(
             .into_iter()
             .collect(),
         super::PathSegment::Name(name) => {
-            // Local scope wins over extern roots for relative names.
-            let local_defs = resolve_name_in_module(env, importing_module, importing_module, name);
+            // Local type-namespace bindings shadow extern roots for qualified paths. Value and
+            // macro bindings do not, because they cannot be used as a `foo::bar` prefix.
+            let local_defs = resolve_name_in_module(
+                env,
+                importing_module,
+                importing_module,
+                name,
+                NameResolutionFilter::for_path_prefix(path_prefix),
+            );
             if !local_defs.is_empty() {
                 return local_defs;
             }
@@ -354,6 +374,7 @@ fn resolve_next_segment(
     importing_module: ModuleRef,
     current_defs: Vec<DefId>,
     segment: &super::PathSegment,
+    path_prefix: bool,
 ) -> Vec<DefId> {
     let mut next_defs = Vec::new();
 
@@ -377,8 +398,13 @@ fn resolve_next_segment(
                 }
             }
             super::PathSegment::Name(name) => {
-                for resolved_def in resolve_name_in_module(env, importing_module, module_ref, name)
-                {
+                for resolved_def in resolve_name_in_module(
+                    env,
+                    importing_module,
+                    module_ref,
+                    name,
+                    NameResolutionFilter::for_path_prefix(path_prefix),
+                ) {
                     push_unique_def(&mut next_defs, resolved_def);
                 }
             }
@@ -388,15 +414,33 @@ fn resolve_next_segment(
     next_defs
 }
 
-/// Resolves one textual name inside one module scope across all namespaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NameResolutionFilter {
+    AllNamespaces,
+    TypesOnly,
+}
+
+impl NameResolutionFilter {
+    fn for_path_prefix(path_prefix: bool) -> Self {
+        if path_prefix {
+            Self::TypesOnly
+        } else {
+            Self::AllNamespaces
+        }
+    }
+}
+
+/// Resolves one textual name inside one module scope.
 ///
 /// The result is visibility-filtered from the perspective of the importing target, because
-/// cross-target resolution is allowed to see only public bindings.
+/// cross-target resolution is allowed to see only public bindings. Qualified path prefixes use only
+/// the type namespace; terminal segments use every namespace.
 fn resolve_name_in_module(
     env: &impl PathResolutionEnv,
     importing_module: ModuleRef,
     module_ref: ModuleRef,
     name: &str,
+    filter: NameResolutionFilter,
 ) -> Vec<DefId> {
     let Some(scope_entry) = env
         .module_scope(module_ref)
@@ -413,6 +457,10 @@ fn resolve_name_in_module(
         if binding_is_visible(env, importing_module, binding) {
             push_unique_def(&mut defs, binding.def);
         }
+    }
+
+    if matches!(filter, NameResolutionFilter::TypesOnly) {
+        return defs;
     }
 
     for binding in &scope_entry.values {

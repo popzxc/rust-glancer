@@ -78,3 +78,58 @@ pub mod api {
         "#]],
     );
 }
+
+#[test]
+fn falls_back_to_extern_roots_when_wrong_namespace_bindings_match_first_segment() {
+    utils::check_project_path_resolution(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub trait ExternalTrait {}
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+pub mod value_shadow {
+    pub const dep: u8 = 0;
+}
+
+pub mod macro_shadow {
+    macro_rules! dep {
+        () => {};
+    }
+}
+
+pub mod type_shadow {
+    pub mod dep {}
+}
+"#,
+        &[
+            PathResolutionQuery::lib("app", "crate::value_shadow", "dep::ExternalTrait"),
+            PathResolutionQuery::lib("app", "crate::macro_shadow", "dep::ExternalTrait"),
+            PathResolutionQuery::lib("app", "crate::type_shadow", "dep::ExternalTrait"),
+        ],
+        expect![[r#"
+            app [lib] crate::value_shadow resolves dep::ExternalTrait -> trait dep[lib]::crate::ExternalTrait
+            app [lib] crate::macro_shadow resolves dep::ExternalTrait -> trait dep[lib]::crate::ExternalTrait
+            app [lib] crate::type_shadow resolves dep::ExternalTrait -> <none> (unresolved at segment #1)
+        "#]],
+    );
+}
