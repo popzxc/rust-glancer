@@ -227,7 +227,7 @@ impl<'a> FunctionBodyLowering<'a> {
         params.extend(
             param_list
                 .params()
-                .map(|param| self.lower_param(param, param_scope)),
+                .flat_map(|param| self.lower_param(param, param_scope)),
         );
 
         params
@@ -247,23 +247,20 @@ impl<'a> FunctionBodyLowering<'a> {
         })
     }
 
-    fn lower_param(&mut self, param: ast::Param, scope: ScopeId) -> BindingId {
-        let source = self.source(param.syntax());
+    fn lower_param(&mut self, param: ast::Param, scope: ScopeId) -> Vec<BindingId> {
         let annotation = param.ty().map(TypeRef::from_ast);
-        let pat = param.pat();
-        let name = pat.as_ref().and_then(binding_name_from_pat);
-        self.builder.alloc_binding(BindingData {
-            source,
-            scope,
-            kind: BindingKind::Param,
-            name,
-            pat: pat
-                .as_ref()
-                .map(normalized_syntax)
-                .unwrap_or_else(|| "<missing>".to_string()),
-            annotation,
-            ty: BodyTy::Unknown,
-        })
+        match param.pat() {
+            Some(pat) => self.lower_pat_bindings(pat, scope, BindingKind::Param, annotation),
+            None => vec![self.builder.alloc_binding(BindingData {
+                source: self.source(param.syntax()),
+                scope,
+                kind: BindingKind::Param,
+                name: None,
+                pat: "<missing>".to_string(),
+                annotation,
+                ty: BodyTy::Unknown,
+            })],
+        }
     }
 
     fn lower_block_expr(&mut self, block: ast::BlockExpr, parent_scope: ScopeId) -> ExprId {
@@ -325,7 +322,7 @@ impl<'a> FunctionBodyLowering<'a> {
         let annotation = statement.ty().map(TypeRef::from_ast);
         let bindings = statement
             .pat()
-            .map(|pat| self.lower_pat_bindings(pat, scope, annotation.clone()))
+            .map(|pat| self.lower_pat_bindings(pat, scope, BindingKind::Let, annotation.clone()))
             .unwrap_or_default();
 
         self.builder.alloc_statement(StmtData {
@@ -342,21 +339,131 @@ impl<'a> FunctionBodyLowering<'a> {
         &mut self,
         pat: ast::Pat,
         scope: ScopeId,
+        kind: BindingKind,
         annotation: Option<TypeRef>,
     ) -> Vec<BindingId> {
-        let source = self.source(pat.syntax());
-        let name = binding_name_from_pat(&pat);
+        let mut bindings = Vec::new();
+        self.collect_pat_bindings(pat, scope, kind, annotation, &mut bindings);
+        bindings
+    }
+
+    fn collect_pat_bindings(
+        &mut self,
+        pat: ast::Pat,
+        scope: ScopeId,
+        kind: BindingKind,
+        annotation: Option<TypeRef>,
+        bindings: &mut Vec<BindingId>,
+    ) {
+        match pat {
+            ast::Pat::BoxPat(pat) => {
+                if let Some(inner) = pat.pat() {
+                    self.collect_pat_bindings(inner, scope, kind, None, bindings);
+                }
+            }
+            ast::Pat::IdentPat(pat) => {
+                if let Some(name) = pat.name().map(|name| name.text().to_string()) {
+                    self.push_pat_binding(
+                        pat.syntax(),
+                        scope,
+                        kind,
+                        name,
+                        normalized_syntax(&pat),
+                        annotation,
+                        bindings,
+                    );
+                }
+            }
+            ast::Pat::OrPat(pat) => {
+                for inner in pat.pats() {
+                    self.collect_pat_bindings(inner, scope, kind, None, bindings);
+                }
+            }
+            ast::Pat::ParenPat(pat) => {
+                if let Some(inner) = pat.pat() {
+                    self.collect_pat_bindings(inner, scope, kind, annotation, bindings);
+                }
+            }
+            ast::Pat::RecordPat(pat) => {
+                if let Some(field_list) = pat.record_pat_field_list() {
+                    for field in field_list.fields() {
+                        if let Some(inner) = field.pat() {
+                            self.collect_pat_bindings(inner, scope, kind, None, bindings);
+                        } else if let Some(name) = field
+                            .name_ref()
+                            .map(|name| name.syntax().text().to_string())
+                        {
+                            self.push_pat_binding(
+                                field.syntax(),
+                                scope,
+                                kind,
+                                name,
+                                normalized_syntax(&field),
+                                None,
+                                bindings,
+                            );
+                        }
+                    }
+                }
+            }
+            ast::Pat::RefPat(pat) => {
+                if let Some(inner) = pat.pat() {
+                    self.collect_pat_bindings(inner, scope, kind, None, bindings);
+                }
+            }
+            ast::Pat::SlicePat(pat) => {
+                for inner in pat.pats() {
+                    self.collect_pat_bindings(inner, scope, kind, None, bindings);
+                }
+            }
+            ast::Pat::TuplePat(pat) => {
+                for inner in pat.fields() {
+                    self.collect_pat_bindings(inner, scope, kind, None, bindings);
+                }
+            }
+            ast::Pat::TupleStructPat(pat) => {
+                for inner in pat.fields() {
+                    self.collect_pat_bindings(inner, scope, kind, None, bindings);
+                }
+            }
+            ast::Pat::ConstBlockPat(_)
+            | ast::Pat::LiteralPat(_)
+            | ast::Pat::MacroPat(_)
+            | ast::Pat::PathPat(_)
+            | ast::Pat::RangePat(_)
+            | ast::Pat::RestPat(_)
+            | ast::Pat::WildcardPat(_) => {}
+        }
+    }
+
+    fn push_pat_binding(
+        &mut self,
+        syntax: &ra_syntax::SyntaxNode,
+        scope: ScopeId,
+        kind: BindingKind,
+        name: String,
+        pat: String,
+        annotation: Option<TypeRef>,
+        bindings: &mut Vec<BindingId>,
+    ) {
+        if bindings
+            .iter()
+            .filter_map(|binding| self.builder.bindings.get(binding.0))
+            .any(|binding| binding.name.as_deref() == Some(name.as_str()))
+        {
+            return;
+        }
+
         let binding = self.builder.alloc_binding(BindingData {
-            source,
+            source: self.source(syntax),
             scope,
-            kind: BindingKind::Let,
-            name,
-            pat: normalized_syntax(&pat),
+            kind,
+            name: Some(name),
+            pat,
             annotation,
             ty: BodyTy::Unknown,
         });
-
-        vec![binding]
+        bindings.push(binding);
     }
 
     fn lower_expr(&mut self, expr: ast::Expr, scope: ScopeId) -> ExprId {
@@ -563,14 +670,6 @@ impl LiteralKind {
 
         Self::Unknown
     }
-}
-
-fn binding_name_from_pat(pat: &ast::Pat) -> Option<String> {
-    let ast::Pat::IdentPat(pat) = pat else {
-        return None;
-    };
-
-    pat.name().map(|name| name.text().to_string())
 }
 
 fn path_from_ast(path: ast::Path) -> Path {

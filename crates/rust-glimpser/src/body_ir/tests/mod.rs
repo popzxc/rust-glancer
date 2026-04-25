@@ -36,7 +36,7 @@ pub fn choose(id: UserId) -> UserId {
             - s1 parent s0: v1, v3
             - s2 parent s1: v2
             bindings
-            - v0 param id `id`: UserId => nominal struct body_scope_fixture[lib]::crate::UserId @ 3:15-3:25
+            - v0 param id `id`: UserId => nominal struct body_scope_fixture[lib]::crate::UserId @ 3:15-3:17
             - v1 let copied `copied`: UserId => nominal struct body_scope_fixture[lib]::crate::UserId @ 4:9-4:15
             - v2 let id `id`: UserId => nominal struct body_scope_fixture[lib]::crate::UserId @ 6:13-6:15
             - v3 let shadow `shadow`: UserId => nominal struct body_scope_fixture[lib]::crate::UserId @ 5:9-5:15
@@ -103,7 +103,7 @@ impl User {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 7:17-7:27
+            - v0 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 7:17-7:19
             body
             expr e1 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 7:39-9:2
               tail
@@ -116,7 +116,7 @@ impl User {
             - s1 parent s0: v2, v3, v4, v5
             bindings
             - v0 self_param self `&self` => Self struct body_expr_fixture[lib]::crate::User @ 12:15-12:20
-            - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 12:22-12:32
+            - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 12:22-12:24
             - v2 let this `this`: Self => Self struct body_expr_fixture[lib]::crate::User @ 13:13-13:17
             - v3 let built `built`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:13-14:18
             - v4 let via_fn `via_fn`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 15:13-15:19
@@ -159,11 +159,83 @@ impl User {
             - s1 parent s0: <none>
             bindings
             - v0 self_param self `&self` => Self struct body_expr_fixture[lib]::crate::User @ 20:14-20:19
-            - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:21-20:31
+            - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:21-20:23
             body
             expr e1 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:43-22:6
               tail
                 expr e0 path id -> local v1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 21:9-21:11
+        "#]],
+    );
+}
+
+#[test]
+fn collects_bindings_from_destructuring_patterns() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_destructure_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct UserId(u64);
+
+pub struct Pair {
+    pub left: UserId,
+    pub right: UserId,
+}
+
+pub fn destructure(
+    (param_left, param_right): (UserId, UserId),
+    pair: (UserId, UserId),
+    record: Pair,
+    borrowed: &(UserId, UserId),
+) -> UserId {
+    let from_param: UserId = param_left;
+    let (left, right) = pair;
+    let Pair { left: field_left, right } = record;
+    let &(borrowed_left, borrowed_right) = borrowed;
+    left
+}
+"#,
+        expect![[r#"
+            package body_destructure_fixture
+
+            body_destructure_fixture [lib]
+            body b0 fn body_destructure_fixture[lib]::crate::destructure @ 8:1-19:2
+            scopes
+            - s0 parent <none>: v0, v1, v2, v3, v4
+            - s1 parent s0: v5, v6, v7, v8, v9, v10, v11
+            bindings
+            - v0 param param_left `param_left` => <unknown> @ 9:6-9:16
+            - v1 param param_right `param_right` => <unknown> @ 9:18-9:29
+            - v2 param pair `pair`: (UserId, UserId) => syntax (UserId, UserId) @ 10:5-10:9
+            - v3 param record `record`: Pair => nominal struct body_destructure_fixture[lib]::crate::Pair @ 11:5-11:11
+            - v4 param borrowed `borrowed`: &(UserId, UserId) => syntax &(UserId, UserId) @ 12:5-12:13
+            - v5 let from_param `from_param`: UserId => nominal struct body_destructure_fixture[lib]::crate::UserId @ 14:9-14:19
+            - v6 let left `left` => <unknown> @ 15:10-15:14
+            - v7 let right `right` => <unknown> @ 15:16-15:21
+            - v8 let field_left `field_left` => <unknown> @ 16:22-16:32
+            - v9 let right `right` => <unknown> @ 16:34-16:39
+            - v10 let borrowed_left `borrowed_left` => <unknown> @ 17:11-17:24
+            - v11 let borrowed_right `borrowed_right` => <unknown> @ 17:26-17:40
+            body
+            expr e5 block s1 => <unknown> @ 13:13-19:2
+              stmt s0 let v5: UserId @ 14:5-14:41
+                initializer
+                  expr e0 path param_left -> local v0 => <unknown> @ 14:30-14:40
+              stmt s1 let v6, v7 @ 15:5-15:30
+                initializer
+                  expr e1 path pair -> local v2 => syntax (UserId, UserId) @ 15:25-15:29
+              stmt s2 let v8, v9 @ 16:5-16:51
+                initializer
+                  expr e2 path record -> local v3 => nominal struct body_destructure_fixture[lib]::crate::Pair @ 16:44-16:50
+              stmt s3 let v10, v11 @ 17:5-17:53
+                initializer
+                  expr e3 path borrowed -> local v4 => syntax &(UserId, UserId) @ 17:44-17:52
+              tail
+                expr e4 path left -> local v6 => <unknown> @ 18:5-18:9
         "#]],
     );
 }
