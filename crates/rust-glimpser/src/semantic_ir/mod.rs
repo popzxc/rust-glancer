@@ -7,7 +7,7 @@ mod resolution;
 mod tests;
 
 pub(crate) use self::{
-    data::SemanticIrDb,
+    data::{FunctionData, SemanticIrDb},
     ids::{FunctionId, FunctionRef, ImplRef, ItemId, ItemOwner, TraitRef, TypeDefRef},
 };
 

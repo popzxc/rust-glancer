@@ -11,13 +11,13 @@ use crate::parse::{FileId, ParseDb, TargetId};
 pub(crate) use self::item::{
     ConstItem, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldList, FunctionItem,
     GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag, ItemTreeId, ItemTreeRef,
-    ModuleItem, ModuleSource, Mutability, StaticItem, StructItem, TraitItem, TypeAliasItem,
-    TypeBound, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
-    VisibilityLevel,
+    ModuleItem, ModuleSource, Mutability, ParamKind, StaticItem, StructItem, TraitItem,
+    TypeAliasItem, TypeBound, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath,
+    UsePathSegment, VisibilityLevel,
 };
 
 #[cfg(test)]
-pub(crate) use self::item::{ParamItem, ParamKind};
+pub(crate) use self::item::ParamItem;
 
 /// Lowered item trees for all parsed packages.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

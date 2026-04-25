@@ -8,7 +8,7 @@ use crate::parse::{
 pub(crate) use self::{
     decl::{
         ConstItem, EnumItem, EnumVariantItem, FieldItem, FieldList, FunctionItem, GenericParams,
-        ImplItem, StaticItem, StructItem, TraitItem, TypeAliasItem, UnionItem,
+        ImplItem, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem, UnionItem,
     },
     import::{
         ExternCrateItem, ImportAlias, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
@@ -19,15 +19,15 @@ pub(crate) use self::{
     visibility::VisibilityLevel,
 };
 
-#[cfg(test)]
-pub(crate) use self::decl::{ParamItem, ParamKind};
-
 mod decl;
 mod import;
 mod kind;
 mod module;
 mod type_ref;
 mod visibility;
+
+#[cfg(test)]
+pub(crate) use self::decl::ParamItem;
 
 /// Stable file-local identifier for one lowered item-tree node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -3,6 +3,7 @@ use std::fmt;
 use anyhow::Context as _;
 
 use crate::{
+    analysis::Analysis,
     body_ir::BodyIrDb,
     def_map::DefMapDb,
     item_tree::{FileTree, ItemKind, ItemNode, ItemTreeDb, ModuleSource},
@@ -68,6 +69,12 @@ impl Project {
     /// Returns the body IR database built for this project.
     pub(crate) fn body_ir_db(&self) -> &BodyIrDb {
         &self.body_ir
+    }
+
+    /// Returns the high-level query API for this frozen project analysis.
+    #[allow(dead_code)]
+    pub(crate) fn analysis(&self) -> Analysis<'_> {
+        Analysis::new(self)
     }
 
     fn fmt_item(
