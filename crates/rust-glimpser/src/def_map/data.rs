@@ -11,6 +11,8 @@ use super::{DefId, ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, Modu
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DefMap {
     root_module: Option<ModuleId>,
+    // Currently means “implicit roots visible to this target,” including sibling lib roots
+    extern_prelude: HashMap<String, ModuleRef>,
     pub modules: Vec<ModuleData>,
     pub local_defs: Vec<LocalDefData>,
     pub local_impls: Vec<LocalImplData>,
@@ -21,6 +23,11 @@ impl DefMap {
     /// Returns the root module of this target, if the map has been populated.
     pub fn root_module(&self) -> Option<ModuleId> {
         self.root_module
+    }
+
+    /// Returns the external root names visible from this target.
+    pub fn extern_prelude(&self) -> &HashMap<String, ModuleRef> {
+        &self.extern_prelude
     }
 
     /// Returns all modules in stable module-id order.
@@ -50,6 +57,10 @@ impl DefMap {
 
     pub(super) fn set_root_module(&mut self, root_module: ModuleId) {
         self.root_module = Some(root_module);
+    }
+
+    pub(super) fn set_extern_prelude(&mut self, extern_prelude: HashMap<String, ModuleRef>) {
+        self.extern_prelude = extern_prelude;
     }
 }
 

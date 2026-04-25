@@ -74,6 +74,30 @@ impl ImportKind {
     }
 }
 
+/// Structured path used by def-map path resolution queries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Path {
+    pub absolute: bool,
+    pub segments: Vec<PathSegment>,
+}
+
+impl fmt::Display for Path {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.absolute {
+            write!(f, "::")?;
+        }
+
+        for (idx, segment) in self.segments.iter().enumerate() {
+            if idx > 0 {
+                write!(f, "::")?;
+            }
+            write!(f, "{segment}")?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Structured path used during import resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportPath {
@@ -94,29 +118,22 @@ impl ImportPath {
     }
 
     pub(super) fn last_name(&self) -> Option<String> {
-        match self.segments.last()? {
-            PathSegment::Name(name) => Some(name.clone()),
-            PathSegment::SelfKw => Some("self".to_string()),
-            PathSegment::SuperKw => Some("super".to_string()),
-            PathSegment::CrateKw => Some("crate".to_string()),
+        last_segment_name(&self.segments)
+    }
+}
+
+impl From<&ImportPath> for Path {
+    fn from(path: &ImportPath) -> Self {
+        Self {
+            absolute: path.absolute,
+            segments: path.segments.clone(),
         }
     }
 }
 
 impl fmt::Display for ImportPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.absolute {
-            write!(f, "::")?;
-        }
-
-        for (idx, segment) in self.segments.iter().enumerate() {
-            if idx > 0 {
-                write!(f, "::")?;
-            }
-            write!(f, "{segment}")?;
-        }
-
-        Ok(())
+        Path::from(self).fmt(f)
     }
 }
 
@@ -141,5 +158,14 @@ impl PathSegment {
             UsePathSegment::SuperKw => Self::SuperKw,
             UsePathSegment::CrateKw => Self::CrateKw,
         }
+    }
+}
+
+fn last_segment_name(segments: &[PathSegment]) -> Option<String> {
+    match segments.last()? {
+        PathSegment::Name(name) => Some(name.clone()),
+        PathSegment::SelfKw => Some("self".to_string()),
+        PathSegment::SuperKw => Some("super".to_string()),
+        PathSegment::CrateKw => Some("crate".to_string()),
     }
 }

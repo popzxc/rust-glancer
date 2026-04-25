@@ -1,21 +1,130 @@
-//! Helpers for resolving import paths against the current def-map scope snapshot.
+//! Helpers for resolving paths against def-map scopes.
 //!
 //! Resolution here is intentionally narrow:
-//! - it works only with the already-built module scopes
+//! - it works only with already-built module scopes
 //! - it understands module navigation (`self`, `super`, `crate`)
 //! - it can return multiple definitions because several namespaces may share one textual name
 //!
-//! This module does not mutate scopes. It is used by `resolve.rs` while building the next
-//! fixed-point iteration.
+//! During def-map construction this module reads from the fixed-point scope snapshot. After
+//! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
 use std::collections::HashMap;
 
 use crate::item_tree::VisibilityLevel;
 
 use super::{
-    DefId, ModuleData, ModuleId, ModuleRef, ModuleScope, ScopeBinding, ScopeEntry, TargetRef,
-    collect::TargetState, data::Namespace,
+    DefId, DefMapDb, ModuleData, ModuleId, ModuleRef, ModuleScope, Path, ScopeBinding, ScopeEntry,
+    TargetRef, collect::TargetState, data::Namespace,
 };
+
+/// Result of resolving a path against the frozen def-map graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvePathResult {
+    pub resolved: Vec<DefId>,
+    pub unresolved_at: Option<usize>,
+}
+
+/// Minimal scope graph required by the path resolver.
+trait PathResolutionEnv {
+    fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef>;
+
+    fn root_module(&self, target: TargetRef) -> Option<ModuleRef>;
+
+    fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData>;
+
+    fn module_scope(&self, module_ref: ModuleRef) -> Option<&ModuleScope>;
+
+    fn parent_module(&self, target: TargetRef, module_id: ModuleId) -> Option<ModuleRef> {
+        let module = self.module_data(ModuleRef {
+            target,
+            module: module_id,
+        })?;
+
+        Some(ModuleRef {
+            target,
+            module: module.parent?,
+        })
+    }
+}
+
+/// Resolution environment used while imports are being fixed up.
+struct BuildResolutionEnv<'a> {
+    states: &'a [Vec<TargetState>],
+    current_scopes: &'a [Vec<Vec<ModuleScope>>],
+}
+
+impl<'a> BuildResolutionEnv<'a> {
+    fn new(states: &'a [Vec<TargetState>], current_scopes: &'a [Vec<Vec<ModuleScope>>]) -> Self {
+        Self {
+            states,
+            current_scopes,
+        }
+    }
+
+    fn target_state(&self, target: TargetRef) -> Option<&'a TargetState> {
+        self.states.get(target.package.0)?.get(target.target.0)
+    }
+}
+
+impl PathResolutionEnv for BuildResolutionEnv<'_> {
+    fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef> {
+        self.target_state(target)?.implicit_roots.get(name).copied()
+    }
+
+    fn root_module(&self, target: TargetRef) -> Option<ModuleRef> {
+        Some(ModuleRef {
+            target,
+            module: self.target_state(target)?.def_map.root_module()?,
+        })
+    }
+
+    fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData> {
+        self.target_state(module_ref.target)?
+            .def_map
+            .module(module_ref.module)
+    }
+
+    fn module_scope(&self, module_ref: ModuleRef) -> Option<&ModuleScope> {
+        self.current_scopes
+            .get(module_ref.target.package.0)?
+            .get(module_ref.target.target.0)?
+            .get(module_ref.module.0)
+    }
+}
+
+/// Resolution environment used by frozen query APIs.
+struct FrozenResolutionEnv<'a> {
+    db: &'a DefMapDb,
+}
+
+impl<'a> FrozenResolutionEnv<'a> {
+    fn new(db: &'a DefMapDb) -> Self {
+        Self { db }
+    }
+}
+
+impl PathResolutionEnv for FrozenResolutionEnv<'_> {
+    fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef> {
+        self.db.def_map(target)?.extern_prelude().get(name).copied()
+    }
+
+    fn root_module(&self, target: TargetRef) -> Option<ModuleRef> {
+        Some(ModuleRef {
+            target,
+            module: self.db.def_map(target)?.root_module()?,
+        })
+    }
+
+    fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData> {
+        self.db
+            .def_map(module_ref.target)?
+            .module(module_ref.module)
+    }
+
+    fn module_scope(&self, module_ref: ModuleRef) -> Option<&ModuleScope> {
+        self.module_data(module_ref).map(|module| &module.scope)
+    }
+}
 
 /// Returns the subset of one module scope that is visible to the importing target.
 ///
@@ -27,11 +136,8 @@ pub(super) fn visible_module_scope_entry_set(
     importing_module: ModuleRef,
     source_module: ModuleRef,
 ) -> HashMap<String, ScopeEntry> {
-    let Some(module_scope) = current_scopes
-        .get(source_module.target.package.0)
-        .and_then(|package_scopes| package_scopes.get(source_module.target.target.0))
-        .and_then(|target_scopes| target_scopes.get(source_module.module.0))
-    else {
+    let env = BuildResolutionEnv::new(states, current_scopes);
+    let Some(module_scope) = env.module_scope(source_module) else {
         return HashMap::new();
     };
 
@@ -41,19 +147,19 @@ pub(super) fn visible_module_scope_entry_set(
         let mut visible_entry = ScopeEntry::default();
 
         for binding in &entry.types {
-            if binding_is_visible(states, importing_module, binding) {
+            if binding_is_visible(&env, importing_module, binding) {
                 visible_entry.insert_binding(Namespace::Types, binding.clone());
             }
         }
 
         for binding in &entry.values {
-            if binding_is_visible(states, importing_module, binding) {
+            if binding_is_visible(&env, importing_module, binding) {
                 visible_entry.insert_binding(Namespace::Values, binding.clone());
             }
         }
 
         for binding in &entry.macros {
-            if binding_is_visible(states, importing_module, binding) {
+            if binding_is_visible(&env, importing_module, binding) {
                 visible_entry.insert_binding(Namespace::Macros, binding.clone());
             }
         }
@@ -80,35 +186,18 @@ pub(super) fn resolve_path_to_defs(
     importing_module: ModuleId,
     path: &super::ImportPath,
 ) -> Vec<DefId> {
-    let importing_module_ref = ModuleRef {
-        target: importing_target,
-        module: importing_module,
-    };
-    let Some((first_segment, remaining_segments)) = path.segments.split_first() else {
-        return Vec::new();
-    };
-
-    // The first segment is special because relative paths can start from local scope while
-    // absolute paths can only start from implicit target roots.
-    let mut current_defs = resolve_first_segment(
-        states,
-        current_scopes,
-        importing_module_ref,
+    let env = BuildResolutionEnv::new(states, current_scopes);
+    let result = resolve_path_with_env(
+        &env,
+        ModuleRef {
+            target: importing_target,
+            module: importing_module,
+        },
         path.absolute,
-        first_segment,
+        &path.segments,
     );
 
-    for segment in remaining_segments {
-        current_defs = resolve_next_segment(
-            states,
-            current_scopes,
-            importing_module_ref,
-            current_defs,
-            segment,
-        );
-    }
-
-    current_defs
+    result.resolved
 }
 
 /// Resolves a path and keeps only module results.
@@ -142,254 +231,14 @@ pub(super) fn resolve_path_to_modules(
     modules
 }
 
-/// Resolves the first path segment, which decides the starting search space.
-///
-/// Relative names first try the current module scope and then fall back to implicit roots.
-/// Absolute names skip local scope entirely and can only start from implicit roots.
-fn resolve_first_segment(
-    states: &[Vec<TargetState>],
-    current_scopes: &[Vec<Vec<ModuleScope>>],
+/// Resolves a path against the already-frozen def maps.
+pub(crate) fn resolve_path_in_db(
+    db: &DefMapDb,
     importing_module: ModuleRef,
-    absolute: bool,
-    segment: &super::PathSegment,
-) -> Vec<DefId> {
-    if absolute {
-        return match segment {
-            super::PathSegment::Name(name) => states
-                .get(importing_module.target.package.0)
-                .and_then(|package_states| package_states.get(importing_module.target.target.0))
-                .and_then(|state| state.implicit_roots.get(name))
-                .copied()
-                .map(|module_ref| vec![DefId::Module(module_ref)])
-                .unwrap_or_default(),
-            super::PathSegment::SelfKw
-            | super::PathSegment::SuperKw
-            | super::PathSegment::CrateKw => Vec::new(),
-        };
-    }
-
-    match segment {
-        super::PathSegment::SelfKw => vec![DefId::Module(importing_module)],
-        super::PathSegment::SuperKw => {
-            parent_module(states, importing_module.target, importing_module.module)
-                .map(DefId::Module)
-                .into_iter()
-                .collect()
-        }
-        super::PathSegment::CrateKw => root_module_ref(states, importing_module.target)
-            .map(DefId::Module)
-            .into_iter()
-            .collect(),
-        super::PathSegment::Name(name) => {
-            // Local scope wins over implicit roots for relative names.
-            let local_defs = resolve_name_in_module(
-                states,
-                current_scopes,
-                importing_module,
-                importing_module,
-                name,
-            );
-            if !local_defs.is_empty() {
-                return local_defs;
-            }
-
-            states
-                .get(importing_module.target.package.0)
-                .and_then(|package_states| package_states.get(importing_module.target.target.0))
-                .and_then(|state| state.implicit_roots.get(name))
-                .copied()
-                .map(|module_ref| vec![DefId::Module(module_ref)])
-                .unwrap_or_default()
-        }
-    }
-}
-
-/// Resolves every path segment after the first one.
-///
-/// At this point resolution can only continue through modules, so any non-module intermediate
-/// definition is discarded.
-fn resolve_next_segment(
-    states: &[Vec<TargetState>],
-    current_scopes: &[Vec<Vec<ModuleScope>>],
-    importing_module: ModuleRef,
-    current_defs: Vec<DefId>,
-    segment: &super::PathSegment,
-) -> Vec<DefId> {
-    let mut next_defs = Vec::new();
-
-    for current_def in current_defs {
-        let DefId::Module(module_ref) = current_def else {
-            continue;
-        };
-
-        match segment {
-            super::PathSegment::SelfKw => {
-                push_unique_def(&mut next_defs, DefId::Module(module_ref));
-            }
-            super::PathSegment::SuperKw => {
-                if let Some(parent) = parent_module(states, module_ref.target, module_ref.module) {
-                    push_unique_def(&mut next_defs, DefId::Module(parent));
-                }
-            }
-            super::PathSegment::CrateKw => {
-                if let Some(root) = root_module_ref(states, module_ref.target) {
-                    push_unique_def(&mut next_defs, DefId::Module(root));
-                }
-            }
-            super::PathSegment::Name(name) => {
-                for resolved_def in resolve_name_in_module(
-                    states,
-                    current_scopes,
-                    importing_module,
-                    module_ref,
-                    name,
-                ) {
-                    push_unique_def(&mut next_defs, resolved_def);
-                }
-            }
-        }
-    }
-
-    next_defs
-}
-
-/// Resolves one textual name inside one module scope across all namespaces.
-///
-/// The result is visibility-filtered from the perspective of the importing target, because
-/// cross-target resolution is allowed to see only public bindings.
-fn resolve_name_in_module(
-    states: &[Vec<TargetState>],
-    current_scopes: &[Vec<Vec<ModuleScope>>],
-    importing_module: ModuleRef,
-    module_ref: ModuleRef,
-    name: &str,
-) -> Vec<DefId> {
-    let Some(scope_entry) = current_scopes
-        .get(module_ref.target.package.0)
-        .and_then(|package_scopes| package_scopes.get(module_ref.target.target.0))
-        .and_then(|target_scopes| target_scopes.get(module_ref.module.0))
-        .and_then(|scope| scope.entry(name))
-    else {
-        return Vec::new();
-    };
-
-    let mut defs = Vec::new();
-
-    // One textual name can contribute bindings from several namespaces, so we collect them all
-    // into a deduplicated result set.
-    for binding in &scope_entry.types {
-        if binding_is_visible(states, importing_module, binding) {
-            push_unique_def(&mut defs, binding.def);
-        }
-    }
-
-    for binding in &scope_entry.values {
-        if binding_is_visible(states, importing_module, binding) {
-            push_unique_def(&mut defs, binding.def);
-        }
-    }
-
-    for binding in &scope_entry.macros {
-        if binding_is_visible(states, importing_module, binding) {
-            push_unique_def(&mut defs, binding.def);
-        }
-    }
-
-    defs
-}
-
-/// Checks whether a binding can be observed from the importing module.
-fn binding_is_visible(
-    states: &[Vec<TargetState>],
-    importing_module: ModuleRef,
-    binding: &ScopeBinding,
-) -> bool {
-    if matches!(binding.visibility, VisibilityLevel::Public) {
-        return true;
-    }
-
-    // Non-public visibility is always anchored to a module inside the target that introduced the
-    // binding. Cross-target access therefore needs a public re-export first.
-    if importing_module.target != binding.owner.target {
-        return false;
-    }
-
-    match &binding.visibility {
-        VisibilityLevel::Private | VisibilityLevel::Self_ => {
-            module_is_descendant_of(states, importing_module, binding.owner)
-        }
-        VisibilityLevel::Crate => true,
-        VisibilityLevel::Super => parent_module(states, binding.owner.target, binding.owner.module)
-            .is_some_and(|visible_from| {
-                module_is_descendant_of(states, importing_module, visible_from)
-            }),
-        VisibilityLevel::Restricted(path) => {
-            restricted_visibility_owner(states, binding.owner, path).is_some_and(|visible_from| {
-                module_is_descendant_of(states, importing_module, visible_from)
-            })
-        }
-        VisibilityLevel::Public => true,
-        VisibilityLevel::Unknown(_) => false,
-    }
-}
-
-/// Resolves the module that anchors a `pub(in path)` visibility restriction.
-fn restricted_visibility_owner(
-    states: &[Vec<TargetState>],
-    owner: ModuleRef,
-    path: &str,
-) -> Option<ModuleRef> {
-    let mut segments = path.split("::");
-    let first = segments.next()?;
-    let mut current = match first {
-        "crate" => root_module_ref(states, owner.target)?,
-        "self" => owner,
-        "super" => parent_module(states, owner.target, owner.module)?,
-        _ => return None,
-    };
-
-    for segment in segments {
-        let module = module_data(states, current)?;
-        let child = module
-            .children
-            .iter()
-            .find_map(|(name, child)| (name == segment).then_some(*child))?;
-        current = ModuleRef {
-            target: current.target,
-            module: child,
-        };
-    }
-
-    Some(current)
-}
-
-/// Returns whether `module` is the same as or nested inside `ancestor`.
-fn module_is_descendant_of(
-    states: &[Vec<TargetState>],
-    module: ModuleRef,
-    ancestor: ModuleRef,
-) -> bool {
-    if module.target != ancestor.target {
-        return false;
-    }
-
-    let mut current = Some(module.module);
-    while let Some(module_id) = current {
-        if module_id == ancestor.module {
-            return true;
-        }
-
-        current = module_data(
-            states,
-            ModuleRef {
-                target: module.target,
-                module: module_id,
-            },
-        )
-        .and_then(|module| module.parent);
-    }
-
-    false
+    path: &Path,
+) -> ResolvePathResult {
+    let env = FrozenResolutionEnv::new(db);
+    resolve_path_with_env(&env, importing_module, path.absolute, &path.segments)
 }
 
 /// Maps a resolved definition to the namespace bucket it occupies in scope.
@@ -408,42 +257,269 @@ pub(super) fn namespace_for_def(states: &[Vec<TargetState>], def: DefId) -> Opti
     }
 }
 
-/// Returns the root module reference for one target.
-fn root_module_ref(states: &[Vec<TargetState>], target: TargetRef) -> Option<ModuleRef> {
-    Some(ModuleRef {
-        target,
-        module: states
-            .get(target.package.0)?
-            .get(target.target.0)?
-            .def_map
-            .root_module()?,
-    })
+/// Walks a path through one resolution environment.
+fn resolve_path_with_env(
+    env: &impl PathResolutionEnv,
+    importing_module: ModuleRef,
+    absolute: bool,
+    segments: &[super::PathSegment],
+) -> ResolvePathResult {
+    let Some((first_segment, remaining_segments)) = segments.split_first() else {
+        return ResolvePathResult {
+            resolved: Vec::new(),
+            unresolved_at: Some(0),
+        };
+    };
+
+    let mut current_defs = resolve_first_segment(env, importing_module, absolute, first_segment);
+
+    if current_defs.is_empty() {
+        return ResolvePathResult {
+            resolved: current_defs,
+            unresolved_at: Some(0),
+        };
+    }
+
+    for (segment_idx, segment) in remaining_segments.iter().enumerate() {
+        current_defs = resolve_next_segment(env, importing_module, current_defs, segment);
+
+        if current_defs.is_empty() {
+            return ResolvePathResult {
+                resolved: current_defs,
+                unresolved_at: Some(segment_idx + 1),
+            };
+        }
+    }
+
+    ResolvePathResult {
+        resolved: current_defs,
+        unresolved_at: None,
+    }
 }
 
-/// Returns the parent module reference, if this module is not the root.
-fn parent_module(
-    states: &[Vec<TargetState>],
-    target: TargetRef,
-    module_id: ModuleId,
+/// Resolves the first path segment, which decides the starting search space.
+///
+/// Relative names first try the current module scope and then fall back to extern roots. Absolute
+/// names skip local scope entirely and can only start from extern roots.
+fn resolve_first_segment(
+    env: &impl PathResolutionEnv,
+    importing_module: ModuleRef,
+    absolute: bool,
+    segment: &super::PathSegment,
+) -> Vec<DefId> {
+    if absolute {
+        return match segment {
+            super::PathSegment::Name(name) => env
+                .extern_root(importing_module.target, name)
+                .map(|module_ref| vec![DefId::Module(module_ref)])
+                .unwrap_or_default(),
+            super::PathSegment::SelfKw
+            | super::PathSegment::SuperKw
+            | super::PathSegment::CrateKw => Vec::new(),
+        };
+    }
+
+    match segment {
+        super::PathSegment::SelfKw => vec![DefId::Module(importing_module)],
+        super::PathSegment::SuperKw => env
+            .parent_module(importing_module.target, importing_module.module)
+            .map(DefId::Module)
+            .into_iter()
+            .collect(),
+        super::PathSegment::CrateKw => env
+            .root_module(importing_module.target)
+            .map(DefId::Module)
+            .into_iter()
+            .collect(),
+        super::PathSegment::Name(name) => {
+            // Local scope wins over extern roots for relative names.
+            let local_defs = resolve_name_in_module(env, importing_module, importing_module, name);
+            if !local_defs.is_empty() {
+                return local_defs;
+            }
+
+            env.extern_root(importing_module.target, name)
+                .map(|module_ref| vec![DefId::Module(module_ref)])
+                .unwrap_or_default()
+        }
+    }
+}
+
+/// Resolves every path segment after the first one.
+///
+/// At this point resolution can only continue through modules, so any non-module intermediate
+/// definition is discarded.
+fn resolve_next_segment(
+    env: &impl PathResolutionEnv,
+    importing_module: ModuleRef,
+    current_defs: Vec<DefId>,
+    segment: &super::PathSegment,
+) -> Vec<DefId> {
+    let mut next_defs = Vec::new();
+
+    for current_def in current_defs {
+        let DefId::Module(module_ref) = current_def else {
+            continue;
+        };
+
+        match segment {
+            super::PathSegment::SelfKw => {
+                push_unique_def(&mut next_defs, DefId::Module(module_ref));
+            }
+            super::PathSegment::SuperKw => {
+                if let Some(parent) = env.parent_module(module_ref.target, module_ref.module) {
+                    push_unique_def(&mut next_defs, DefId::Module(parent));
+                }
+            }
+            super::PathSegment::CrateKw => {
+                if let Some(root) = env.root_module(module_ref.target) {
+                    push_unique_def(&mut next_defs, DefId::Module(root));
+                }
+            }
+            super::PathSegment::Name(name) => {
+                for resolved_def in resolve_name_in_module(env, importing_module, module_ref, name)
+                {
+                    push_unique_def(&mut next_defs, resolved_def);
+                }
+            }
+        }
+    }
+
+    next_defs
+}
+
+/// Resolves one textual name inside one module scope across all namespaces.
+///
+/// The result is visibility-filtered from the perspective of the importing target, because
+/// cross-target resolution is allowed to see only public bindings.
+fn resolve_name_in_module(
+    env: &impl PathResolutionEnv,
+    importing_module: ModuleRef,
+    module_ref: ModuleRef,
+    name: &str,
+) -> Vec<DefId> {
+    let Some(scope_entry) = env
+        .module_scope(module_ref)
+        .and_then(|scope| scope.entry(name))
+    else {
+        return Vec::new();
+    };
+
+    let mut defs = Vec::new();
+
+    // One textual name can contribute bindings from several namespaces, so we collect them all
+    // into a deduplicated result set.
+    for binding in &scope_entry.types {
+        if binding_is_visible(env, importing_module, binding) {
+            push_unique_def(&mut defs, binding.def);
+        }
+    }
+
+    for binding in &scope_entry.values {
+        if binding_is_visible(env, importing_module, binding) {
+            push_unique_def(&mut defs, binding.def);
+        }
+    }
+
+    for binding in &scope_entry.macros {
+        if binding_is_visible(env, importing_module, binding) {
+            push_unique_def(&mut defs, binding.def);
+        }
+    }
+
+    defs
+}
+
+/// Checks whether a binding can be observed from the importing module.
+fn binding_is_visible(
+    env: &impl PathResolutionEnv,
+    importing_module: ModuleRef,
+    binding: &ScopeBinding,
+) -> bool {
+    if matches!(binding.visibility, VisibilityLevel::Public) {
+        return true;
+    }
+
+    // Non-public visibility is always anchored to a module inside the target that introduced the
+    // binding. Cross-target access therefore needs a public re-export first.
+    if importing_module.target != binding.owner.target {
+        return false;
+    }
+
+    match &binding.visibility {
+        VisibilityLevel::Private | VisibilityLevel::Self_ => {
+            module_is_descendant_of(env, importing_module, binding.owner)
+        }
+        VisibilityLevel::Crate => true,
+        VisibilityLevel::Super => env
+            .parent_module(binding.owner.target, binding.owner.module)
+            .is_some_and(|visible_from| {
+                module_is_descendant_of(env, importing_module, visible_from)
+            }),
+        VisibilityLevel::Restricted(path) => restricted_visibility_owner(env, binding.owner, path)
+            .is_some_and(|visible_from| {
+                module_is_descendant_of(env, importing_module, visible_from)
+            }),
+        VisibilityLevel::Public => true,
+        VisibilityLevel::Unknown(_) => false,
+    }
+}
+
+/// Resolves the module that anchors a `pub(in path)` visibility restriction.
+fn restricted_visibility_owner(
+    env: &impl PathResolutionEnv,
+    owner: ModuleRef,
+    path: &str,
 ) -> Option<ModuleRef> {
-    let module = states
-        .get(target.package.0)?
-        .get(target.target.0)?
-        .def_map
-        .module(module_id)?;
+    let mut segments = path.split("::");
+    let first = segments.next()?;
+    let mut current = match first {
+        "crate" => env.root_module(owner.target)?,
+        "self" => owner,
+        "super" => env.parent_module(owner.target, owner.module)?,
+        _ => return None,
+    };
 
-    Some(ModuleRef {
-        target,
-        module: module.parent?,
-    })
+    for segment in segments {
+        let module = env.module_data(current)?;
+        let child = module
+            .children
+            .iter()
+            .find_map(|(name, child)| (name == segment).then_some(*child))?;
+        current = ModuleRef {
+            target: current.target,
+            module: child,
+        };
+    }
+
+    Some(current)
 }
 
-fn module_data(states: &[Vec<TargetState>], module_ref: ModuleRef) -> Option<&ModuleData> {
-    states
-        .get(module_ref.target.package.0)?
-        .get(module_ref.target.target.0)?
-        .def_map
-        .module(module_ref.module)
+/// Returns whether `module` is the same as or nested inside `ancestor`.
+fn module_is_descendant_of(
+    env: &impl PathResolutionEnv,
+    module: ModuleRef,
+    ancestor: ModuleRef,
+) -> bool {
+    if module.target != ancestor.target {
+        return false;
+    }
+
+    let mut current = Some(module.module);
+    while let Some(module_id) = current {
+        if module_id == ancestor.module {
+            return true;
+        }
+
+        current = env
+            .module_data(ModuleRef {
+                target: module.target,
+                module: module_id,
+            })
+            .and_then(|module| module.parent);
+    }
+
+    false
 }
 
 /// Pushes one resolved definition unless it is already present in the result list.

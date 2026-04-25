@@ -14,7 +14,8 @@ pub use self::{
         DefId, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
         PackageSlot, TargetRef,
     },
-    import::{ImportBinding, ImportData, ImportKind, ImportPath, PathSegment},
+    import::{ImportBinding, ImportData, ImportKind, ImportPath, Path, PathSegment},
+    path_resolution::ResolvePathResult,
 };
 use crate::{item_tree::ItemTreeDb, parse};
 
@@ -84,6 +85,12 @@ impl DefMapDb {
     /// Returns one target def map by project-wide target reference.
     pub(crate) fn def_map(&self, target: TargetRef) -> Option<&DefMap> {
         self.package(target.package)?.target(target.target)
+    }
+
+    /// Resolves a path from a module against the frozen def-map graph.
+    #[allow(dead_code)]
+    pub(crate) fn resolve_path(&self, from: ModuleRef, path: &Path) -> ResolvePathResult {
+        path_resolution::resolve_path_in_db(self, from, path)
     }
 }
 

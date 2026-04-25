@@ -48,7 +48,13 @@ pub(crate) fn build_db(
         .map(|package_states| super::Package {
             targets: package_states
                 .into_iter()
-                .map(|state| state.def_map)
+                .map(|mut state| {
+                    // The same implicit roots used by import resolution are still needed by later
+                    // frozen path queries. Keep them as an extern prelude rather than pretending
+                    // they are child modules of the crate root.
+                    state.def_map.set_extern_prelude(state.implicit_roots);
+                    state.def_map
+                })
                 .collect::<Vec<_>>(),
         })
         .collect::<Vec<_>>();

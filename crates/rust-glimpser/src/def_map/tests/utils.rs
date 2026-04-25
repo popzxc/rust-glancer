@@ -3,11 +3,13 @@ use expect_test::Expect;
 use crate::{
     Project,
     def_map::{
-        DefId, DefMap, ImportData, ImportKind, ModuleId, ScopeBinding, ScopeEntry, TargetRef,
+        DefId, DefMap, ImportData, ImportKind, ModuleId, ModuleRef, Path, PathSegment,
+        ResolvePathResult, ScopeBinding, ScopeEntry, TargetRef,
     },
     item_tree::VisibilityLevel,
     parse::{Package, Target},
     test_utils::{fixture_crate, snapshot},
+    workspace_metadata::TargetKind,
 };
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
@@ -15,6 +17,39 @@ pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
     let actual = ProjectDefMapSnapshot::new(&project).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
+}
+
+pub(super) fn check_project_path_resolution(
+    fixture: &str,
+    queries: &[PathResolutionQuery],
+    expect: Expect,
+) {
+    let project = fixture_crate(fixture).project();
+    let actual = ProjectPathResolutionSnapshot::new(&project, queries).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) struct PathResolutionQuery {
+    package_name: &'static str,
+    target_kind: TargetKind,
+    module_path: &'static str,
+    path: &'static str,
+}
+
+impl PathResolutionQuery {
+    pub(super) fn lib(
+        package_name: &'static str,
+        module_path: &'static str,
+        path: &'static str,
+    ) -> Self {
+        Self {
+            package_name,
+            target_kind: TargetKind::Lib,
+            module_path,
+            path,
+        }
+    }
 }
 
 /// Project-level DefMap snapshot context.
@@ -42,6 +77,163 @@ impl<'a> ProjectDefMapSnapshot<'a> {
             .collect::<Vec<_>>();
 
         package_dumps.join("\n\n")
+    }
+}
+
+/// Project-level path-resolution snapshot context.
+struct ProjectPathResolutionSnapshot<'a> {
+    project: &'a Project,
+    queries: &'a [PathResolutionQuery],
+}
+
+impl<'a> ProjectPathResolutionSnapshot<'a> {
+    fn new(project: &'a Project, queries: &'a [PathResolutionQuery]) -> Self {
+        Self { project, queries }
+    }
+
+    fn render(&self) -> String {
+        self.queries
+            .iter()
+            .map(|query| self.render_query(query))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn render_query(&self, query: &PathResolutionQuery) -> String {
+        let (target_ref, target) = self.target_ref(query);
+        let module_id = self.module_id(target_ref, query.module_path);
+        let path = Self::parse_path(query.path);
+        let result = self.project.def_map_db().resolve_path(
+            ModuleRef {
+                target: target_ref,
+                module: module_id,
+            },
+            &path,
+        );
+
+        format!(
+            "{} [{}] {} resolves {} -> {}",
+            query.package_name,
+            target.kind,
+            query.module_path,
+            path,
+            self.render_result(&result),
+        )
+    }
+
+    fn target_ref(&self, query: &PathResolutionQuery) -> (TargetRef, &'a Target) {
+        let (package_slot, package) = self
+            .project
+            .parse_db()
+            .packages()
+            .iter()
+            .enumerate()
+            .find(|(_, package)| package.package_name() == query.package_name)
+            .unwrap_or_else(|| panic!("fixture package `{}` should exist", query.package_name));
+        let target = package
+            .targets()
+            .iter()
+            .find(|target| target.kind == query.target_kind)
+            .unwrap_or_else(|| {
+                panic!(
+                    "fixture package `{}` should have a {} target",
+                    query.package_name, query.target_kind
+                )
+            });
+
+        (
+            TargetRef {
+                package: crate::def_map::PackageSlot(package_slot),
+                target: target.id,
+            },
+            target,
+        )
+    }
+
+    fn module_id(&self, target_ref: TargetRef, module_path: &str) -> ModuleId {
+        let def_map = self
+            .project
+            .def_map_db()
+            .def_map(target_ref)
+            .expect("target def map should exist while resolving path snapshot query");
+
+        def_map
+            .modules()
+            .iter()
+            .enumerate()
+            .find_map(|(module_idx, _)| {
+                let module_id = ModuleId(module_idx);
+                (self.module_path(target_ref, module_id) == module_path).then_some(module_id)
+            })
+            .unwrap_or_else(|| panic!("module `{module_path}` should exist in fixture target"))
+    }
+
+    fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {
+        let module = self
+            .project
+            .def_map_db()
+            .def_map(target_ref)
+            .expect("target def map should exist while building module path")
+            .module(module_id)
+            .expect("module id should exist while building module path");
+
+        match module.parent {
+            Some(parent) => {
+                let parent_path = self.module_path(target_ref, parent);
+                let name = module
+                    .name
+                    .as_deref()
+                    .expect("non-root modules should have names");
+                format!("{parent_path}::{name}")
+            }
+            None => "crate".to_string(),
+        }
+    }
+
+    fn parse_path(text: &str) -> Path {
+        let (absolute, text) = match text.strip_prefix("::") {
+            Some(stripped) => (true, stripped),
+            None => (false, text),
+        };
+        let segments = text
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .map(|segment| match segment {
+                "self" => PathSegment::SelfKw,
+                "super" => PathSegment::SuperKw,
+                "crate" => PathSegment::CrateKw,
+                name => PathSegment::Name(name.to_string()),
+            })
+            .collect::<Vec<_>>();
+
+        Path { absolute, segments }
+    }
+
+    fn render_result(&self, result: &ResolvePathResult) -> String {
+        let mut resolved = result
+            .resolved
+            .iter()
+            .map(|def| {
+                ResolvedDefOrigin {
+                    project: self.project,
+                    def: *def,
+                }
+                .render()
+            })
+            .collect::<Vec<_>>();
+        resolved.sort();
+
+        let mut rendered = if resolved.is_empty() {
+            "<none>".to_string()
+        } else {
+            resolved.join("; ")
+        };
+
+        if let Some(unresolved_at) = result.unresolved_at {
+            rendered.push_str(&format!(" (unresolved at segment #{unresolved_at})"));
+        }
+
+        rendered
     }
 }
 
@@ -279,10 +471,34 @@ struct BindingOrigin<'a> {
 impl BindingOrigin<'_> {
     fn render(&self) -> String {
         let visibility = Self::visibility_prefix(self.binding_visibility);
+        let origin = ResolvedDefOrigin {
+            project: self.project,
+            def: self.def,
+        }
+        .render();
 
+        format!("{visibility}{origin}")
+    }
+
+    fn visibility_prefix(visibility: &VisibilityLevel) -> String {
+        match visibility {
+            VisibilityLevel::Private => String::new(),
+            _ => format!("{visibility} "),
+        }
+    }
+}
+
+/// Snapshot-only view of one resolved definition.
+struct ResolvedDefOrigin<'a> {
+    project: &'a Project,
+    def: DefId,
+}
+
+impl ResolvedDefOrigin<'_> {
+    fn render(&self) -> String {
         match self.def {
             DefId::Module(module_ref) => {
-                format!("{visibility}module {}", self.render_module_path(module_ref))
+                format!("module {}", self.render_module_path(module_ref))
             }
             DefId::Local(local_def_ref) => {
                 let local_def = self
@@ -298,10 +514,7 @@ impl BindingOrigin<'_> {
                     module: local_def.module,
                 });
 
-                format!(
-                    "{visibility}{} {}::{}",
-                    local_def.kind, module_path, local_def.name
-                )
+                format!("{} {}::{}", local_def.kind, module_path, local_def.name)
             }
         }
     }
@@ -344,13 +557,6 @@ impl BindingOrigin<'_> {
                 format!("{parent_path}::{name}")
             }
             None => "crate".to_string(),
-        }
-    }
-
-    fn visibility_prefix(visibility: &VisibilityLevel) -> String {
-        match visibility {
-            VisibilityLevel::Private => String::new(),
-            _ => format!("{visibility} "),
         }
     }
 }
