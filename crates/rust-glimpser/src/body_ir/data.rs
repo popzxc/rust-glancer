@@ -1,8 +1,8 @@
 use crate::{
     def_map::{DefId, ModuleRef, PackageSlot, TargetRef},
-    item_tree::TypeRef,
+    item_tree::{FieldKey, TypeRef},
     parse::{FileId, TargetId, span::Span},
-    semantic_ir::{FunctionId, FunctionRef, TypeDefRef},
+    semantic_ir::{FieldRef, FunctionId, FunctionRef, TypeDefRef},
 };
 
 use super::{
@@ -379,8 +379,8 @@ pub enum ExprKind {
     Field {
         base: Option<ExprId>,
         dot_span: Option<Span>,
-        field_name: String,
-        field_name_span: Option<Span>,
+        field: Option<FieldKey>,
+        field_span: Option<Span>,
     },
     Literal {
         text: String,
@@ -414,6 +414,7 @@ pub enum LiteralKind {
 pub enum BodyResolution {
     Local(BindingId),
     Item(Vec<DefId>),
+    Field(Vec<FieldRef>),
     #[default]
     Unknown,
 }

@@ -2,7 +2,7 @@ use crate::{
     body_ir::{BindingData, BindingId, BodyRef, ExprId},
     def_map::LocalDefKind,
     parse::{FileId, span::Span},
-    semantic_ir::FunctionRef,
+    semantic_ir::{FieldRef, FunctionRef},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +54,8 @@ pub(crate) enum NavigationTargetKind {
     Const,
     #[display("enum")]
     Enum,
+    #[display("field")]
+    Field,
     #[display("fn")]
     Function,
     #[display("macro")]
@@ -91,12 +93,21 @@ impl NavigationTargetKind {
 pub(crate) struct CompletionItem {
     pub(crate) label: String,
     pub(crate) kind: CompletionKind,
-    pub(crate) function: FunctionRef,
+    pub(crate) target: CompletionTarget,
+}
+
+/// Stable analysis identity behind one completion row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CompletionTarget {
+    Field(FieldRef),
+    Function(FunctionRef),
 }
 
 /// Completion source category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 pub(crate) enum CompletionKind {
+    #[display("field")]
+    Field,
     #[display("inherent_method")]
     InherentMethod,
     #[display("trait_method")]

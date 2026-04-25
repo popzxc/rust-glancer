@@ -5,7 +5,7 @@
 
 use crate::{
     def_map::{DefId, DefMapDb, Path, PathSegment},
-    item_tree::TypeRef,
+    item_tree::{FieldKey, TypeRef},
     semantic_ir::{FunctionRef, ImplRef, ItemId, ItemOwner, SemanticIrDb, TraitRef, TypeDefRef},
 };
 
@@ -88,10 +88,13 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
                     .map(|tail| self.body.exprs[tail.0].ty.clone())
                     .unwrap_or(BodyTy::Unit);
             }
-            ExprKind::Literal { .. }
-            | ExprKind::MethodCall { .. }
-            | ExprKind::Field { .. }
-            | ExprKind::Unknown { .. } => {}
+            ExprKind::Field { base, field, .. } => {
+                let (resolution, ty) = self.resolve_field_expr(base, field.as_ref());
+                let data = &mut self.body.exprs[expr.0];
+                data.resolution = resolution;
+                data.ty = ty;
+            }
+            ExprKind::Literal { .. } | ExprKind::MethodCall { .. } | ExprKind::Unknown { .. } => {}
         }
     }
 
@@ -115,6 +118,50 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         let result = self.def_map.resolve_path(self.body.owner_module, path);
         let ty = self.nominal_ty_from_defs(&result.resolved);
         (BodyResolution::Item(result.resolved), ty)
+    }
+
+    fn resolve_field_expr(
+        &self,
+        base: Option<ExprId>,
+        field: Option<&FieldKey>,
+    ) -> (BodyResolution, BodyTy) {
+        let (Some(base), Some(field)) = (base, field) else {
+            return (BodyResolution::Unknown, BodyTy::Unknown);
+        };
+
+        let mut fields = Vec::new();
+        let mut field_tys = Vec::new();
+
+        for ty in type_defs_from_body_ty(&self.body.exprs[base.0].ty) {
+            let Some(field_ref) = self.semantic_ir.field_for_type(ty, field) else {
+                continue;
+            };
+            push_unique(&mut fields, field_ref);
+
+            let Some(field_data) = self.semantic_ir.field_data(field_ref) else {
+                continue;
+            };
+            let field_ty = self.ty_from_type_ref_in_module(
+                &field_data.field.ty,
+                field_data.owner_module,
+                self.body.owner,
+            );
+            push_unique(&mut field_tys, field_ty);
+        }
+
+        let resolution = if fields.is_empty() {
+            BodyResolution::Unknown
+        } else {
+            BodyResolution::Field(fields)
+        };
+
+        let ty = if field_tys.len() == 1 {
+            field_tys.pop().expect("one field type should exist")
+        } else {
+            BodyTy::Unknown
+        };
+
+        (resolution, ty)
     }
 
     fn resolve_local_name(
@@ -340,6 +387,13 @@ fn path_from_type_ref(ty: &TypeRef) -> Option<Path> {
             })
             .collect(),
     })
+}
+
+fn type_defs_from_body_ty(ty: &BodyTy) -> Vec<TypeDefRef> {
+    match ty {
+        BodyTy::Nominal(types) | BodyTy::SelfTy(types) => types.clone(),
+        BodyTy::Unit | BodyTy::Never | BodyTy::Syntax(_) | BodyTy::Unknown => Vec::new(),
+    }
 }
 
 fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {

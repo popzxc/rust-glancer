@@ -11,7 +11,7 @@ use ra_syntax::{
 
 use crate::{
     def_map::{ModuleRef, PackageSlot, Path, PathSegment, TargetRef},
-    item_tree::{ItemTreeDb, ItemTreeRef, TypeRef},
+    item_tree::{FieldKey, ItemTreeDb, ItemTreeRef, TypeRef},
     parse::{
         FileId, ParseDb, TargetId,
         span::{LineIndex, Span},
@@ -556,14 +556,20 @@ impl<'a> FunctionBodyLowering<'a> {
         let dot_span = field
             .dot_token()
             .map(|dot| Span::from_text_range(dot.text_range(), self.line_index));
-        let name_ref = field.name_ref();
-        let field_name = name_ref
-            .as_ref()
-            .map(|name| name.syntax().text().to_string())
-            .unwrap_or_else(|| "<missing>".to_string());
-        let field_name_span = name_ref
-            .as_ref()
-            .map(|name| self.source(name.syntax()).span);
+        let (field_key, field_span) = if let Some(index) = field.index_token() {
+            (
+                index.text().parse::<usize>().ok().map(FieldKey::Tuple),
+                Some(Span::from_text_range(index.text_range(), self.line_index)),
+            )
+        } else if let Some(name) = field.name_ref() {
+            let field_key = name
+                .as_tuple_field()
+                .map(FieldKey::Tuple)
+                .unwrap_or_else(|| FieldKey::Named(name.syntax().text().to_string()));
+            (Some(field_key), Some(self.source(name.syntax()).span))
+        } else {
+            (None, None)
+        };
 
         self.alloc_expr(
             field.syntax(),
@@ -571,8 +577,8 @@ impl<'a> FunctionBodyLowering<'a> {
             ExprKind::Field {
                 base,
                 dot_span,
-                field_name,
-                field_name_span,
+                field: field_key,
+                field_span,
             },
         )
     }

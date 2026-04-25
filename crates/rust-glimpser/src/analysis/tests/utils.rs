@@ -257,7 +257,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             ExprKind::MethodCall { method_name, .. } => {
                 format!("method_call {method_name}")
             }
-            ExprKind::Field { field_name, .. } => format!("field {field_name}"),
+            ExprKind::Field { field, .. } => {
+                let field = field
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("field {field}")
+            }
             ExprKind::Literal { kind, text } => format!("literal {kind} {text}"),
             ExprKind::Unknown { text, .. } => format!("unknown {text}"),
         };

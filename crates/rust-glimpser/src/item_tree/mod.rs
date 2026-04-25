@@ -9,11 +9,11 @@ use anyhow::Context as _;
 use crate::parse::{FileId, ParseDb, TargetId};
 
 pub(crate) use self::item::{
-    ConstItem, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldList, FunctionItem,
-    GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag, ItemTreeId, ItemTreeRef,
-    ModuleItem, ModuleSource, Mutability, ParamKind, StaticItem, StructItem, TraitItem,
-    TypeAliasItem, TypeBound, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath,
-    UsePathSegment, VisibilityLevel,
+    ConstItem, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldKey, FieldList,
+    FunctionItem, GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag, ItemTreeId,
+    ItemTreeRef, ModuleItem, ModuleSource, Mutability, ParamKind, StaticItem, StructItem,
+    TraitItem, TypeAliasItem, TypeBound, TypeRef, UnionItem, UseImport, UseImportKind, UseItem,
+    UsePath, UsePathSegment, VisibilityLevel,
 };
 
 #[cfg(test)]

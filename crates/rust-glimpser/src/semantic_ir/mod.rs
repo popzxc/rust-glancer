@@ -8,7 +8,7 @@ mod tests;
 
 pub(crate) use self::{
     data::{FunctionData, SemanticIrDb},
-    ids::{FunctionId, FunctionRef, ImplRef, ItemId, ItemOwner, TraitRef, TypeDefRef},
+    ids::{FieldRef, FunctionId, FunctionRef, ImplRef, ItemId, ItemOwner, TraitRef, TypeDefRef},
 };
 
 #[cfg(test)]

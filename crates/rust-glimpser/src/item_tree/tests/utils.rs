@@ -373,7 +373,11 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                 "{}- {}field {}: {}",
                 "  ".repeat(depth),
                 visibility_prefix(&field.visibility),
-                field.name.as_deref().unwrap_or("<missing>"),
+                field
+                    .key
+                    .as_ref()
+                    .map(|key| key.declaration_label())
+                    .unwrap_or_else(|| "<missing>".to_string()),
                 field.ty,
             )
             .expect("string writes should not fail");

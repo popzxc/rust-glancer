@@ -11,7 +11,9 @@ use crate::{
         ids::{BindingId, BodyId, ExprId, StmtId},
     },
     def_map::{DefId, LocalDefRef, ModuleRef, TargetRef},
-    semantic_ir::{FunctionRef, ImplRef, ItemId, ItemOwner, TraitRef, TypeDefId, TypeDefRef},
+    semantic_ir::{
+        FieldRef, FunctionRef, ImplRef, ItemId, ItemOwner, TraitRef, TypeDefId, TypeDefRef,
+    },
     test_utils::{fixture_crate, snapshot},
 };
 
@@ -316,7 +318,13 @@ impl TargetBodyIrSnapshot<'_> {
             ExprKind::MethodCall { method_name, .. } => {
                 format!("method_call {method_name}")
             }
-            ExprKind::Field { field_name, .. } => format!("field {field_name}"),
+            ExprKind::Field { field, .. } => {
+                let field = field
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("field {field}")
+            }
             ExprKind::Literal { text, kind } => format!("literal {kind} `{text}`"),
             ExprKind::Unknown { text, .. } => format!("unknown `{text}`"),
         }
@@ -333,6 +341,14 @@ impl TargetBodyIrSnapshot<'_> {
                     .collect::<Vec<_>>();
                 defs.sort();
                 format!(" -> item {}", defs.join(" | "))
+            }
+            BodyResolution::Field(fields) => {
+                let mut fields = fields
+                    .iter()
+                    .map(|field| self.render_field_ref(*field))
+                    .collect::<Vec<_>>();
+                fields.sort();
+                format!(" -> {}", fields.join(" | "))
             }
             BodyResolution::Unknown => String::new(),
         }
@@ -497,6 +513,25 @@ impl TargetBodyIrSnapshot<'_> {
                 )
             }
         }
+    }
+
+    fn render_field_ref(&self, field_ref: FieldRef) -> String {
+        let data = self
+            .project
+            .semantic_ir_db()
+            .field_data(field_ref)
+            .expect("field ref should exist while rendering body IR");
+        let name = data
+            .field
+            .key
+            .as_ref()
+            .map(|key| key.declaration_label())
+            .unwrap_or_else(|| "<missing>".to_string());
+
+        format!(
+            "field {}::{name}",
+            self.render_type_def_ref(field_ref.owner)
+        )
     }
 
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {

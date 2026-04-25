@@ -176,7 +176,7 @@ impl<'db> PackageLowering<'db> {
                 item.syntax().text_range(),
             )),
             ast::Item::Enum(item) => Some(builder.alloc_item(
-                ItemKind::Enum(Box::new(EnumItem::from_ast(&item))),
+                ItemKind::Enum(Box::new(EnumItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
@@ -250,7 +250,7 @@ impl<'db> PackageLowering<'db> {
                 item.syntax().text_range(),
             )),
             ast::Item::Struct(item) => Some(builder.alloc_item(
-                ItemKind::Struct(Box::new(StructItem::from_ast(&item))),
+                ItemKind::Struct(Box::new(StructItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),
@@ -273,7 +273,7 @@ impl<'db> PackageLowering<'db> {
                 item.syntax().text_range(),
             )),
             ast::Item::Union(item) => Some(builder.alloc_item(
-                ItemKind::Union(Box::new(UnionItem::from_ast(&item))),
+                ItemKind::Union(Box::new(UnionItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 VisibilityLevel::from_ast(item.visibility()),
                 item.syntax().text_range(),

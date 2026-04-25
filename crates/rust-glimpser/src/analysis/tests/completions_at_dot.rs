@@ -169,3 +169,94 @@ pub fn use_it(user: User) {
         "#]],
     );
 }
+
+#[test]
+fn completes_methods_after_field_receiver() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_field_receiver_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Profile;
+
+impl Profile {
+    pub fn display(&self) {}
+}
+
+pub struct User {
+    pub profile: Profile,
+}
+
+pub fn use_it(user: User) {
+    user.profile.$0;
+}
+"#,
+        &[AnalysisQuery::complete("field receiver completions", "0")],
+        expect![[r#"
+            field receiver completions
+            - inherent_method display
+        "#]],
+    );
+}
+
+#[test]
+fn completes_fields_at_dot() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_field_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Profile;
+
+pub struct User {
+    pub profile: Profile,
+}
+
+pub fn use_it(user: User) {
+    user.$0;
+}
+"#,
+        &[AnalysisQuery::complete("field completions", "0")],
+        expect![[r#"
+            field completions
+            - field profile
+        "#]],
+    );
+}
+
+#[test]
+fn completes_tuple_fields_at_dot() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_tuple_field_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Left;
+pub struct Right;
+
+pub struct Pair(pub Left, pub Right);
+
+pub fn use_it(pair: Pair) {
+    pair.$0;
+}
+"#,
+        &[AnalysisQuery::complete("tuple field completions", "0")],
+        expect![[r#"
+            tuple field completions
+            - field 0
+            - field 1
+        "#]],
+    );
+}

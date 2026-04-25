@@ -142,7 +142,7 @@ impl User {
                       expr e5 path id -> local v1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 15:39-15:41
               stmt s3 let v5 @ 16:9-16:29
                 initializer
-                  expr e8 field id => <unknown> @ 16:21-16:28
+                  expr e8 field id -> field struct body_expr_fixture[lib]::crate::User::id => nominal struct body_expr_fixture[lib]::crate::UserId @ 16:21-16:28
                     base
                       expr e7 path self -> local v0 => Self struct body_expr_fixture[lib]::crate::User @ 16:21-16:25
               tail
@@ -236,6 +236,46 @@ pub fn destructure(
                   expr e3 path borrowed -> local v4 => syntax &(UserId, UserId) @ 17:44-17:52
               tail
                 expr e4 path left -> local v6 => <unknown> @ 18:5-18:9
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_tuple_field_accesses() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_tuple_field_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Left;
+pub struct Right;
+
+pub struct Pair(pub Left, pub Right);
+
+pub fn use_it(pair: Pair) -> Right {
+    pair.1
+}
+"#,
+        expect![[r#"
+            package body_tuple_field_fixture
+
+            body_tuple_field_fixture [lib]
+            body b0 fn body_tuple_field_fixture[lib]::crate::use_it @ 6:1-8:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param pair `pair`: Pair => nominal struct body_tuple_field_fixture[lib]::crate::Pair @ 6:15-6:19
+            body
+            expr e2 block s1 => nominal struct body_tuple_field_fixture[lib]::crate::Right @ 6:36-8:2
+              tail
+                expr e1 field 1 -> field struct body_tuple_field_fixture[lib]::crate::Pair::#1 => nominal struct body_tuple_field_fixture[lib]::crate::Right @ 7:5-7:11
+                  base
+                    expr e0 path pair -> local v0 => nominal struct body_tuple_field_fixture[lib]::crate::Pair @ 7:5-7:9
         "#]],
     );
 }

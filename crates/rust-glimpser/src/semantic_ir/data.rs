@@ -3,17 +3,17 @@ use crate::{
         DefMapDb, LocalDefId, LocalDefRef, LocalImplRef, ModuleRef, PackageSlot, Path, TargetRef,
     },
     item_tree::{
-        ConstItem, FieldList, FunctionItem, GenericParams, ItemTreeRef, Mutability, TypeAliasItem,
-        TypeBound, TypeRef, VisibilityLevel,
+        ConstItem, FieldItem, FieldKey, FieldList, FunctionItem, GenericParams, ItemTreeRef,
+        Mutability, TypeAliasItem, TypeBound, TypeRef, VisibilityLevel,
     },
-    parse::TargetId,
+    parse::{FileId, TargetId},
 };
 
 use super::{
     ids::{
-        AssocItemId, ConstId, EnumId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, ItemOwner,
-        StaticId, StructId, TraitId, TraitImplRef, TraitRef, TypeAliasId, TypeDefId, TypeDefRef,
-        UnionId,
+        AssocItemId, ConstId, EnumId, FieldRef, FunctionId, FunctionRef, ImplId, ImplRef, ItemId,
+        ItemOwner, StaticId, StructId, TraitId, TraitImplRef, TraitRef, TypeAliasId, TypeDefId,
+        TypeDefRef, UnionId,
     },
     lower, resolution,
 };
@@ -142,6 +142,59 @@ impl SemanticIrDb {
             .function_data(function_ref.id)
     }
 
+    pub(crate) fn fields_for_type(&self, ty: TypeDefRef) -> Vec<FieldRef> {
+        let Some(field_count) = self.field_count_for_type(ty) else {
+            return Vec::new();
+        };
+
+        (0..field_count)
+            .map(|index| FieldRef { owner: ty, index })
+            .collect()
+    }
+
+    pub(crate) fn field_for_type(&self, ty: TypeDefRef, key: &FieldKey) -> Option<FieldRef> {
+        match key {
+            FieldKey::Named(_) => self.fields_for_type(ty).into_iter().find(|field_ref| {
+                self.field_data(*field_ref)
+                    .is_some_and(|data| data.field.key.as_ref() == Some(key))
+            }),
+            FieldKey::Tuple(index) => {
+                let field_ref = FieldRef {
+                    owner: ty,
+                    index: *index,
+                };
+                self.field_data(field_ref)
+                    .is_some_and(|data| data.field.key.as_ref() == Some(key))
+                    .then_some(field_ref)
+            }
+        }
+    }
+
+    pub(crate) fn field_data(&self, field_ref: FieldRef) -> Option<FieldData<'_>> {
+        let target_ir = self.target_ir(field_ref.owner.target)?;
+        match field_ref.owner.id {
+            TypeDefId::Struct(id) => {
+                let data = target_ir.items().struct_data(id)?;
+                let field = data.fields.fields().get(field_ref.index)?;
+                Some(FieldData {
+                    owner_module: data.owner,
+                    file_id: data.source.file_id,
+                    field,
+                })
+            }
+            TypeDefId::Union(id) => {
+                let data = target_ir.items().union_data(id)?;
+                let field = data.fields.get(field_ref.index)?;
+                Some(FieldData {
+                    owner_module: data.owner,
+                    file_id: data.source.file_id,
+                    field,
+                })
+            }
+            TypeDefId::Enum(_) => None,
+        }
+    }
+
     pub(crate) fn impls_for_type(&self, ty: TypeDefRef) -> Vec<ImplRef> {
         self.impl_refs()
             .into_iter()
@@ -265,6 +318,15 @@ impl SemanticIrDb {
 
         functions
     }
+
+    fn field_count_for_type(&self, ty: TypeDefRef) -> Option<usize> {
+        let target_ir = self.target_ir(ty.target)?;
+        match ty.id {
+            TypeDefId::Struct(id) => Some(target_ir.items().struct_data(id)?.fields.fields().len()),
+            TypeDefId::Union(id) => Some(target_ir.items().union_data(id)?.fields.len()),
+            TypeDefId::Enum(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -279,6 +341,13 @@ pub(crate) struct SemanticIrStats {
     pub(crate) type_alias_count: usize,
     pub(crate) const_count: usize,
     pub(crate) static_count: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FieldData<'a> {
+    pub(crate) owner_module: ModuleRef,
+    pub(crate) file_id: FileId,
+    pub(crate) field: &'a FieldItem,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

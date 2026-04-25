@@ -5,6 +5,8 @@ use ra_syntax::{
     ast::{self, HasGenericParams, HasName, HasTypeBounds, HasVisibility},
 };
 
+use crate::parse::span::{LineIndex, Span};
+
 use super::{ItemTreeId, Mutability, TypeBound, TypeRef, VisibilityLevel, normalized_syntax};
 
 /// Generic parameter data attached to an item declaration.
@@ -280,10 +282,10 @@ pub struct StructItem {
 }
 
 impl StructItem {
-    pub(crate) fn from_ast(item: &ast::Struct) -> Self {
+    pub(crate) fn from_ast(item: &ast::Struct, line_index: &LineIndex) -> Self {
         Self {
             generics: GenericParams::from_ast(item),
-            fields: FieldList::from_ast(item.field_list()),
+            fields: FieldList::from_ast(item.field_list(), line_index),
         }
     }
 }
@@ -295,12 +297,12 @@ pub struct UnionItem {
 }
 
 impl UnionItem {
-    pub(crate) fn from_ast(item: &ast::Union) -> Self {
+    pub(crate) fn from_ast(item: &ast::Union, line_index: &LineIndex) -> Self {
         Self {
             generics: GenericParams::from_ast(item),
             fields: item
                 .record_field_list()
-                .map(FieldItem::record_list_from_ast)
+                .map(|fields| FieldItem::record_list_from_ast(fields, line_index))
                 .unwrap_or_default(),
         }
     }
@@ -313,7 +315,7 @@ pub struct EnumItem {
 }
 
 impl EnumItem {
-    pub(crate) fn from_ast(item: &ast::Enum) -> Self {
+    pub(crate) fn from_ast(item: &ast::Enum, line_index: &LineIndex) -> Self {
         Self {
             generics: GenericParams::from_ast(item),
             variants: item
@@ -321,7 +323,7 @@ impl EnumItem {
                 .map(|variant_list| {
                     variant_list
                         .variants()
-                        .map(EnumVariantItem::from_ast)
+                        .map(|variant| EnumVariantItem::from_ast(variant, line_index))
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -336,13 +338,13 @@ pub struct EnumVariantItem {
 }
 
 impl EnumVariantItem {
-    fn from_ast(variant: ast::Variant) -> Self {
+    fn from_ast(variant: ast::Variant, line_index: &LineIndex) -> Self {
         Self {
             name: variant
                 .name()
                 .map(|name| name.text().to_string())
                 .unwrap_or_else(|| "<missing>".to_string()),
-            fields: FieldList::from_ast(variant.field_list()),
+            fields: FieldList::from_ast(variant.field_list(), line_index),
         }
     }
 }
@@ -355,51 +357,94 @@ pub enum FieldList {
 }
 
 impl FieldList {
-    pub(crate) fn from_ast(field_list: Option<ast::FieldList>) -> Self {
+    pub(crate) fn from_ast(field_list: Option<ast::FieldList>, line_index: &LineIndex) -> Self {
         match field_list {
             Some(ast::FieldList::RecordFieldList(fields)) => {
-                Self::Named(FieldItem::record_list_from_ast(fields))
+                Self::Named(FieldItem::record_list_from_ast(fields, line_index))
             }
             Some(ast::FieldList::TupleFieldList(fields)) => {
-                Self::Tuple(FieldItem::tuple_list_from_ast(fields))
+                Self::Tuple(FieldItem::tuple_list_from_ast(fields, line_index))
             }
             None => Self::Unit,
+        }
+    }
+
+    pub(crate) fn fields(&self) -> &[FieldItem] {
+        match self {
+            Self::Named(fields) | Self::Tuple(fields) => fields,
+            Self::Unit => &[],
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldItem {
-    pub name: Option<String>,
+    pub key: Option<FieldKey>,
     pub visibility: VisibilityLevel,
     pub ty: TypeRef,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FieldKey {
+    Named(String),
+    Tuple(usize),
+}
+
+impl FieldKey {
+    pub(crate) fn declaration_label(&self) -> String {
+        match self {
+            Self::Named(name) => name.clone(),
+            Self::Tuple(index) => format!("#{index}"),
+        }
+    }
+}
+
+impl fmt::Display for FieldKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Named(name) => write!(f, "{name}"),
+            Self::Tuple(index) => write!(f, "{index}"),
+        }
+    }
 }
 
 impl FieldItem {
-    fn record_list_from_ast(fields: ast::RecordFieldList) -> Vec<Self> {
+    fn record_list_from_ast(fields: ast::RecordFieldList, line_index: &LineIndex) -> Vec<Self> {
         fields
             .fields()
-            .map(|field| Self {
-                name: field.name().map(|name| name.text().to_string()),
-                visibility: VisibilityLevel::from_ast(field.visibility()),
-                ty: field
-                    .ty()
-                    .map(TypeRef::from_ast)
-                    .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
+            .map(|field| {
+                let name = field.name();
+                let span = name
+                    .as_ref()
+                    .map(|name| name.syntax().text_range())
+                    .unwrap_or_else(|| field.syntax().text_range());
+
+                Self {
+                    key: name.map(|name| FieldKey::Named(name.text().to_string())),
+                    visibility: VisibilityLevel::from_ast(field.visibility()),
+                    ty: field
+                        .ty()
+                        .map(TypeRef::from_ast)
+                        .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
+                    span: Span::from_text_range(span, line_index),
+                }
             })
             .collect()
     }
 
-    fn tuple_list_from_ast(fields: ast::TupleFieldList) -> Vec<Self> {
+    fn tuple_list_from_ast(fields: ast::TupleFieldList, line_index: &LineIndex) -> Vec<Self> {
         fields
             .fields()
-            .map(|field| Self {
-                name: None,
+            .enumerate()
+            .map(|(index, field)| Self {
+                key: Some(FieldKey::Tuple(index)),
                 visibility: VisibilityLevel::from_ast(field.visibility()),
                 ty: field
                     .ty()
                     .map(TypeRef::from_ast)
                     .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
+                span: Span::from_text_range(field.syntax().text_range(), line_index),
             })
             .collect()
     }

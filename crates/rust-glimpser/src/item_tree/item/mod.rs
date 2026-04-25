@@ -7,8 +7,9 @@ use crate::parse::{
 
 pub(crate) use self::{
     decl::{
-        ConstItem, EnumItem, EnumVariantItem, FieldItem, FieldList, FunctionItem, GenericParams,
-        ImplItem, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem, UnionItem,
+        ConstItem, EnumItem, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,
+        GenericParams, ImplItem, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
+        UnionItem,
     },
     import::{
         ExternCrateItem, ImportAlias, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,

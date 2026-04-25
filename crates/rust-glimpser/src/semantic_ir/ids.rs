@@ -59,6 +59,12 @@ pub struct FunctionRef {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FieldRef {
+    pub owner: TypeDefRef,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TraitImplRef {
     pub impl_ref: ImplRef,
     pub trait_ref: TraitRef,

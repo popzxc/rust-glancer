@@ -10,7 +10,7 @@ use crate::{
     def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef, TargetRef},
     item_tree::ParamKind,
     parse::{FileId, span::Span},
-    semantic_ir::{FunctionData, FunctionRef, TypeDefRef},
+    semantic_ir::{FieldRef, FunctionData, FunctionRef, TypeDefRef},
 };
 
 mod data;
@@ -20,7 +20,8 @@ mod tests;
 
 use self::data::SourceNodeAt;
 pub(crate) use self::data::{
-    CompletionItem, CompletionKind, NavigationTarget, NavigationTargetKind, SymbolAt,
+    CompletionItem, CompletionKind, CompletionTarget, NavigationTarget, NavigationTargetKind,
+    SymbolAt,
 };
 
 /// High-level query API over the frozen project analysis.
@@ -98,7 +99,7 @@ impl<'a> Analysis<'a> {
         }
     }
 
-    /// Returns method-like completion candidates for a receiver before a dot.
+    /// Returns field and method completion candidates for a receiver before a dot.
     pub(crate) fn completions_at_dot(
         &self,
         target: TargetRef,
@@ -117,7 +118,7 @@ impl<'a> Analysis<'a> {
 
         let mut completions = Vec::new();
         for ty in type_defs_from_body_ty(&receiver_data.ty) {
-            self.push_type_function_completions(ty, &mut completions);
+            self.push_type_completions(ty, &mut completions);
         }
         completions.sort_by(|left, right| {
             left.label
@@ -264,6 +265,10 @@ impl<'a> Analysis<'a> {
                 .iter()
                 .filter_map(|def| self.navigation_target_for_def(*def))
                 .collect(),
+            BodyResolution::Field(fields) => fields
+                .iter()
+                .filter_map(|field| self.navigation_target_for_field(*field))
+                .collect(),
             BodyResolution::Unknown => Vec::new(),
         }
     }
@@ -318,11 +323,22 @@ impl<'a> Analysis<'a> {
         })
     }
 
-    fn push_type_function_completions(
-        &self,
-        ty: TypeDefRef,
-        completions: &mut Vec<CompletionItem>,
-    ) {
+    fn navigation_target_for_field(&self, field_ref: FieldRef) -> Option<NavigationTarget> {
+        let field_data = self.project.semantic_ir_db().field_data(field_ref)?;
+        let key = field_data.field.key.as_ref()?;
+        Some(NavigationTarget {
+            kind: NavigationTargetKind::Field,
+            name: key.declaration_label(),
+            file_id: field_data.file_id,
+            span: Some(field_data.field.span),
+        })
+    }
+
+    fn push_type_completions(&self, ty: TypeDefRef, completions: &mut Vec<CompletionItem>) {
+        for field in self.project.semantic_ir_db().fields_for_type(ty) {
+            self.push_field_completion(field, completions);
+        }
+
         for function in self
             .project
             .semantic_ir_db()
@@ -334,6 +350,28 @@ impl<'a> Analysis<'a> {
         for function in self.project.semantic_ir_db().trait_functions_for_type(ty) {
             self.push_function_completion(function, CompletionKind::TraitMethod, completions);
         }
+    }
+
+    fn push_field_completion(&self, field: FieldRef, completions: &mut Vec<CompletionItem>) {
+        let Some(data) = self.project.semantic_ir_db().field_data(field) else {
+            return;
+        };
+        let Some(key) = data.field.key.as_ref() else {
+            return;
+        };
+        let target = CompletionTarget::Field(field);
+        if completions
+            .iter()
+            .any(|completion| completion.target == target)
+        {
+            return;
+        }
+
+        completions.push(CompletionItem {
+            label: key.to_string(),
+            kind: CompletionKind::Field,
+            target,
+        });
     }
 
     fn push_function_completion(
@@ -350,7 +388,7 @@ impl<'a> Analysis<'a> {
         }
         if completions
             .iter()
-            .any(|completion| completion.function == function)
+            .any(|completion| completion.target == CompletionTarget::Function(function))
         {
             return;
         }
@@ -358,7 +396,7 @@ impl<'a> Analysis<'a> {
         completions.push(CompletionItem {
             label: data.name.clone(),
             kind,
-            function,
+            target: CompletionTarget::Function(function),
         });
     }
 }
@@ -415,9 +453,7 @@ fn member_name_span(expr: &ExprData) -> Option<Span> {
         ExprKind::MethodCall {
             method_name_span, ..
         } => *method_name_span,
-        ExprKind::Field {
-            field_name_span, ..
-        } => *field_name_span,
+        ExprKind::Field { field_span, .. } => *field_span,
         _ => None,
     }
 }
