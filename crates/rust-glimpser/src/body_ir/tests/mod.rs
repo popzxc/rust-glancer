@@ -1,0 +1,169 @@
+mod utils;
+
+use expect_test::expect;
+
+use self::utils::check_project_body_ir;
+
+#[test]
+fn lowers_scopes_and_resolves_local_bindings() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_scope_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct UserId(u64);
+
+pub fn choose(id: UserId) -> UserId {
+    let copied: UserId = id;
+    let shadow: UserId = {
+        let id: UserId = copied;
+        id
+    };
+    shadow
+}
+"#,
+        expect![[r#"
+            package body_scope_fixture
+
+            body_scope_fixture [lib]
+            body b0 fn body_scope_fixture[lib]::crate::choose @ 3:1-10:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v3
+            - s2 parent s1: v2
+            bindings
+            - v0 param id `id`: UserId => nominal struct body_scope_fixture[lib]::crate::UserId @ 3:15-3:25
+            - v1 let copied `copied`: UserId => nominal struct body_scope_fixture[lib]::crate::UserId @ 4:9-4:15
+            - v2 let id `id`: UserId => nominal struct body_scope_fixture[lib]::crate::UserId @ 6:13-6:15
+            - v3 let shadow `shadow`: UserId => nominal struct body_scope_fixture[lib]::crate::UserId @ 5:9-5:15
+            body
+            expr e5 block s1 => nominal struct body_scope_fixture[lib]::crate::UserId @ 3:37-10:2
+              stmt s0 let v1: UserId @ 4:5-4:29
+                initializer
+                  expr e0 path id -> local v0 => nominal struct body_scope_fixture[lib]::crate::UserId @ 4:26-4:28
+              stmt s2 let v3: UserId @ 5:5-8:7
+                initializer
+                  expr e3 block s2 => nominal struct body_scope_fixture[lib]::crate::UserId @ 5:26-8:6
+                    stmt s1 let v2: UserId @ 6:9-6:33
+                      initializer
+                        expr e1 path copied -> local v1 => nominal struct body_scope_fixture[lib]::crate::UserId @ 6:26-6:32
+                    tail
+                      expr e2 path id -> local v2 => nominal struct body_scope_fixture[lib]::crate::UserId @ 7:9-7:11
+              tail
+                expr e4 path shadow -> local v3 => nominal struct body_scope_fixture[lib]::crate::UserId @ 9:5-9:11
+        "#]],
+    );
+}
+
+#[test]
+fn records_calls_fields_methods_and_easy_types() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_expr_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct UserId(u64);
+
+pub struct User {
+    pub id: UserId,
+}
+
+pub fn identity(id: UserId) -> UserId {
+    id
+}
+
+impl User {
+    pub fn id(&self, id: UserId) -> UserId {
+        let this: Self = self;
+        let built: UserId = UserId(1);
+        let via_fn: UserId = identity(id);
+        let field = self.id;
+        self.touch(via_fn)
+    }
+
+    fn touch(&self, id: UserId) -> UserId {
+        id
+    }
+}
+"#,
+        expect![[r#"
+            package body_expr_fixture
+
+            body_expr_fixture [lib]
+            body b0 fn body_expr_fixture[lib]::crate::identity @ 7:1-9:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 7:17-7:27
+            body
+            expr e1 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 7:39-9:2
+              tail
+                expr e0 path id -> local v0 => nominal struct body_expr_fixture[lib]::crate::UserId @ 8:5-8:7
+
+
+            body b1 fn impl User::id @ 12:5-18:6
+            scopes
+            - s0 parent <none>: v0, v1
+            - s1 parent s0: v2, v3, v4, v5
+            bindings
+            - v0 self_param self `&self` => Self struct body_expr_fixture[lib]::crate::User @ 12:15-12:20
+            - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 12:22-12:32
+            - v2 let this `this`: Self => Self struct body_expr_fixture[lib]::crate::User @ 13:13-13:17
+            - v3 let built `built`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:13-14:18
+            - v4 let via_fn `via_fn`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 15:13-15:19
+            - v5 let field `field` => <unknown> @ 16:13-16:18
+            body
+            expr e12 block s1 => <unknown> @ 12:44-18:6
+              stmt s0 let v2: Self @ 13:9-13:31
+                initializer
+                  expr e0 path self -> local v0 => Self struct body_expr_fixture[lib]::crate::User @ 13:26-13:30
+              stmt s1 let v3: UserId @ 14:9-14:39
+                initializer
+                  expr e3 call => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:38
+                    callee
+                      expr e1 path UserId -> item struct body_expr_fixture[lib]::crate::UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:35
+                    arg
+                      expr e2 literal int `1` => <unknown> @ 14:36-14:37
+              stmt s2 let v4: UserId @ 15:9-15:43
+                initializer
+                  expr e6 call => nominal struct body_expr_fixture[lib]::crate::UserId @ 15:30-15:42
+                    callee
+                      expr e4 path identity -> item fn body_expr_fixture[lib]::crate::identity => <unknown> @ 15:30-15:38
+                    arg
+                      expr e5 path id -> local v1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 15:39-15:41
+              stmt s3 let v5 @ 16:9-16:29
+                initializer
+                  expr e8 field id => <unknown> @ 16:21-16:28
+                    base
+                      expr e7 path self -> local v0 => Self struct body_expr_fixture[lib]::crate::User @ 16:21-16:25
+              tail
+                expr e11 method_call touch => <unknown> @ 17:9-17:27
+                  receiver
+                    expr e9 path self -> local v0 => Self struct body_expr_fixture[lib]::crate::User @ 17:9-17:13
+                  arg
+                    expr e10 path via_fn -> local v4 => nominal struct body_expr_fixture[lib]::crate::UserId @ 17:20-17:26
+
+
+            body b2 fn impl User::touch @ 20:5-22:6
+            scopes
+            - s0 parent <none>: v0, v1
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&self` => Self struct body_expr_fixture[lib]::crate::User @ 20:14-20:19
+            - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:21-20:31
+            body
+            expr e1 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:43-22:6
+              tail
+                expr e0 path id -> local v1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 21:9-21:11
+        "#]],
+    );
+}

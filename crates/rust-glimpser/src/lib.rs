@@ -2,6 +2,7 @@
 use anyhow::Context as _;
 use std::path::PathBuf;
 
+pub(crate) mod body_ir;
 pub(crate) mod def_map;
 pub(crate) mod item_tree;
 pub(crate) mod parse;

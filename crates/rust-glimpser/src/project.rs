@@ -3,6 +3,7 @@ use std::fmt;
 use anyhow::Context as _;
 
 use crate::{
+    body_ir::BodyIrDb,
     def_map::DefMapDb,
     item_tree::{FileTree, ItemKind, ItemNode, ItemTreeDb, ModuleSource},
     parse::{self, ParseDb},
@@ -18,6 +19,7 @@ pub struct Project {
     item_tree: ItemTreeDb,
     def_map: DefMapDb,
     semantic_ir: SemanticIrDb,
+    body_ir: BodyIrDb,
 }
 
 impl Project {
@@ -30,6 +32,8 @@ impl Project {
             .context("while attempting to build def map db")?;
         let semantic_ir = SemanticIrDb::build(&item_tree, &def_map)
             .context("while attempting to build semantic ir db")?;
+        let body_ir = BodyIrDb::build(&parse, &item_tree, &def_map, &semantic_ir)
+            .context("while attempting to build body ir db")?;
 
         Ok(Self {
             workspace,
@@ -37,6 +41,7 @@ impl Project {
             item_tree,
             def_map,
             semantic_ir,
+            body_ir,
         })
     }
 
@@ -58,6 +63,11 @@ impl Project {
     /// Returns the semantic IR database built for this project.
     pub(crate) fn semantic_ir_db(&self) -> &SemanticIrDb {
         &self.semantic_ir
+    }
+
+    /// Returns the body IR database built for this project.
+    pub(crate) fn body_ir_db(&self) -> &BodyIrDb {
+        &self.body_ir
     }
 
     fn fmt_item(
@@ -146,6 +156,18 @@ impl fmt::Display for Project {
             semantic_ir_stats.type_alias_count,
             semantic_ir_stats.const_count,
             semantic_ir_stats.static_count,
+        )?;
+
+        let body_ir_stats = self.body_ir_db().stats();
+        writeln!(
+            f,
+            "BodyIR {} targets (bodies: {}, scopes: {}, bindings: {}, stmts: {}, exprs: {})",
+            body_ir_stats.target_count,
+            body_ir_stats.body_count,
+            body_ir_stats.scope_count,
+            body_ir_stats.binding_count,
+            body_ir_stats.statement_count,
+            body_ir_stats.expression_count,
         )?;
 
         for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
