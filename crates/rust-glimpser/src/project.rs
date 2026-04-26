@@ -74,12 +74,7 @@ impl Project {
     /// Returns the high-level query API for this frozen project analysis.
     #[allow(dead_code)]
     pub(crate) fn analysis(&self) -> Analysis<'_> {
-        Analysis::new(
-            self.item_tree_db(),
-            self.def_map_db(),
-            self.semantic_ir_db(),
-            self.body_ir_db(),
-        )
+        Analysis::new(self.def_map_db(), self.semantic_ir_db(), self.body_ir_db())
     }
 
     fn fmt_item(

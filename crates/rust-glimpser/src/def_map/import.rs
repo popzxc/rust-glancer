@@ -1,6 +1,9 @@
 use std::fmt;
 
-use crate::item_tree::{ImportAlias, ItemTreeRef, UseImportKind, UsePath, VisibilityLevel};
+use crate::{
+    item_tree::{ImportAlias, ItemTreeRef, UseImportKind, UsePath, VisibilityLevel},
+    parse::span::Span,
+};
 
 use super::{ModuleId, Path, PathSegment, path::last_segment_name};
 
@@ -11,7 +14,9 @@ pub struct ImportData {
     pub visibility: VisibilityLevel,
     pub kind: ImportKind,
     pub path: ImportPath,
+    pub source_path: ImportSourcePath,
     pub binding: ImportBinding,
+    pub alias_span: Option<Span>,
     pub source: ItemTreeRef,
     pub import_index: usize,
 }
@@ -95,6 +100,56 @@ impl ImportPath {
     pub(super) fn last_name(&self) -> Option<String> {
         last_segment_name(&self.segments)
     }
+}
+
+/// Import path plus source spans for each segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportSourcePath {
+    absolute: bool,
+    segments: Vec<ImportSourcePathSegment>,
+}
+
+impl ImportSourcePath {
+    pub(super) fn from_use_path(path: &UsePath) -> Self {
+        let def_map_path = Path::from_use_path(path);
+        let segments = def_map_path
+            .segments
+            .into_iter()
+            .zip(path.segments.iter())
+            .map(|(segment, source_segment)| ImportSourcePathSegment {
+                segment,
+                span: source_segment.span,
+            })
+            .collect();
+
+        Self {
+            absolute: path.absolute,
+            segments,
+        }
+    }
+
+    pub(crate) fn segments(&self) -> &[ImportSourcePathSegment] {
+        &self.segments
+    }
+
+    pub(crate) fn prefix_path(&self, segment_idx: usize) -> Path {
+        Path {
+            absolute: self.absolute,
+            segments: self
+                .segments
+                .iter()
+                .take(segment_idx + 1)
+                .map(|segment| segment.segment.clone())
+                .collect(),
+        }
+    }
+}
+
+/// One source-spanned import path segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportSourcePathSegment {
+    segment: PathSegment,
+    pub span: Span,
 }
 
 impl From<&ImportPath> for Path {

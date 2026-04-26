@@ -1,10 +1,13 @@
 mod collect;
+mod cursor;
 mod data;
 mod ids;
 mod import;
 mod path;
 mod path_resolution;
 mod resolve;
+
+pub(crate) use self::cursor::DefMapCursorCandidate;
 
 pub use self::{
     data::{
@@ -15,7 +18,7 @@ pub use self::{
         DefId, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
         ModuleRef, PackageSlot, TargetRef,
     },
-    import::{ImportBinding, ImportData, ImportKind, ImportPath},
+    import::{ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath},
     path::{Path, PathSegment},
     path_resolution::ResolvePathResult,
 };

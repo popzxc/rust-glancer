@@ -9,7 +9,7 @@ mod tests;
 
 pub(crate) use self::{
     cursor::SemanticCursorCandidate,
-    data::{FunctionData, SemanticIrDb},
+    data::SemanticIrDb,
     ids::{FieldRef, FunctionId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef},
     resolution::{SemanticTypePathResolution, TypePathContext},
 };

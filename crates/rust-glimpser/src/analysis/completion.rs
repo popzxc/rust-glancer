@@ -1,8 +1,7 @@
 use crate::{
     def_map::TargetRef,
-    item_tree::ParamKind,
     parse::FileId,
-    semantic_ir::{FieldRef, FunctionData, FunctionRef, TypeDefRef},
+    semantic_ir::{FieldRef, FunctionRef, TypeDefRef},
 };
 
 use super::{
@@ -85,7 +84,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         let Some(data) = self.0.semantic_ir.function_data(function) else {
             return;
         };
-        if !function_has_self_receiver(data) {
+        if !data.has_self_receiver() {
             return;
         }
         if completions
@@ -101,11 +100,4 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
             target: CompletionTarget::Function(function),
         });
     }
-}
-
-fn function_has_self_receiver(data: &FunctionData) -> bool {
-    data.declaration
-        .params
-        .first()
-        .is_some_and(|param| matches!(param.kind, ParamKind::SelfParam))
 }

@@ -8,7 +8,8 @@ use crate::{
     item_tree::{FieldKey, TypeRef},
     parse::TargetId,
     semantic_ir::{
-        FunctionRef, SemanticIrDb, SemanticTypePathResolution, TypeDefRef, TypePathContext,
+        FieldRef, FunctionRef, SemanticIrDb, SemanticTypePathResolution, TypeDefRef,
+        TypePathContext,
     },
 };
 
@@ -62,6 +63,21 @@ pub(super) fn resolve_type_path_in_scope(
         body,
     }
     .resolve_in_scope(scope, path)
+}
+
+pub(super) fn ty_for_field(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    field_ref: FieldRef,
+) -> Option<BodyTy> {
+    let field_data = semantic_ir.field_data(field_ref)?;
+    Some(ty_from_type_ref_in_context(
+        def_map,
+        semantic_ir,
+        &field_data.field.ty,
+        TypePathContext::module(field_data.owner_module),
+        BodyTy::Unknown,
+    ))
 }
 
 struct BodyResolver<'db, 'body> {
@@ -342,15 +358,7 @@ impl BodyTypePathResolver<'_, '_> {
     }
 
     fn resolve_in_context(&self, context: TypePathContext, path: &Path) -> BodyTypePathResolution {
-        match self
-            .semantic_ir
-            .resolve_type_path(self.def_map, context, path)
-        {
-            SemanticTypePathResolution::SelfType(types) => BodyTypePathResolution::SelfType(types),
-            SemanticTypePathResolution::TypeDefs(types) => BodyTypePathResolution::TypeDefs(types),
-            SemanticTypePathResolution::Traits(traits) => BodyTypePathResolution::Traits(traits),
-            SemanticTypePathResolution::Unknown => BodyTypePathResolution::Unknown,
-        }
+        resolve_type_path_in_context(self.def_map, self.semantic_ir, context, path)
     }
 
     fn ty_from_type_ref_in_scope(&self, ty: &TypeRef, scope: ScopeId) -> BodyTy {
@@ -377,20 +385,13 @@ impl BodyTypePathResolver<'_, '_> {
     }
 
     fn ty_from_type_ref_in_context(&self, ty: &TypeRef, context: TypePathContext) -> BodyTy {
-        match ty {
-            TypeRef::Unit => BodyTy::Unit,
-            TypeRef::Never => BodyTy::Never,
-            TypeRef::Path(type_path) => {
-                let path = Path::from_type_path(type_path);
-                self.ty_from_body_resolution(
-                    self.resolve_in_context(context, &path),
-                    BodyTy::Syntax(ty.clone()),
-                )
-            }
-            TypeRef::Unknown(_) | TypeRef::Infer => BodyTy::Unknown,
-            TypeRef::Tuple(types) if types.is_empty() => BodyTy::Unit,
-            _ => BodyTy::Syntax(ty.clone()),
-        }
+        ty_from_type_ref_in_context(
+            self.def_map,
+            self.semantic_ir,
+            ty,
+            context,
+            BodyTy::Syntax(ty.clone()),
+        )
     }
 
     fn self_tys_for_function(&self, function: FunctionRef) -> Vec<TypeDefRef> {
@@ -436,13 +437,54 @@ impl BodyTypePathResolver<'_, '_> {
         resolution: BodyTypePathResolution,
         fallback: BodyTy,
     ) -> BodyTy {
-        match resolution {
-            BodyTypePathResolution::BodyLocal(item) => BodyTy::LocalNominal(vec![item]),
-            BodyTypePathResolution::SelfType(types) => BodyTy::SelfTy(types),
-            BodyTypePathResolution::TypeDefs(types) => BodyTy::Nominal(types),
-            BodyTypePathResolution::Traits(_) => fallback,
-            BodyTypePathResolution::Unknown => fallback,
+        ty_from_body_resolution(resolution, fallback)
+    }
+}
+
+fn resolve_type_path_in_context(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    context: TypePathContext,
+    path: &Path,
+) -> BodyTypePathResolution {
+    match semantic_ir.resolve_type_path(def_map, context, path) {
+        SemanticTypePathResolution::SelfType(types) => BodyTypePathResolution::SelfType(types),
+        SemanticTypePathResolution::TypeDefs(types) => BodyTypePathResolution::TypeDefs(types),
+        SemanticTypePathResolution::Traits(traits) => BodyTypePathResolution::Traits(traits),
+        SemanticTypePathResolution::Unknown => BodyTypePathResolution::Unknown,
+    }
+}
+
+fn ty_from_type_ref_in_context(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    ty: &TypeRef,
+    context: TypePathContext,
+    unresolved_path_fallback: BodyTy,
+) -> BodyTy {
+    match ty {
+        TypeRef::Unit => BodyTy::Unit,
+        TypeRef::Never => BodyTy::Never,
+        TypeRef::Path(type_path) => {
+            let path = Path::from_type_path(type_path);
+            ty_from_body_resolution(
+                resolve_type_path_in_context(def_map, semantic_ir, context, &path),
+                unresolved_path_fallback,
+            )
         }
+        TypeRef::Unknown(_) | TypeRef::Infer => BodyTy::Unknown,
+        TypeRef::Tuple(types) if types.is_empty() => BodyTy::Unit,
+        _ => BodyTy::Syntax(ty.clone()),
+    }
+}
+
+fn ty_from_body_resolution(resolution: BodyTypePathResolution, fallback: BodyTy) -> BodyTy {
+    match resolution {
+        BodyTypePathResolution::BodyLocal(item) => BodyTy::LocalNominal(vec![item]),
+        BodyTypePathResolution::SelfType(types) => BodyTy::SelfTy(types),
+        BodyTypePathResolution::TypeDefs(types) => BodyTy::Nominal(types),
+        BodyTypePathResolution::Traits(_) => fallback,
+        BodyTypePathResolution::Unknown => fallback,
     }
 }
 

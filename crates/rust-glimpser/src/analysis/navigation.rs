@@ -159,17 +159,12 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         function_ref: FunctionRef,
     ) -> Option<NavigationTarget> {
         let function_data = self.0.semantic_ir.function_data(function_ref)?;
-        let item = self
-            .0
-            .item_tree
-            .package(function_ref.target.package.0)?
-            .item(function_data.source)?;
 
         Some(NavigationTarget {
             kind: NavigationTargetKind::Function,
             name: function_data.name.clone(),
             file_id: function_data.source.file_id,
-            span: Some(item.span),
+            span: Some(function_data.span),
         })
     }
 

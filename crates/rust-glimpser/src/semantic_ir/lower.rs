@@ -303,6 +303,8 @@ impl<'a> TargetLowering<'a> {
         self.target_ir.items_mut().alloc_function(FunctionData {
             local_def,
             source,
+            span: item.span,
+            name_span: item.name_span,
             owner,
             name: item.name.clone().unwrap_or_else(|| "<missing>".to_string()),
             visibility: item.visibility.clone(),

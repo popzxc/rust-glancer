@@ -96,6 +96,15 @@ impl BodyIrDb {
     ) -> BodyTypePathResolution {
         resolution::resolve_type_path_in_scope(self, def_map, semantic_ir, body_ref, scope, path)
     }
+
+    pub(crate) fn ty_for_field(
+        &self,
+        def_map: &DefMapDb,
+        semantic_ir: &SemanticIrDb,
+        field_ref: FieldRef,
+    ) -> Option<BodyTy> {
+        resolution::ty_for_field(def_map, semantic_ir, field_ref)
+    }
 }
 
 impl BodyIrDb {

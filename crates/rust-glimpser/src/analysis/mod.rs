@@ -5,7 +5,6 @@
 use crate::{
     body_ir::{BodyIrDb, BodyTy},
     def_map::{DefMapDb, TargetRef},
-    item_tree::ItemTreeDb,
     parse::FileId,
     semantic_ir::SemanticIrDb,
 };
@@ -26,7 +25,6 @@ pub(crate) use self::data::{CompletionKind, CompletionTarget, NavigationTargetKi
 
 /// High-level query API over the frozen phase databases.
 pub(crate) struct Analysis<'a> {
-    item_tree: &'a ItemTreeDb,
     def_map: &'a DefMapDb,
     semantic_ir: &'a SemanticIrDb,
     body_ir: &'a BodyIrDb,
@@ -34,13 +32,11 @@ pub(crate) struct Analysis<'a> {
 
 impl<'a> Analysis<'a> {
     pub(crate) fn new(
-        item_tree: &'a ItemTreeDb,
         def_map: &'a DefMapDb,
         semantic_ir: &'a SemanticIrDb,
         body_ir: &'a BodyIrDb,
     ) -> Self {
         Self {
-            item_tree,
             def_map,
             semantic_ir,
             body_ir,

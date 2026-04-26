@@ -22,9 +22,10 @@ use crate::{
 };
 
 use super::{
-    DefId, DefMap, ImportBinding, ImportData, ImportId, ImportKind, ImportPath, LocalDefData,
-    LocalDefId, LocalDefKind, LocalDefRef, LocalImplData, LocalImplId, ModuleData, ModuleId,
-    ModuleOrigin, ModuleRef, ModuleScope, PackageSlot, ScopeBinding, TargetRef, data::Namespace,
+    DefId, DefMap, ImportBinding, ImportData, ImportId, ImportKind, ImportPath, ImportSourcePath,
+    LocalDefData, LocalDefId, LocalDefKind, LocalDefRef, LocalImplData, LocalImplId, ModuleData,
+    ModuleId, ModuleOrigin, ModuleRef, ModuleScope, PackageSlot, ScopeBinding, TargetRef,
+    data::Namespace,
 };
 
 /// Collected state for one target before fixed-point import resolution.
@@ -231,6 +232,7 @@ impl<'db> TargetScopeCollector<'db> {
             visibility: item.visibility.clone(),
             source,
             file_id: item.file_id,
+            name_span: item.name_span,
             span: item.span,
         });
         self.def_map
@@ -401,7 +403,13 @@ impl<'db> TargetScopeCollector<'db> {
                 visibility: item.visibility.clone(),
                 kind: ImportKind::from_use_kind(import.kind),
                 path,
+                source_path: ImportSourcePath::from_use_path(&import.path),
                 binding: ImportBinding::from_alias(&import.alias),
+                alias_span: match &import.alias {
+                    crate::item_tree::ImportAlias::Explicit { span, .. } => Some(*span),
+                    crate::item_tree::ImportAlias::Inferred
+                    | crate::item_tree::ImportAlias::Hidden => None,
+                },
                 source,
                 import_index,
             });

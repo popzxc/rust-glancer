@@ -1,7 +1,6 @@
 use crate::{
     body_ir::{BodyRef, BodyTy, BodyTypePathResolution, ScopeId},
-    def_map::{DefId, ModuleRef, Path},
-    item_tree::TypeRef,
+    def_map::{DefId, Path},
     semantic_ir::{FieldRef, SemanticTypePathResolution, TypeDefRef, TypePathContext},
 };
 
@@ -68,26 +67,6 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         ))
     }
 
-    pub(super) fn ty_from_type_ref_in_module(
-        &self,
-        ty: &TypeRef,
-        owner_module: ModuleRef,
-    ) -> BodyTy {
-        match ty {
-            TypeRef::Unit => BodyTy::Unit,
-            TypeRef::Never => BodyTy::Never,
-            TypeRef::Path(_) => {
-                let Some(path) = Path::from_type_ref(ty) else {
-                    return BodyTy::Syntax(ty.clone());
-                };
-                self.ty_for_type_path(TypePathContext::module(owner_module), &path)
-            }
-            TypeRef::Unknown(_) | TypeRef::Infer => BodyTy::Unknown,
-            TypeRef::Tuple(types) if types.is_empty() => BodyTy::Unit,
-            _ => BodyTy::Syntax(ty.clone()),
-        }
-    }
-
     fn ty_for_def(&self, def: DefId) -> Option<BodyTy> {
         let DefId::Local(local_def) = def else {
             return None;
@@ -99,8 +78,9 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
     }
 
     fn ty_for_field(&self, field: FieldRef) -> Option<BodyTy> {
-        let field_data = self.0.semantic_ir.field_data(field)?;
-        Some(self.ty_from_type_ref_in_module(&field_data.field.ty, field_data.owner_module))
+        self.0
+            .body_ir
+            .ty_for_field(self.0.def_map, self.0.semantic_ir, field)
     }
 }
 

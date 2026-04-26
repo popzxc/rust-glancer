@@ -4,9 +4,9 @@ use crate::{
     },
     item_tree::{
         ConstItem, FieldItem, FieldKey, FieldList, FunctionItem, GenericParams, ItemTreeRef,
-        Mutability, TypeAliasItem, TypeBound, TypeRef, VisibilityLevel,
+        Mutability, ParamKind, TypeAliasItem, TypeBound, TypeRef, VisibilityLevel,
     },
-    parse::{FileId, TargetId},
+    parse::{FileId, TargetId, span::Span},
 };
 
 use super::{
@@ -895,10 +895,21 @@ pub struct ImplData {
 pub struct FunctionData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemTreeRef,
+    pub span: Span,
+    pub name_span: Option<Span>,
     pub owner: ItemOwner,
     pub name: String,
     pub visibility: VisibilityLevel,
     pub declaration: FunctionItem,
+}
+
+impl FunctionData {
+    pub(crate) fn has_self_receiver(&self) -> bool {
+        self.declaration
+            .params
+            .first()
+            .is_some_and(|param| matches!(param.kind, ParamKind::SelfParam))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

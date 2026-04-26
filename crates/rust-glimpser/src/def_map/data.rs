@@ -121,6 +121,7 @@ pub struct LocalDefData {
     pub visibility: VisibilityLevel,
     pub source: ItemTreeRef,
     pub file_id: FileId,
+    pub name_span: Option<Span>,
     pub span: Span,
 }
 

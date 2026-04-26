@@ -52,6 +52,7 @@ impl Path {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn from_use_path_prefix(path: &UsePath, end_idx: usize) -> Self {
         Self {
             absolute: path.absolute,

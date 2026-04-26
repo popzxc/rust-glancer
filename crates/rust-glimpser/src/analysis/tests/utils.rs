@@ -107,12 +107,7 @@ impl AnalysisFixtureDb {
     }
 
     fn analysis(&self) -> Analysis<'_> {
-        Analysis::new(
-            &self.item_tree,
-            &self.def_map,
-            &self.semantic_ir,
-            &self.body_ir,
-        )
+        Analysis::new(&self.def_map, &self.semantic_ir, &self.body_ir)
     }
 }
 

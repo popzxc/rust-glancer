@@ -7,8 +7,7 @@
 use crate::{
     def_map::{Path, TargetRef},
     item_tree::{
-        FieldList, GenericArg, GenericParams, ItemKind, ItemTreeDb, ItemTreeRef, TypeBound,
-        TypePath, TypeRef, WherePredicate,
+        FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypeRef, WherePredicate,
     },
     parse::{FileId, span::Span},
     semantic_ir::{FieldRef, FunctionRef, ItemOwner, SemanticIrDb, TypeDefRef, TypePathContext},
@@ -45,7 +44,6 @@ impl SemanticCursorCandidate {
 impl SemanticIrDb {
     pub(crate) fn signature_cursor_candidates(
         &self,
-        item_tree: &ItemTreeDb,
         target: TargetRef,
         file_id: FileId,
         offset: u32,
@@ -53,7 +51,6 @@ impl SemanticIrDb {
         let mut candidates = Vec::new();
         SignatureCursorScanner {
             semantic_ir: self,
-            item_tree,
             target,
             file_id,
             offset,
@@ -67,7 +64,6 @@ impl SemanticIrDb {
 
 struct SignatureCursorScanner<'a> {
     semantic_ir: &'a SemanticIrDb,
-    item_tree: &'a ItemTreeDb,
     target: TargetRef,
     file_id: FileId,
     offset: u32,
@@ -164,12 +160,7 @@ impl SignatureCursorScanner<'_> {
                 continue;
             }
             if data.local_def.is_none() {
-                let Some(span) = self
-                    .item(data.source)
-                    .map(|item| item.name_span.unwrap_or(item.span))
-                else {
-                    continue;
-                };
+                let span = data.name_span.unwrap_or(data.span);
                 self.push_function(function_ref, span);
             }
             let Some(context) = self.owner_context(data.owner) else {
@@ -343,15 +334,5 @@ impl SignatureCursorScanner<'_> {
     fn owner_context(&self, owner: ItemOwner) -> Option<TypePathContext> {
         self.semantic_ir
             .type_path_context_for_owner(self.target, owner)
-    }
-
-    fn item(&self, source: ItemTreeRef) -> Option<&crate::item_tree::ItemNode> {
-        self.item_tree
-            .package(self.target.package.0)?
-            .item(source)
-            .and_then(|item| match &item.kind {
-                ItemKind::Function(_) => Some(item),
-                _ => None,
-            })
     }
 }
