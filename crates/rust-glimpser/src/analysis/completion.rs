@@ -57,7 +57,7 @@ impl<'a, 'project> CompletionResolver<'a, 'project> {
         let mut best = None::<(BodyRef, ExprId, u32)>;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if body.source.file_id != file_id || !contains_offset(body.source.span, offset) {
+            if body.source.file_id != file_id || !body.source.span.contains(offset) {
                 continue;
             }
 
@@ -73,7 +73,7 @@ impl<'a, 'project> CompletionResolver<'a, 'project> {
                 let Some(receiver) = receiver_expr(expr) else {
                     continue;
                 };
-                let len = span_len(expr.source.span);
+                let len = expr.source.span.len();
                 if best.is_none_or(|(_, _, best_len)| len < best_len) {
                     best = Some((body_ref, receiver, len));
                 }
@@ -211,12 +211,4 @@ fn dot_span(expr: &ExprData) -> Option<Span> {
         ExprKind::Field { dot_span, .. } => *dot_span,
         _ => None,
     }
-}
-
-fn contains_offset(span: Span, offset: u32) -> bool {
-    span.text.start <= offset && offset < span.text.end
-}
-
-fn span_len(span: Span) -> u32 {
-    span.text.end.saturating_sub(span.text.start)
 }

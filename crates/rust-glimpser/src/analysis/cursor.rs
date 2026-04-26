@@ -105,7 +105,7 @@ impl BodyTypeCursorScanner<'_> {
 
     fn scan_type_path(&mut self, path: &TypePath) {
         for (idx, segment) in path.segments.iter().enumerate() {
-            if contains_offset_or_end(segment.span, self.offset) {
+            if segment.span.touches(self.offset) {
                 let path = Path {
                     absolute: path.absolute,
                     segments: path.segments[..=idx]
@@ -172,7 +172,7 @@ impl CursorScanner<'_> {
                 .item(local_def.source)
                 .and_then(|item| item.name_span)
                 .unwrap_or(local_def.span);
-            if !contains_offset_or_end(span, self.offset) {
+            if !span.touches(self.offset) {
                 continue;
             }
 
@@ -215,7 +215,7 @@ impl CursorScanner<'_> {
             });
             self.push_use_path(context, &source_import.path);
             if let crate::item_tree::ImportAlias::Explicit { span, .. } = source_import.alias {
-                if contains_offset_or_end(span, self.offset) {
+                if span.touches(self.offset) {
                     self.push_path_candidate(
                         context,
                         path_from_use_path(&source_import.path),
@@ -450,7 +450,7 @@ impl CursorScanner<'_> {
 
     fn push_type_path(&mut self, context: PathContext, path: &TypePath, role: PathRole) {
         for (idx, segment) in path.segments.iter().enumerate() {
-            if contains_offset_or_end(segment.span, self.offset) {
+            if segment.span.touches(self.offset) {
                 self.push_path_candidate(
                     context,
                     Path {
@@ -484,7 +484,7 @@ impl CursorScanner<'_> {
 
     fn push_use_path(&mut self, context: PathContext, path: &UsePath) {
         for (idx, segment) in path.segments.iter().enumerate() {
-            if contains_offset_or_end(segment.span, self.offset) {
+            if segment.span.touches(self.offset) {
                 self.push_path_candidate(
                     context,
                     Path {
@@ -520,7 +520,7 @@ impl CursorScanner<'_> {
     }
 
     fn push_field(&mut self, field: FieldRef, span: Span) {
-        if !contains_offset_or_end(span, self.offset) {
+        if !span.touches(self.offset) {
             return;
         }
 
@@ -531,7 +531,7 @@ impl CursorScanner<'_> {
     }
 
     fn push_function(&mut self, function: FunctionRef, span: Span) {
-        if !contains_offset_or_end(span, self.offset) {
+        if !span.touches(self.offset) {
             return;
         }
 
@@ -603,8 +603,4 @@ fn path_from_use_path(path: &UsePath) -> Path {
             .map(path_segment_from_use_segment)
             .collect(),
     }
-}
-
-fn contains_offset_or_end(span: Span, offset: u32) -> bool {
-    span.text.start <= offset && offset <= span.text.end
 }

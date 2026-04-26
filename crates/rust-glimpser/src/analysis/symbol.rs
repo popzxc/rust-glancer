@@ -33,7 +33,7 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
 
         candidates
             .into_iter()
-            .min_by_key(|candidate| span_len(candidate.span))
+            .min_by_key(|candidate| candidate.span.len())
             .map(|candidate| candidate.symbol)
     }
 
@@ -71,7 +71,7 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
         let mut best = None;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if body.source.file_id != file_id || !contains_offset(body.source.span, offset) {
+            if body.source.file_id != file_id || !body.source.span.contains(offset) {
                 continue;
             }
 
@@ -95,8 +95,8 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
             .iter()
             .enumerate()
             .filter(|(_, expr)| expr.source.file_id == file_id)
-            .filter(|(_, expr)| contains_offset_or_end(expr.source.span, offset))
-            .min_by_key(|(_, expr)| span_len(expr.source.span))
+            .filter(|(_, expr)| expr.source.span.touches(offset))
+            .min_by_key(|(_, expr)| expr.source.span.len())
             .map(|(idx, _)| ExprId(idx))
     }
 
@@ -110,8 +110,8 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
             .iter()
             .enumerate()
             .filter(|(_, binding)| binding.source.file_id == file_id)
-            .filter(|(_, binding)| contains_offset_or_end(binding.source.span, offset))
-            .min_by_key(|(_, binding)| span_len(binding.source.span))
+            .filter(|(_, binding)| binding.source.span.touches(offset))
+            .min_by_key(|(_, binding)| binding.source.span.len())
             .map(|(idx, _)| BindingId(idx))
     }
 
@@ -125,8 +125,8 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
             .iter()
             .enumerate()
             .filter(|(_, item)| item.name_source.file_id == file_id)
-            .filter(|(_, item)| contains_offset_or_end(item.name_source.span, offset))
-            .min_by_key(|(_, item)| span_len(item.name_source.span))
+            .filter(|(_, item)| item.name_source.span.touches(offset))
+            .min_by_key(|(_, item)| item.name_source.span.len())
             .map(|(idx, _)| BodyItemId(idx))
     }
 
@@ -139,7 +139,7 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
         if let Some(expr) = node.expr {
             if let Some(data) = body.expr(expr) {
                 candidates.push((
-                    span_len(data.source.span),
+                    data.source.span.len(),
                     SymbolAt::Expr {
                         body: node.body,
                         expr,
@@ -150,7 +150,7 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
         if let Some(binding) = node.binding {
             if let Some(data) = body.binding(binding) {
                 candidates.push((
-                    span_len(data.source.span),
+                    data.source.span.len(),
                     SymbolAt::Binding {
                         body: node.body,
                         binding,
@@ -161,7 +161,7 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
         if let Some(item) = node.local_item {
             if let Some(data) = body.local_item(item) {
                 candidates.push((
-                    span_len(data.name_source.span),
+                    data.name_source.span.len(),
                     SymbolAt::LocalItem {
                         item: BodyItemRef {
                             body: node.body,
@@ -199,16 +199,4 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
             | SymbolAt::Path { span, .. } => Some(*span),
         }
     }
-}
-
-fn contains_offset(span: Span, offset: u32) -> bool {
-    span.text.start <= offset && offset < span.text.end
-}
-
-fn contains_offset_or_end(span: Span, offset: u32) -> bool {
-    span.text.start <= offset && offset <= span.text.end
-}
-
-fn span_len(span: Span) -> u32 {
-    span.text.end.saturating_sub(span.text.start)
 }
