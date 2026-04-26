@@ -7,13 +7,12 @@ use crate::{
     def_map::{ModuleId, ModuleRef, Path, PathSegment, TargetRef},
     item_tree::ItemTreeDb,
     item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel},
-    parse::ParseDb,
+    parse::{Package, ParseDb, Target},
     semantic_ir::{
         SemanticIrDb,
         ids::{FunctionRef, ImplRef, TraitRef, TypeDefId, TypeDefRef},
     },
     test_fixture::fixture_crate,
-    test_utils::snapshot,
     workspace_metadata::{TargetKind, WorkspaceMetadata},
 };
 
@@ -113,10 +112,10 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        snapshot::sorted_packages(self.project.parse_db())
+        sorted_packages(self.project.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
-                let target_dumps = snapshot::sorted_targets(package)
+                let target_dumps = sorted_targets(package)
                     .into_iter()
                     .map(|target| {
                         TargetSemanticIrSnapshot {
@@ -906,4 +905,27 @@ fn visibility_prefix(visibility: &VisibilityLevel) -> String {
 
 fn indent(depth: usize) -> String {
     "  ".repeat(depth)
+}
+
+fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
+    let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
+    packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
+    packages
+}
+
+fn sorted_targets(package: &Package) -> Vec<&Target> {
+    let mut targets = package.targets().iter().collect::<Vec<_>>();
+    targets.sort_by(|left, right| {
+        (
+            left.kind.sort_order(),
+            left.name.as_str(),
+            left.src_path.as_path(),
+        )
+            .cmp(&(
+                right.kind.sort_order(),
+                right.name.as_str(),
+                right.src_path.as_path(),
+            ))
+    });
+    targets
 }

@@ -4,12 +4,11 @@ use expect_test::Expect;
 
 use crate::{
     item_tree::{
-        FieldItem, FieldList, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ModuleSource, ParamKind,
-        VisibilityLevel,
+        FieldItem, FieldList, FileTree, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ModuleSource,
+        Package as ItemTreePackage, ParamKind, TargetRoot, VisibilityLevel,
     },
-    parse::{Package, ParseDb, Target},
+    parse::{FileId, Package, ParseDb, Target},
     test_fixture::fixture_crate,
-    test_utils::snapshot,
     workspace_metadata::WorkspaceMetadata,
 };
 
@@ -62,7 +61,7 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        let package_dumps = snapshot::sorted_packages(&self.db.parse)
+        let package_dumps = sorted_packages(&self.db.parse)
             .into_iter()
             .map(|(package_slot, package)| {
                 let item_trees = self
@@ -93,7 +92,7 @@ struct PackageItemTreeSnapshot<'a> {
 
 impl<'a> PackageItemTreeSnapshot<'a> {
     fn render(&self) -> String {
-        let target_dumps = snapshot::sorted_item_tree_target_roots(self.package, self.item_trees)
+        let target_dumps = sorted_item_tree_target_roots(self.package, self.item_trees)
             .into_iter()
             .map(|target_root| {
                 let target = self
@@ -107,7 +106,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        let file_dumps = snapshot::sorted_item_tree_files(self.package, self.item_trees)
+        let file_dumps = sorted_item_tree_files(self.package, self.item_trees)
             .into_iter()
             .map(|file_tree| {
                 self.render_file_item_tree(file_tree, &file_tree.top_level)
@@ -415,7 +414,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
     }
 
     fn file_label(&self, file_id: crate::parse::FileId) -> String {
-        snapshot::file_label(self.package, file_id)
+        file_label(self.package, file_id)
     }
 }
 
@@ -439,4 +438,63 @@ fn visibility_prefix(visibility: &VisibilityLevel) -> String {
         VisibilityLevel::Private => String::new(),
         _ => format!("{visibility} "),
     }
+}
+
+fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
+    let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
+    packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
+    packages
+}
+
+fn sorted_item_tree_target_roots<'a>(
+    package: &Package,
+    item_trees: &'a ItemTreePackage,
+) -> Vec<&'a TargetRoot> {
+    let mut target_roots = item_trees.target_roots().iter().collect::<Vec<_>>();
+    target_roots.sort_by(|left, right| {
+        let left_target = package
+            .target(left.target)
+            .expect("parsed target should exist while sorting item-tree target roots");
+        let right_target = package
+            .target(right.target)
+            .expect("parsed target should exist while sorting item-tree target roots");
+
+        (
+            left_target.kind.sort_order(),
+            left_target.name.as_str(),
+            left_target.src_path.as_path(),
+        )
+            .cmp(&(
+                right_target.kind.sort_order(),
+                right_target.name.as_str(),
+                right_target.src_path.as_path(),
+            ))
+    });
+    target_roots
+}
+
+fn sorted_item_tree_files<'a>(
+    package: &Package,
+    item_trees: &'a ItemTreePackage,
+) -> Vec<&'a FileTree> {
+    let mut files = item_trees.files().collect::<Vec<_>>();
+    files.sort_by(|left, right| {
+        let left_path = package
+            .file_path(left.file)
+            .expect("item-tree file should exist while sorting");
+        let right_path = package
+            .file_path(right.file)
+            .expect("item-tree file should exist while sorting");
+        left_path.cmp(right_path)
+    });
+    files
+}
+
+fn file_label(package: &Package, file_id: FileId) -> String {
+    package
+        .file_path(file_id)
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or("<unknown>")
+        .to_string()
 }

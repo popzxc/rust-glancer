@@ -13,8 +13,6 @@ mod workspace_metadata;
 
 #[cfg(test)]
 mod test_fixture;
-#[cfg(test)]
-mod test_utils;
 
 pub use self::project::Project;
 pub use self::workspace_metadata::WorkspaceMetadata;

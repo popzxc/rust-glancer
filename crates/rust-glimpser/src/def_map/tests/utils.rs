@@ -6,9 +6,8 @@ use crate::{
         ResolvePathResult, ScopeBinding, ScopeEntry, TargetRef,
     },
     item_tree::{ItemTreeDb, VisibilityLevel},
-    parse::{Package, ParseDb, Target},
+    parse::{FileId, Package, ParseDb, Target},
     test_fixture::fixture_crate,
-    test_utils::snapshot,
     workspace_metadata::{TargetKind, WorkspaceMetadata},
 };
 
@@ -262,7 +261,7 @@ impl<'a> ProjectDefMapSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        let package_dumps = snapshot::sorted_packages(self.project.parse_db())
+        let package_dumps = sorted_packages(self.project.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
                 PackageDefMapSnapshot {
@@ -445,7 +444,7 @@ struct PackageDefMapSnapshot<'a> {
 
 impl<'a> PackageDefMapSnapshot<'a> {
     fn render(&self) -> String {
-        let target_dumps = snapshot::sorted_targets(self.package)
+        let target_dumps = sorted_targets(self.package)
             .into_iter()
             .map(|target| {
                 let target_ref = TargetRef {
@@ -631,7 +630,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
     }
 
     fn render_item_tree_ref(&self, item_ref: crate::item_tree::ItemTreeRef) -> String {
-        let file_label = snapshot::file_label(self.package, item_ref.file_id);
+        let file_label = file_label(self.package, item_ref.file_id);
         format!("{file_label}#{}", item_ref.item.0)
     }
 
@@ -757,4 +756,36 @@ impl ResolvedDefOrigin<'_> {
             None => "crate".to_string(),
         }
     }
+}
+
+fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
+    let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
+    packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
+    packages
+}
+
+fn sorted_targets(package: &Package) -> Vec<&Target> {
+    let mut targets = package.targets().iter().collect::<Vec<_>>();
+    targets.sort_by(|left, right| {
+        (
+            left.kind.sort_order(),
+            left.name.as_str(),
+            left.src_path.as_path(),
+        )
+            .cmp(&(
+                right.kind.sort_order(),
+                right.name.as_str(),
+                right.src_path.as_path(),
+            ))
+    });
+    targets
+}
+
+fn file_label(package: &Package, file_id: FileId) -> String {
+    package
+        .file_path(file_id)
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or("<unknown>")
+        .to_string()
 }
