@@ -1,3 +1,4 @@
+mod cursor;
 mod data;
 mod ids;
 mod lower;
@@ -7,6 +8,7 @@ mod resolution;
 mod tests;
 
 pub(crate) use self::{
+    cursor::SemanticCursorCandidate,
     data::{FunctionData, SemanticIrDb},
     ids::{FieldRef, FunctionId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef},
     resolution::{SemanticTypePathResolution, TypePathContext},

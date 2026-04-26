@@ -2,11 +2,10 @@ use crate::{
     body_ir::{BodyData, BodyRef, ScopeId, StmtKind},
     def_map::{DefId, ModuleRef, Path, TargetRef},
     item_tree::{
-        FieldList, GenericArg, GenericParams, ItemKind, ItemNode, ItemTreeRef, TypeBound, TypePath,
-        TypeRef, UsePath, WherePredicate,
+        GenericArg, ItemKind, ItemNode, ItemTreeRef, TypeBound, TypePath, TypeRef, UsePath,
     },
     parse::{FileId, span::Span},
-    semantic_ir::{FieldRef, FunctionRef, ItemOwner, TypeDefRef, TypePathContext},
+    semantic_ir::SemanticCursorCandidate,
 };
 
 use super::{
@@ -208,227 +207,41 @@ impl CursorScanner<'_, '_> {
     }
 
     fn scan_semantic_items(&mut self) {
-        for (ty, data) in self.analysis.semantic_ir.structs(self.target) {
-            if data.source.file_id != self.file_id {
-                continue;
-            }
-            let context = TypePathContext::module(data.owner);
-            self.scan_generic_params(context, &data.generics);
-            self.scan_field_list(ty, context, &data.fields);
-        }
-
-        for (ty, data) in self.analysis.semantic_ir.unions(self.target) {
-            if data.source.file_id != self.file_id {
-                continue;
-            }
-            let context = TypePathContext::module(data.owner);
-            self.scan_generic_params(context, &data.generics);
-            for (field_idx, field) in data.fields.iter().enumerate() {
-                self.push_field(
-                    FieldRef {
-                        owner: ty,
-                        index: field_idx,
-                    },
-                    field.span,
-                );
-                self.push_type_ref(context, &field.ty);
-            }
-        }
-
-        for (_, data) in self.analysis.semantic_ir.enums(self.target) {
-            if data.source.file_id != self.file_id {
-                continue;
-            }
-            let context = TypePathContext::module(data.owner);
-            self.scan_generic_params(context, &data.generics);
-            for variant in &data.variants {
-                self.scan_field_list_for_owner(context, &variant.fields);
-            }
-        }
-
-        for (_, data) in self.analysis.semantic_ir.traits(self.target) {
-            if data.source.file_id != self.file_id {
-                continue;
-            }
-            let context = TypePathContext::module(data.owner);
-            self.scan_generic_params(context, &data.generics);
-            self.scan_type_bounds(context, &data.super_traits);
-        }
-
-        for (impl_ref, data) in self.analysis.semantic_ir.impls(self.target) {
-            if data.source.file_id != self.file_id {
-                continue;
-            }
-            let Some(context) = self.owner_context(ItemOwner::Impl(impl_ref.id)) else {
-                continue;
-            };
-            self.scan_generic_params(context, &data.generics);
-            if let Some(trait_ref) = &data.trait_ref {
-                self.push_type_ref(context, trait_ref);
-            }
-            self.push_type_ref(context, &data.self_ty);
-        }
-
-        for (function_ref, data) in self.analysis.semantic_ir.functions(self.target) {
-            if data.source.file_id != self.file_id {
-                continue;
-            }
-            if data.local_def.is_none() {
-                let span = self
-                    .item(data.source)
-                    .and_then(|item| item.name_span)
-                    .unwrap_or_else(|| {
-                        self.item(data.source)
-                            .map(|item| item.span)
-                            .expect("function source item should exist")
+        let candidates = self.analysis.semantic_ir.signature_cursor_candidates(
+            self.analysis.item_tree,
+            self.target,
+            self.file_id,
+            self.offset,
+        );
+        for candidate in candidates {
+            match candidate {
+                SemanticCursorCandidate::Field { field, span } => {
+                    self.candidates.push(SymbolCandidate {
+                        symbol: SymbolAt::Field { field, span },
+                        span,
                     });
-                self.push_function(function_ref, span);
-            }
-            let Some(context) = self.owner_context(data.owner) else {
-                continue;
-            };
-            self.scan_generic_params(context, &data.declaration.generics);
-            for param in &data.declaration.params {
-                if let Some(ty) = &param.ty {
-                    self.push_type_ref(context, ty);
                 }
-            }
-            if let Some(ret_ty) = &data.declaration.ret_ty {
-                self.push_type_ref(context, ret_ty);
-            }
-        }
-
-        for (_, data) in self.analysis.semantic_ir.type_aliases(self.target) {
-            if data.source.file_id != self.file_id {
-                continue;
-            }
-            let Some(context) = self.owner_context(data.owner) else {
-                continue;
-            };
-            self.scan_generic_params(context, &data.declaration.generics);
-            self.scan_type_bounds(context, &data.declaration.bounds);
-            if let Some(ty) = &data.declaration.aliased_ty {
-                self.push_type_ref(context, ty);
-            }
-        }
-
-        for (_, data) in self.analysis.semantic_ir.consts(self.target) {
-            if data.source.file_id != self.file_id {
-                continue;
-            }
-            let Some(context) = self.owner_context(data.owner) else {
-                continue;
-            };
-            self.scan_generic_params(context, &data.declaration.generics);
-            if let Some(ty) = &data.declaration.ty {
-                self.push_type_ref(context, ty);
-            }
-        }
-
-        for (_, data) in self.analysis.semantic_ir.statics(self.target) {
-            if data.source.file_id != self.file_id {
-                continue;
-            }
-            if let Some(ty) = &data.ty {
-                self.push_type_ref(TypePathContext::module(data.owner), ty);
-            }
-        }
-    }
-
-    fn scan_field_list(&mut self, owner: TypeDefRef, context: TypePathContext, fields: &FieldList) {
-        for (idx, field) in fields.fields().iter().enumerate() {
-            self.push_field(FieldRef { owner, index: idx }, field.span);
-            self.push_type_ref(context, &field.ty);
-        }
-    }
-
-    fn scan_field_list_for_owner(&mut self, context: TypePathContext, fields: &FieldList) {
-        for field in fields.fields() {
-            self.push_type_ref(context, &field.ty);
-        }
-    }
-
-    fn scan_generic_params(&mut self, context: TypePathContext, generics: &GenericParams) {
-        for param in &generics.types {
-            self.scan_type_bounds(context, &param.bounds);
-            if let Some(default) = &param.default {
-                self.push_type_ref(context, default);
-            }
-        }
-        for param in &generics.consts {
-            if let Some(ty) = &param.ty {
-                self.push_type_ref(context, ty);
-            }
-        }
-        for predicate in &generics.where_predicates {
-            match predicate {
-                WherePredicate::Type { ty, bounds } => {
-                    self.push_type_ref(context, ty);
-                    self.scan_type_bounds(context, bounds);
+                SemanticCursorCandidate::Function { function, span } => {
+                    self.candidates.push(SymbolCandidate {
+                        symbol: SymbolAt::Function { function, span },
+                        span,
+                    });
                 }
-                WherePredicate::Lifetime { .. } | WherePredicate::Unsupported(_) => {}
-            }
-        }
-    }
-
-    fn scan_type_bounds(&mut self, context: TypePathContext, bounds: &[TypeBound]) {
-        for bound in bounds {
-            match bound {
-                TypeBound::Trait(ty) => self.push_type_ref(context, ty),
-                TypeBound::Lifetime(_) | TypeBound::Unsupported(_) => {}
-            }
-        }
-    }
-
-    fn push_type_ref(&mut self, context: TypePathContext, ty: &TypeRef) {
-        match ty {
-            TypeRef::Path(path) => self.push_type_path(context, path),
-            TypeRef::Tuple(types) => {
-                for ty in types {
-                    self.push_type_ref(context, ty);
-                }
-            }
-            TypeRef::Reference { inner, .. }
-            | TypeRef::RawPointer { inner, .. }
-            | TypeRef::Slice(inner) => self.push_type_ref(context, inner),
-            TypeRef::Array { inner, .. } => self.push_type_ref(context, inner),
-            TypeRef::FnPointer { params, ret } => {
-                for param in params {
-                    self.push_type_ref(context, param);
-                }
-                self.push_type_ref(context, ret);
-            }
-            TypeRef::ImplTrait(bounds) | TypeRef::DynTrait(bounds) => {
-                self.scan_type_bounds(context, bounds);
-            }
-            TypeRef::Unknown(_) | TypeRef::Never | TypeRef::Unit | TypeRef::Infer => {}
-        }
-    }
-
-    fn push_type_path(&mut self, context: TypePathContext, path: &TypePath) {
-        for (idx, segment) in path.segments.iter().enumerate() {
-            if segment.span.touches(self.offset) {
-                self.push_type_path_candidate(
+                SemanticCursorCandidate::TypePath {
                     context,
-                    Path::from_type_path_prefix(path, idx),
-                    segment.span,
-                );
+                    path,
+                    span,
+                } => {
+                    self.candidates.push(SymbolCandidate {
+                        symbol: SymbolAt::TypePath {
+                            context,
+                            path,
+                            span,
+                        },
+                        span,
+                    });
+                }
             }
-
-            for arg in &segment.args {
-                self.push_generic_arg(context, arg);
-            }
-        }
-    }
-
-    fn push_generic_arg(&mut self, context: TypePathContext, arg: &GenericArg) {
-        match arg {
-            GenericArg::Type(ty) => self.push_type_ref(context, ty),
-            GenericArg::AssocType { ty: Some(ty), .. } => self.push_type_ref(context, ty),
-            GenericArg::Lifetime(_)
-            | GenericArg::Const(_)
-            | GenericArg::AssocType { ty: None, .. }
-            | GenericArg::Unsupported(_) => {}
         }
     }
 
@@ -444,50 +257,11 @@ impl CursorScanner<'_, '_> {
         }
     }
 
-    fn push_type_path_candidate(&mut self, context: TypePathContext, path: Path, span: Span) {
-        self.candidates.push(SymbolCandidate {
-            symbol: SymbolAt::TypePath {
-                context,
-                path,
-                span,
-            },
-            span,
-        });
-    }
-
     fn push_use_path_candidate(&mut self, module: ModuleRef, path: Path, span: Span) {
         self.candidates.push(SymbolCandidate {
             symbol: SymbolAt::UsePath { module, path, span },
             span,
         });
-    }
-
-    fn push_field(&mut self, field: FieldRef, span: Span) {
-        if !span.touches(self.offset) {
-            return;
-        }
-
-        self.candidates.push(SymbolCandidate {
-            symbol: SymbolAt::Field { field, span },
-            span,
-        });
-    }
-
-    fn push_function(&mut self, function: FunctionRef, span: Span) {
-        if !span.touches(self.offset) {
-            return;
-        }
-
-        self.candidates.push(SymbolCandidate {
-            symbol: SymbolAt::Function { function, span },
-            span,
-        });
-    }
-
-    fn owner_context(&self, owner: ItemOwner) -> Option<TypePathContext> {
-        self.analysis
-            .semantic_ir
-            .type_path_context_for_owner(self.target, owner)
     }
 
     fn item(&self, source: ItemTreeRef) -> Option<&ItemNode> {
