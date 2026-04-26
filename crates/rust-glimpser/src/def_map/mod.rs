@@ -12,8 +12,8 @@ pub use self::{
         ScopeBinding, ScopeEntry,
     },
     ids::{
-        DefId, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
-        PackageSlot, TargetRef,
+        DefId, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
+        ModuleRef, PackageSlot, TargetRef,
     },
     import::{ImportBinding, ImportData, ImportKind, ImportPath},
     path::{Path, PathSegment},
@@ -87,6 +87,119 @@ impl DefMapDb {
     /// Returns one target def map by project-wide target reference.
     pub(crate) fn def_map(&self, target: TargetRef) -> Option<&DefMap> {
         self.package(target.package)?.target(target.target)
+    }
+
+    /// Iterates over one target's modules together with stable project-wide references.
+    #[allow(dead_code)]
+    pub(crate) fn modules(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (ModuleRef, &ModuleData)> + '_ {
+        self.def_map(target).into_iter().flat_map(move |def_map| {
+            def_map
+                .modules()
+                .iter()
+                .enumerate()
+                .map(move |(module_idx, module)| {
+                    (
+                        ModuleRef {
+                            target,
+                            module: ModuleId(module_idx),
+                        },
+                        module,
+                    )
+                })
+        })
+    }
+
+    /// Returns one module by stable project-wide reference.
+    pub(crate) fn module(&self, module: ModuleRef) -> Option<&ModuleData> {
+        self.def_map(module.target)?.module(module.module)
+    }
+
+    /// Iterates over one target's local definitions together with stable project-wide references.
+    pub(crate) fn local_defs(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (LocalDefRef, &LocalDefData)> + '_ {
+        self.def_map(target).into_iter().flat_map(move |def_map| {
+            def_map
+                .local_defs()
+                .iter()
+                .enumerate()
+                .map(move |(local_def_idx, local_def)| {
+                    (
+                        LocalDefRef {
+                            target,
+                            local_def: LocalDefId(local_def_idx),
+                        },
+                        local_def,
+                    )
+                })
+        })
+    }
+
+    /// Returns one local definition by stable project-wide reference.
+    pub(crate) fn local_def(&self, local_def: LocalDefRef) -> Option<&LocalDefData> {
+        self.def_map(local_def.target)?
+            .local_def(local_def.local_def)
+    }
+
+    /// Iterates over one target's impl blocks together with stable project-wide references.
+    pub(crate) fn local_impls(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (LocalImplRef, &LocalImplData)> + '_ {
+        self.def_map(target).into_iter().flat_map(move |def_map| {
+            def_map
+                .local_impls()
+                .iter()
+                .enumerate()
+                .map(move |(local_impl_idx, local_impl)| {
+                    (
+                        LocalImplRef {
+                            target,
+                            local_impl: LocalImplId(local_impl_idx),
+                        },
+                        local_impl,
+                    )
+                })
+        })
+    }
+
+    /// Returns one impl block by stable project-wide reference.
+    #[allow(dead_code)]
+    pub(crate) fn local_impl(&self, local_impl: LocalImplRef) -> Option<&LocalImplData> {
+        self.def_map(local_impl.target)?
+            .local_impl(local_impl.local_impl)
+    }
+
+    /// Iterates over one target's imports together with stable project-wide references.
+    pub(crate) fn imports(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (ImportRef, &ImportData)> + '_ {
+        self.def_map(target).into_iter().flat_map(move |def_map| {
+            def_map
+                .imports()
+                .iter()
+                .enumerate()
+                .map(move |(import_idx, import)| {
+                    (
+                        ImportRef {
+                            target,
+                            import: ImportId(import_idx),
+                        },
+                        import,
+                    )
+                })
+        })
+    }
+
+    /// Returns one import by stable project-wide reference.
+    #[allow(dead_code)]
+    pub(crate) fn import(&self, import: ImportRef) -> Option<&ImportData> {
+        self.def_map(import.target)?.import(import.import)
     }
 
     /// Resolves a path from a module against the frozen def-map graph.

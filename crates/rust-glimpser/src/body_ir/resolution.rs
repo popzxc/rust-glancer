@@ -8,7 +8,7 @@ use crate::{
     item_tree::{FieldKey, TypeRef},
     parse::TargetId,
     semantic_ir::{
-        FunctionRef, ItemId, SemanticIrDb, SemanticTypePathResolution, TypeDefRef, TypePathContext,
+        FunctionRef, SemanticIrDb, SemanticTypePathResolution, TypeDefRef, TypePathContext,
     },
 };
 
@@ -313,18 +313,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         let DefId::Local(local_def) = def else {
             return None;
         };
-        let item = self
-            .semantic_ir
-            .target_ir(local_def.target)?
-            .item_for_local_def(local_def.local_def)?;
-        let ItemId::Function(id) = item else {
-            return None;
-        };
-
-        Some(FunctionRef {
-            target: local_def.target,
-            id,
-        })
+        self.semantic_ir.function_for_local_def(local_def)
     }
 }
 

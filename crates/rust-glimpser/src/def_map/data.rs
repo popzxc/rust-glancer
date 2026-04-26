@@ -40,14 +40,31 @@ impl DefMap {
         self.modules.get(module_id.0)
     }
 
+    /// Returns local definition data by id.
+    pub fn local_def(&self, local_def: LocalDefId) -> Option<&LocalDefData> {
+        self.local_defs.get(local_def.0)
+    }
+
     /// Returns all local definitions in stable local-def-id order.
     pub fn local_defs(&self) -> &[LocalDefData] {
         &self.local_defs
     }
 
+    /// Returns impl block data by id.
+    #[allow(dead_code)]
+    pub fn local_impl(&self, local_impl: LocalImplId) -> Option<&LocalImplData> {
+        self.local_impls.get(local_impl.0)
+    }
+
     /// Returns all impl blocks in stable local-impl-id order.
     pub fn local_impls(&self) -> &[LocalImplData] {
         &self.local_impls
+    }
+
+    /// Returns import data by id.
+    #[allow(dead_code)]
+    pub fn import(&self, import: ImportId) -> Option<&ImportData> {
+        self.imports.get(import.0)
     }
 
     /// Returns all imports in stable import-id order.

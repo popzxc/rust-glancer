@@ -6,10 +6,7 @@ use crate::{
         TypeRef, UsePath, WherePredicate,
     },
     parse::{FileId, span::Span},
-    semantic_ir::{
-        FieldRef, FunctionId, FunctionRef, ImplId, ItemOwner, StructId, TypeDefId, TypeDefRef,
-        TypePathContext, UnionId,
-    },
+    semantic_ir::{FieldRef, FunctionRef, ItemOwner, TypeDefRef, TypePathContext},
 };
 
 use super::{
@@ -154,11 +151,7 @@ impl CursorScanner<'_, '_> {
     }
 
     fn scan_local_definitions(&mut self) {
-        let Some(def_map) = self.analysis.def_map.def_map(self.target) else {
-            return;
-        };
-
-        for (local_def_idx, local_def) in def_map.local_defs().iter().enumerate() {
+        for (local_def_ref, local_def) in self.analysis.def_map.local_defs(self.target) {
             if local_def.file_id != self.file_id {
                 continue;
             }
@@ -173,10 +166,7 @@ impl CursorScanner<'_, '_> {
 
             self.candidates.push(SymbolCandidate {
                 symbol: SymbolAt::Def {
-                    def: DefId::Local(crate::def_map::LocalDefRef {
-                        target: self.target,
-                        local_def: crate::def_map::LocalDefId(local_def_idx),
-                    }),
+                    def: DefId::Local(local_def_ref),
                     span,
                 },
                 span,
@@ -185,11 +175,7 @@ impl CursorScanner<'_, '_> {
     }
 
     fn scan_import_paths(&mut self) {
-        let Some(def_map) = self.analysis.def_map.def_map(self.target) else {
-            return;
-        };
-
-        for import in def_map.imports() {
+        for (_, import) in self.analysis.def_map.imports(self.target) {
             if import.source.file_id != self.file_id {
                 continue;
             }
@@ -222,32 +208,19 @@ impl CursorScanner<'_, '_> {
     }
 
     fn scan_semantic_items(&mut self) {
-        let Some(target_ir) = self.analysis.semantic_ir.target_ir(self.target) else {
-            return;
-        };
-        let items = target_ir.items();
-
-        for (idx, data) in items.structs.iter().enumerate() {
+        for (ty, data) in self.analysis.semantic_ir.structs(self.target) {
             if data.source.file_id != self.file_id {
                 continue;
             }
-            let ty = TypeDefRef {
-                target: self.target,
-                id: TypeDefId::Struct(StructId(idx)),
-            };
             let context = TypePathContext::module(data.owner);
             self.scan_generic_params(context, &data.generics);
             self.scan_field_list(ty, context, &data.fields);
         }
 
-        for (idx, data) in items.unions.iter().enumerate() {
+        for (ty, data) in self.analysis.semantic_ir.unions(self.target) {
             if data.source.file_id != self.file_id {
                 continue;
             }
-            let ty = TypeDefRef {
-                target: self.target,
-                id: TypeDefId::Union(UnionId(idx)),
-            };
             let context = TypePathContext::module(data.owner);
             self.scan_generic_params(context, &data.generics);
             for (field_idx, field) in data.fields.iter().enumerate() {
@@ -262,7 +235,7 @@ impl CursorScanner<'_, '_> {
             }
         }
 
-        for data in &items.enums {
+        for (_, data) in self.analysis.semantic_ir.enums(self.target) {
             if data.source.file_id != self.file_id {
                 continue;
             }
@@ -273,7 +246,7 @@ impl CursorScanner<'_, '_> {
             }
         }
 
-        for data in &items.traits {
+        for (_, data) in self.analysis.semantic_ir.traits(self.target) {
             if data.source.file_id != self.file_id {
                 continue;
             }
@@ -282,11 +255,11 @@ impl CursorScanner<'_, '_> {
             self.scan_type_bounds(context, &data.super_traits);
         }
 
-        for (idx, data) in items.impls.iter().enumerate() {
+        for (impl_ref, data) in self.analysis.semantic_ir.impls(self.target) {
             if data.source.file_id != self.file_id {
                 continue;
             }
-            let Some(context) = self.owner_context(ItemOwner::Impl(ImplId(idx))) else {
+            let Some(context) = self.owner_context(ItemOwner::Impl(impl_ref.id)) else {
                 continue;
             };
             self.scan_generic_params(context, &data.generics);
@@ -296,7 +269,7 @@ impl CursorScanner<'_, '_> {
             self.push_type_ref(context, &data.self_ty);
         }
 
-        for (idx, data) in items.functions.iter().enumerate() {
+        for (function_ref, data) in self.analysis.semantic_ir.functions(self.target) {
             if data.source.file_id != self.file_id {
                 continue;
             }
@@ -309,13 +282,7 @@ impl CursorScanner<'_, '_> {
                             .map(|item| item.span)
                             .expect("function source item should exist")
                     });
-                self.push_function(
-                    FunctionRef {
-                        target: self.target,
-                        id: FunctionId(idx),
-                    },
-                    span,
-                );
+                self.push_function(function_ref, span);
             }
             let Some(context) = self.owner_context(data.owner) else {
                 continue;
@@ -331,7 +298,7 @@ impl CursorScanner<'_, '_> {
             }
         }
 
-        for data in &items.type_aliases {
+        for (_, data) in self.analysis.semantic_ir.type_aliases(self.target) {
             if data.source.file_id != self.file_id {
                 continue;
             }
@@ -345,7 +312,7 @@ impl CursorScanner<'_, '_> {
             }
         }
 
-        for data in &items.consts {
+        for (_, data) in self.analysis.semantic_ir.consts(self.target) {
             if data.source.file_id != self.file_id {
                 continue;
             }
@@ -358,7 +325,7 @@ impl CursorScanner<'_, '_> {
             }
         }
 
-        for data in &items.statics {
+        for (_, data) in self.analysis.semantic_ir.statics(self.target) {
             if data.source.file_id != self.file_id {
                 continue;
             }

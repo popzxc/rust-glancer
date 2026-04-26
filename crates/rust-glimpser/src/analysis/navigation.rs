@@ -99,11 +99,7 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
     }
 
     fn navigation_target_for_module(&self, module_ref: ModuleRef) -> Option<NavigationTarget> {
-        let module = self
-            .0
-            .def_map
-            .def_map(module_ref.target)?
-            .module(module_ref.module)?;
+        let module = self.0.def_map.module(module_ref)?;
         let (file_id, span) = match module.origin {
             ModuleOrigin::Root { file_id } => (file_id, None),
             ModuleOrigin::Inline {
@@ -126,12 +122,7 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
     }
 
     fn navigation_target_for_local_def(&self, local_def: LocalDefRef) -> Option<NavigationTarget> {
-        let local_def_data = self
-            .0
-            .def_map
-            .def_map(local_def.target)?
-            .local_defs()
-            .get(local_def.local_def.0)?;
+        let local_def_data = self.0.def_map.local_def(local_def)?;
 
         Some(NavigationTarget {
             kind: NavigationTargetKind::from_local_def_kind(local_def_data.kind),
@@ -274,14 +265,7 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
     }
 
     fn navigation_target_for_type_def(&self, ty: TypeDefRef) -> Option<NavigationTarget> {
-        let target_ir = self.0.semantic_ir.target_ir(ty.target)?;
-        let local_def = match ty.id {
-            crate::semantic_ir::TypeDefId::Struct(id) => {
-                target_ir.items().struct_data(id)?.local_def
-            }
-            crate::semantic_ir::TypeDefId::Enum(id) => target_ir.items().enum_data(id)?.local_def,
-            crate::semantic_ir::TypeDefId::Union(id) => target_ir.items().union_data(id)?.local_def,
-        };
+        let local_def = self.0.semantic_ir.local_def_for_type_def(ty)?;
 
         self.navigation_target_for_local_def(local_def)
     }

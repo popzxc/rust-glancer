@@ -16,7 +16,7 @@ use crate::{
         FileId, ParseDb, TargetId,
         span::{LineIndex, Span},
     },
-    semantic_ir::{FunctionId, FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitRef},
+    semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitRef},
 };
 
 use super::{
@@ -44,12 +44,12 @@ pub(super) fn build_db(
         })?;
         let mut targets = Vec::with_capacity(package_ir.targets().len());
 
-        for (target_idx, target_ir) in package_ir.targets().iter().enumerate() {
+        for (target_idx, _) in package_ir.targets().iter().enumerate() {
             let target_ref = TargetRef {
                 package: PackageSlot(package_idx),
                 target: TargetId(target_idx),
             };
-            let function_count = target_ir.items().functions.len();
+            let function_count = semantic_ir.function_count(target_ref);
             targets.push(
                 TargetLowering {
                     parse_package,
@@ -81,20 +81,17 @@ struct TargetLowering<'a> {
 
 impl<'a> TargetLowering<'a> {
     fn lower(mut self) -> anyhow::Result<TargetBodies> {
-        let target_ir = self
+        let functions = self
             .semantic_ir
-            .target_ir(self.target_ref)
-            .expect("target semantic IR should exist while lowering body IR");
+            .functions(self.target_ref)
+            .map(|(function_ref, function)| (function_ref, function.source))
+            .collect::<Vec<_>>();
 
-        for (function_idx, function) in target_ir.items().functions.iter().enumerate() {
-            let function_ref = FunctionRef {
-                target: self.target_ref,
-                id: FunctionId(function_idx),
-            };
+        for (function_ref, function_source) in functions {
             let Some(owner_module) = self.owner_module(function_ref) else {
                 continue;
             };
-            let Some(ast_fn) = self.find_function_ast(function.source)? else {
+            let Some(ast_fn) = self.find_function_ast(function_source)? else {
                 continue;
             };
             let Some(body_ast) = ast_fn.body() else {
@@ -103,10 +100,10 @@ impl<'a> TargetLowering<'a> {
 
             let line_index = self
                 .parse_package
-                .parsed_file(function.source.file_id)
+                .parsed_file(function_source.file_id)
                 .expect("function source file should exist while lowering body")
                 .line_index();
-            let source = source_for(function.source.file_id, ast_fn.syntax(), line_index);
+            let source = source_for(function_source.file_id, ast_fn.syntax(), line_index);
             let body = FunctionBodyLowering::new(function_ref, owner_module, source, line_index)
                 .lower(ast_fn, body_ast);
             let body_id = self.target_bodies.alloc_body(body);

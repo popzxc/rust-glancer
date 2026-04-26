@@ -59,6 +59,24 @@ pub struct FunctionRef {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TypeAliasRef {
+    pub target: TargetRef,
+    pub id: TypeAliasId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConstRef {
+    pub target: TargetRef,
+    pub id: ConstId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StaticRef {
+    pub target: TargetRef,
+    pub id: StaticId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FieldRef {
     pub owner: TypeDefRef,
     pub index: usize,

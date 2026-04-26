@@ -1,9 +1,7 @@
 use anyhow::Context as _;
 
 use crate::{
-    def_map::{
-        DefMap, DefMapDb, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleRef, TargetRef,
-    },
+    def_map::{DefMapDb, LocalDefRef, LocalImplRef, ModuleRef, TargetRef},
     item_tree::{
         ConstItem, ImplItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeRef,
         Package as ItemTreePackage, StaticItem, TraitItem, TypeAliasItem,
@@ -30,13 +28,13 @@ pub(super) fn build_db(item_tree: &ItemTreeDb, def_map: &DefMapDb) -> anyhow::Re
         })?;
         let mut targets = Vec::with_capacity(package.targets().len());
 
-        for (target_idx, target_def_map) in package.targets().iter().enumerate() {
+        for (target_idx, _) in package.targets().iter().enumerate() {
             let target_ref = TargetRef {
                 package: crate::def_map::PackageSlot(package_idx),
                 target: TargetId(target_idx),
             };
             targets.push(
-                TargetLowering::new(item_tree_package, target_ref, target_def_map)
+                TargetLowering::new(item_tree_package, target_ref, def_map)
                     .lower()
                     .with_context(|| {
                         format!("while attempting to lower semantic IR for target {target_idx}")
@@ -53,53 +51,55 @@ pub(super) fn build_db(item_tree: &ItemTreeDb, def_map: &DefMapDb) -> anyhow::Re
 struct TargetLowering<'a> {
     item_tree: &'a ItemTreePackage,
     target: TargetRef,
-    def_map: &'a DefMap,
+    def_map: &'a DefMapDb,
     target_ir: TargetIr,
 }
 
 impl<'a> TargetLowering<'a> {
-    fn new(item_tree: &'a ItemTreePackage, target: TargetRef, def_map: &'a DefMap) -> Self {
+    fn new(item_tree: &'a ItemTreePackage, target: TargetRef, def_map: &'a DefMapDb) -> Self {
         Self {
             item_tree,
             target,
             def_map,
-            target_ir: TargetIr::new(def_map.local_defs().len()),
+            target_ir: TargetIr::new(def_map.local_defs(target).count()),
         }
     }
 
     fn lower(mut self) -> anyhow::Result<TargetIr> {
-        for (local_def_idx, local_def) in self.def_map.local_defs().iter().enumerate() {
-            let local_def_ref = LocalDefRef {
-                target: self.target,
-                local_def: LocalDefId(local_def_idx),
-            };
-            let item = self.item(local_def.source)?;
+        let local_defs = self
+            .def_map
+            .local_defs(self.target)
+            .map(|(local_def_ref, local_def)| (local_def_ref, local_def.source, local_def.module))
+            .collect::<Vec<_>>();
+        for (local_def_ref, source, module) in local_defs {
+            let item = self.item(source)?;
             let owner = ModuleRef {
                 target: self.target,
-                module: local_def.module,
+                module,
             };
 
-            if let Some(item_id) =
-                self.lower_local_item(local_def_ref, local_def.source, owner, item)
-            {
+            if let Some(item_id) = self.lower_local_item(local_def_ref, source, owner, item) {
                 self.target_ir
-                    .set_local_item(LocalDefId(local_def_idx), item_id);
+                    .set_local_item(local_def_ref.local_def, item_id);
             }
         }
 
-        for (local_impl_idx, local_impl) in self.def_map.local_impls().iter().enumerate() {
-            let local_impl_ref = LocalImplRef {
-                target: self.target,
-                local_impl: LocalImplId(local_impl_idx),
-            };
-            let item = self.item(local_impl.source)?;
+        let local_impls = self
+            .def_map
+            .local_impls(self.target)
+            .map(|(local_impl_ref, local_impl)| {
+                (local_impl_ref, local_impl.source, local_impl.module)
+            })
+            .collect::<Vec<_>>();
+        for (local_impl_ref, source, module) in local_impls {
+            let item = self.item(source)?;
             let owner = ModuleRef {
                 target: self.target,
-                module: local_impl.module,
+                module,
             };
 
             if let ItemKind::Impl(impl_item) = &item.kind {
-                let impl_id = self.lower_impl(local_impl_ref, local_impl.source, owner, impl_item);
+                let impl_id = self.lower_impl(local_impl_ref, source, owner, impl_item);
                 self.target_ir.push_local_impl(impl_id);
             }
         }

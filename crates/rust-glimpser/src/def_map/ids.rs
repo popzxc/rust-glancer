@@ -48,6 +48,13 @@ pub struct LocalImplRef {
     pub local_impl: LocalImplId,
 }
 
+/// Stable reference to one import across the whole project analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ImportRef {
+    pub target: TargetRef,
+    pub import: ImportId,
+}
+
 /// Namespace-resolved target-level definition reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DefId {

@@ -8,9 +8,9 @@ mod tests;
 
 pub(crate) use self::{
     data::{FunctionData, SemanticIrDb},
-    ids::{
-        FieldRef, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, ItemOwner, StructId, TraitRef,
-        TypeDefId, TypeDefRef, UnionId,
-    },
+    ids::{FieldRef, FunctionId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef},
     resolution::{SemanticTypePathResolution, TypePathContext},
 };
+
+#[cfg(test)]
+pub(crate) use self::ids::{ItemId, TypeDefId};

@@ -11,9 +11,9 @@ use crate::{
 
 use super::{
     ids::{
-        AssocItemId, ConstId, EnumId, FieldRef, FunctionId, FunctionRef, ImplId, ImplRef, ItemId,
-        ItemOwner, StaticId, StructId, TraitId, TraitImplRef, TraitRef, TypeAliasId, TypeDefId,
-        TypeDefRef, UnionId,
+        AssocItemId, ConstId, ConstRef, EnumId, FieldRef, FunctionId, FunctionRef, ImplId, ImplRef,
+        ItemId, ItemOwner, StaticId, StaticRef, StructId, TraitId, TraitImplRef, TraitRef,
+        TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
     },
     lower,
     resolution::{self, SemanticTypePathResolution, TypePathContext},
@@ -79,6 +79,258 @@ impl SemanticIrDb {
     /// Returns one target semantic IR by project-wide target reference.
     pub(crate) fn target_ir(&self, target: TargetRef) -> Option<&TargetIr> {
         self.package(target.package)?.target(target.target)
+    }
+
+    /// Iterates over every target IR together with its project-wide target reference.
+    pub(crate) fn target_irs(&self) -> impl Iterator<Item = (TargetRef, &TargetIr)> {
+        self.packages
+            .iter()
+            .enumerate()
+            .flat_map(|(package_idx, package)| {
+                package
+                    .targets()
+                    .iter()
+                    .enumerate()
+                    .map(move |(target_idx, target_ir)| {
+                        (
+                            TargetRef {
+                                package: PackageSlot(package_idx),
+                                target: TargetId(target_idx),
+                            },
+                            target_ir,
+                        )
+                    })
+            })
+    }
+
+    /// Iterates over one target's structs together with stable project-wide references.
+    pub(crate) fn structs(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (TypeDefRef, &StructData)> + '_ {
+        self.target_ir(target)
+            .into_iter()
+            .flat_map(move |target_ir| {
+                target_ir
+                    .items()
+                    .structs
+                    .iter()
+                    .enumerate()
+                    .map(move |(idx, data)| {
+                        (
+                            TypeDefRef {
+                                target,
+                                id: TypeDefId::Struct(StructId(idx)),
+                            },
+                            data,
+                        )
+                    })
+            })
+    }
+
+    /// Iterates over one target's unions together with stable project-wide references.
+    pub(crate) fn unions(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (TypeDefRef, &UnionData)> + '_ {
+        self.target_ir(target)
+            .into_iter()
+            .flat_map(move |target_ir| {
+                target_ir
+                    .items()
+                    .unions
+                    .iter()
+                    .enumerate()
+                    .map(move |(idx, data)| {
+                        (
+                            TypeDefRef {
+                                target,
+                                id: TypeDefId::Union(UnionId(idx)),
+                            },
+                            data,
+                        )
+                    })
+            })
+    }
+
+    /// Iterates over one target's enums together with stable project-wide references.
+    pub(crate) fn enums(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (TypeDefRef, &EnumData)> + '_ {
+        self.target_ir(target)
+            .into_iter()
+            .flat_map(move |target_ir| {
+                target_ir
+                    .items()
+                    .enums
+                    .iter()
+                    .enumerate()
+                    .map(move |(idx, data)| {
+                        (
+                            TypeDefRef {
+                                target,
+                                id: TypeDefId::Enum(EnumId(idx)),
+                            },
+                            data,
+                        )
+                    })
+            })
+    }
+
+    /// Iterates over one target's traits together with stable project-wide references.
+    pub(crate) fn traits(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (TraitRef, &TraitData)> + '_ {
+        self.target_ir(target)
+            .into_iter()
+            .flat_map(move |target_ir| {
+                target_ir
+                    .items()
+                    .traits
+                    .iter()
+                    .enumerate()
+                    .map(move |(idx, data)| {
+                        (
+                            TraitRef {
+                                target,
+                                id: TraitId(idx),
+                            },
+                            data,
+                        )
+                    })
+            })
+    }
+
+    /// Iterates over one target's impls together with stable project-wide references.
+    pub(crate) fn impls(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (ImplRef, &ImplData)> + '_ {
+        self.target_ir(target)
+            .into_iter()
+            .flat_map(move |target_ir| {
+                target_ir
+                    .items()
+                    .impls
+                    .iter()
+                    .enumerate()
+                    .map(move |(idx, data)| {
+                        (
+                            ImplRef {
+                                target,
+                                id: ImplId(idx),
+                            },
+                            data,
+                        )
+                    })
+            })
+    }
+
+    /// Iterates over one target's functions together with stable project-wide references.
+    pub(crate) fn functions(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (FunctionRef, &FunctionData)> + '_ {
+        self.target_ir(target)
+            .into_iter()
+            .flat_map(move |target_ir| {
+                target_ir
+                    .items()
+                    .functions
+                    .iter()
+                    .enumerate()
+                    .map(move |(idx, data)| {
+                        (
+                            FunctionRef {
+                                target,
+                                id: FunctionId(idx),
+                            },
+                            data,
+                        )
+                    })
+            })
+    }
+
+    /// Returns the number of function slots in one target.
+    pub(crate) fn function_count(&self, target: TargetRef) -> usize {
+        self.functions(target).count()
+    }
+
+    /// Iterates over one target's type aliases together with stable project-wide references.
+    pub(crate) fn type_aliases(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (TypeAliasRef, &TypeAliasData)> + '_ {
+        self.target_ir(target)
+            .into_iter()
+            .flat_map(move |target_ir| {
+                target_ir
+                    .items()
+                    .type_aliases
+                    .iter()
+                    .enumerate()
+                    .map(move |(idx, data)| {
+                        (
+                            TypeAliasRef {
+                                target,
+                                id: TypeAliasId(idx),
+                            },
+                            data,
+                        )
+                    })
+            })
+    }
+
+    /// Iterates over one target's consts together with stable project-wide references.
+    pub(crate) fn consts(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (ConstRef, &ConstData)> + '_ {
+        self.target_ir(target)
+            .into_iter()
+            .flat_map(move |target_ir| {
+                target_ir
+                    .items()
+                    .consts
+                    .iter()
+                    .enumerate()
+                    .map(move |(idx, data)| {
+                        (
+                            ConstRef {
+                                target,
+                                id: ConstId(idx),
+                            },
+                            data,
+                        )
+                    })
+            })
+    }
+
+    /// Iterates over one target's statics together with stable project-wide references.
+    pub(crate) fn statics(
+        &self,
+        target: TargetRef,
+    ) -> impl Iterator<Item = (StaticRef, &StaticData)> + '_ {
+        self.target_ir(target)
+            .into_iter()
+            .flat_map(move |target_ir| {
+                target_ir
+                    .items()
+                    .statics
+                    .iter()
+                    .enumerate()
+                    .map(move |(idx, data)| {
+                        (
+                            StaticRef {
+                                target,
+                                id: StaticId(idx),
+                            },
+                            data,
+                        )
+                    })
+            })
     }
 
     pub(crate) fn type_defs_for_path(
@@ -162,6 +414,29 @@ impl SemanticIrDb {
         })
     }
 
+    pub(crate) fn function_for_local_def(&self, def: LocalDefRef) -> Option<FunctionRef> {
+        let item = self
+            .target_ir(def.target)?
+            .item_for_local_def(def.local_def)?;
+        let ItemId::Function(id) = item else {
+            return None;
+        };
+
+        Some(FunctionRef {
+            target: def.target,
+            id,
+        })
+    }
+
+    pub(crate) fn local_def_for_type_def(&self, ty: TypeDefRef) -> Option<LocalDefRef> {
+        let target_ir = self.target_ir(ty.target)?;
+        match ty.id {
+            TypeDefId::Struct(id) => Some(target_ir.items().struct_data(id)?.local_def),
+            TypeDefId::Enum(id) => Some(target_ir.items().enum_data(id)?.local_def),
+            TypeDefId::Union(id) => Some(target_ir.items().union_data(id)?.local_def),
+        }
+    }
+
     pub(crate) fn impl_data(&self, impl_ref: ImplRef) -> Option<&ImplData> {
         self.target_ir(impl_ref.target)?
             .items()
@@ -178,6 +453,24 @@ impl SemanticIrDb {
         self.target_ir(function_ref.target)?
             .items()
             .function_data(function_ref.id)
+    }
+
+    pub(crate) fn type_alias_data(&self, type_alias_ref: TypeAliasRef) -> Option<&TypeAliasData> {
+        self.target_ir(type_alias_ref.target)?
+            .items()
+            .type_alias_data(type_alias_ref.id)
+    }
+
+    pub(crate) fn const_data(&self, const_ref: ConstRef) -> Option<&ConstData> {
+        self.target_ir(const_ref.target)?
+            .items()
+            .const_data(const_ref.id)
+    }
+
+    pub(crate) fn static_data(&self, static_ref: StaticRef) -> Option<&StaticData> {
+        self.target_ir(static_ref.target)?
+            .items()
+            .static_data(static_ref.id)
     }
 
     pub(crate) fn fields_for_type(&self, ty: TypeDefRef) -> Vec<FieldRef> {
@@ -412,24 +705,8 @@ impl PackageIr {
 
 impl SemanticIrDb {
     pub(super) fn impl_refs(&self) -> Vec<ImplRef> {
-        self.packages
-            .iter()
-            .enumerate()
-            .flat_map(|(package_idx, package)| {
-                package
-                    .targets
-                    .iter()
-                    .enumerate()
-                    .flat_map(move |(target_idx, target)| {
-                        (0..target.items.impls.len()).map(move |impl_idx| ImplRef {
-                            target: TargetRef {
-                                package: PackageSlot(package_idx),
-                                target: TargetId(target_idx),
-                            },
-                            id: ImplId(impl_idx),
-                        })
-                    })
-            })
+        self.target_irs()
+            .flat_map(|(target, _)| self.impls(target).map(|(impl_ref, _)| impl_ref))
             .collect()
     }
 
