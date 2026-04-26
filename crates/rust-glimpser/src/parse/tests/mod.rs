@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
     parse::ParseDb,
-    test_utils::{CrateFixture, fixture_crate, test_file},
+    test_fixture::{CrateFixture, fixture_crate, test_file},
     workspace_metadata::WorkspaceMetadata,
 };
 

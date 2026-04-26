@@ -9,13 +9,13 @@ use crate::{
     item_tree::ItemTreeDb,
     parse::{FileId, ParseDb, span::Span},
     semantic_ir::{FunctionRef, ItemOwner, SemanticIrDb, TraitRef, TypeDefId, TypeDefRef},
-    test_utils::{FixtureMarkers, fixture_crate_with_markers},
+    test_fixture::{FixtureMarkers, fixture_crate_with_markers},
     workspace_metadata::{TargetKind, WorkspaceMetadata},
 };
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
-    let db = AnalysisFixtureDb::build(fixture.workspace_metadata());
+    let db = AnalysisFixtureDb::build(WorkspaceMetadata::from_cargo(fixture.metadata()));
     let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
     expect.assert_eq(&actual);

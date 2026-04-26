@@ -3,39 +3,89 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    Project,
     body_ir::{
+        BodyIrDb,
         data::{
             BindingData, BodyData, BodyItemData, BodyResolution, BodySource, BodyTy, ExprData,
             ExprKind, StmtKind,
         },
         ids::{BindingId, BodyId, BodyItemId, BodyItemRef, ExprId, StmtId},
     },
-    def_map::{DefId, LocalDefRef, ModuleRef, TargetRef},
+    def_map::{DefId, DefMapDb, LocalDefRef, ModuleRef, TargetRef},
+    item_tree::ItemTreeDb,
+    parse::ParseDb,
     semantic_ir::{
-        FieldRef, FunctionRef, ImplRef, ItemId, ItemOwner, TraitRef, TypeDefId, TypeDefRef,
+        FieldRef, FunctionRef, ImplRef, ItemId, ItemOwner, SemanticIrDb, TraitRef, TypeDefId,
+        TypeDefRef,
     },
-    test_utils::{fixture_crate, snapshot},
+    test_fixture::fixture_crate,
+    test_utils::snapshot,
+    workspace_metadata::WorkspaceMetadata,
 };
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
-    let project = fixture_crate(fixture).project();
-    let actual = ProjectBodyIrSnapshot::new(&project).render();
+    let db = BodyIrFixtureDb::build(fixture);
+    let actual = ProjectBodyIrSnapshot::new(&db).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
 
+struct BodyIrFixtureDb {
+    parse: ParseDb,
+    def_map: DefMapDb,
+    semantic_ir: SemanticIrDb,
+    body_ir: BodyIrDb,
+}
+
+impl BodyIrFixtureDb {
+    fn build(fixture: &str) -> Self {
+        let fixture = fixture_crate(fixture);
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+        let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
+        let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
+        let def_map = DefMapDb::build(&workspace, &parse, &item_tree)
+            .expect("fixture def map db should build");
+        let semantic_ir =
+            SemanticIrDb::build(&item_tree, &def_map).expect("fixture semantic ir db should build");
+        let body_ir = BodyIrDb::build(&parse, &item_tree, &def_map, &semantic_ir)
+            .expect("fixture body ir db should build");
+
+        Self {
+            parse,
+            def_map,
+            semantic_ir,
+            body_ir,
+        }
+    }
+
+    fn parse_db(&self) -> &ParseDb {
+        &self.parse
+    }
+
+    fn def_map_db(&self) -> &DefMapDb {
+        &self.def_map
+    }
+
+    fn semantic_ir_db(&self) -> &SemanticIrDb {
+        &self.semantic_ir
+    }
+
+    fn body_ir_db(&self) -> &BodyIrDb {
+        &self.body_ir
+    }
+}
+
 struct ProjectBodyIrSnapshot<'a> {
-    project: &'a Project,
+    project: &'a BodyIrFixtureDb,
 }
 
 impl<'a> ProjectBodyIrSnapshot<'a> {
-    fn new(project: &'a Project) -> Self {
+    fn new(project: &'a BodyIrFixtureDb) -> Self {
         Self { project }
     }
 
     fn render(&self) -> String {
-        snapshot::sorted_packages(self.project)
+        snapshot::sorted_packages(self.project.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
                 let target_dumps = snapshot::sorted_targets(package)
@@ -63,7 +113,7 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
 }
 
 struct TargetBodyIrSnapshot<'a> {
-    project: &'a Project,
+    project: &'a BodyIrFixtureDb,
     target_ref: TargetRef,
     target_name: &'a str,
     target_kind: String,

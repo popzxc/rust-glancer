@@ -3,12 +3,18 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    Project,
+    def_map::DefMapDb,
     def_map::{ModuleId, ModuleRef, Path, PathSegment, TargetRef},
+    item_tree::ItemTreeDb,
     item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel},
-    semantic_ir::ids::{FunctionRef, ImplRef, TraitRef, TypeDefId, TypeDefRef},
-    test_utils::{fixture_crate, snapshot},
-    workspace_metadata::TargetKind,
+    parse::ParseDb,
+    semantic_ir::{
+        SemanticIrDb,
+        ids::{FunctionRef, ImplRef, TraitRef, TypeDefId, TypeDefRef},
+    },
+    test_fixture::fixture_crate,
+    test_utils::snapshot,
+    workspace_metadata::{TargetKind, WorkspaceMetadata},
 };
 
 use super::super::{
@@ -17,8 +23,8 @@ use super::super::{
 };
 
 pub(super) fn check_project_semantic_ir(fixture: &str, expect: Expect) {
-    let project = fixture_crate(fixture).project();
-    let actual = ProjectSemanticIrSnapshot::new(&project).render();
+    let db = SemanticIrFixtureDb::build(fixture);
+    let actual = ProjectSemanticIrSnapshot::new(&db).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
@@ -28,8 +34,8 @@ pub(super) fn check_project_semantic_queries(
     queries: &[SemanticQuery],
     expect: Expect,
 ) {
-    let project = fixture_crate(fixture).project();
-    let actual = ProjectSemanticQuerySnapshot::new(&project, queries).render();
+    let db = SemanticIrFixtureDb::build(fixture);
+    let actual = ProjectSemanticQuerySnapshot::new(&db, queries).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
@@ -60,17 +66,54 @@ impl SemanticQuery {
     }
 }
 
+struct SemanticIrFixtureDb {
+    parse: ParseDb,
+    def_map: DefMapDb,
+    semantic_ir: SemanticIrDb,
+}
+
+impl SemanticIrFixtureDb {
+    fn build(fixture: &str) -> Self {
+        let fixture = fixture_crate(fixture);
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+        let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
+        let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
+        let def_map = DefMapDb::build(&workspace, &parse, &item_tree)
+            .expect("fixture def map db should build");
+        let semantic_ir =
+            SemanticIrDb::build(&item_tree, &def_map).expect("fixture semantic ir db should build");
+
+        Self {
+            parse,
+            def_map,
+            semantic_ir,
+        }
+    }
+
+    fn parse_db(&self) -> &ParseDb {
+        &self.parse
+    }
+
+    fn def_map_db(&self) -> &DefMapDb {
+        &self.def_map
+    }
+
+    fn semantic_ir_db(&self) -> &SemanticIrDb {
+        &self.semantic_ir
+    }
+}
+
 struct ProjectSemanticIrSnapshot<'a> {
-    project: &'a Project,
+    project: &'a SemanticIrFixtureDb,
 }
 
 impl<'a> ProjectSemanticIrSnapshot<'a> {
-    fn new(project: &'a Project) -> Self {
+    fn new(project: &'a SemanticIrFixtureDb) -> Self {
         Self { project }
     }
 
     fn render(&self) -> String {
-        snapshot::sorted_packages(self.project)
+        snapshot::sorted_packages(self.project.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
                 let target_dumps = snapshot::sorted_targets(package)
@@ -98,12 +141,12 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
 }
 
 struct ProjectSemanticQuerySnapshot<'a> {
-    project: &'a Project,
+    project: &'a SemanticIrFixtureDb,
     queries: &'a [SemanticQuery],
 }
 
 impl<'a> ProjectSemanticQuerySnapshot<'a> {
-    fn new(project: &'a Project, queries: &'a [SemanticQuery]) -> Self {
+    fn new(project: &'a SemanticIrFixtureDb, queries: &'a [SemanticQuery]) -> Self {
         Self { project, queries }
     }
 
@@ -444,7 +487,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
 }
 
 struct TargetSemanticIrSnapshot<'a> {
-    project: &'a Project,
+    project: &'a SemanticIrFixtureDb,
     target_ref: TargetRef,
     target_name: &'a str,
     target_kind: String,

@@ -3,55 +3,71 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    Project,
     item_tree::{
-        FieldItem, FieldList, ItemKind, ItemNode, ItemTreeId, ModuleSource, ParamKind,
+        FieldItem, FieldList, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ModuleSource, ParamKind,
         VisibilityLevel,
     },
-    parse::{Package, Target},
-    test_utils::{fixture_crate, snapshot},
+    parse::{Package, ParseDb, Target},
+    test_fixture::fixture_crate,
+    test_utils::snapshot,
+    workspace_metadata::WorkspaceMetadata,
 };
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
-    let project = fixture_crate(fixture).project();
-    let actual = ProjectItemTreeSnapshot::new(&project, SnapshotMode::Structure).render();
+    let db = ItemTreeFixtureDb::build(fixture);
+    let actual = ProjectItemTreeSnapshot::new(&db, SnapshotMode::Structure).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
 
 pub(super) fn check_project_item_tree_with_declarations(fixture: &str, expect: Expect) {
-    let project = fixture_crate(fixture).project();
-    let actual = ProjectItemTreeSnapshot::new(&project, SnapshotMode::Declarations).render();
+    let db = ItemTreeFixtureDb::build(fixture);
+    let actual = ProjectItemTreeSnapshot::new(&db, SnapshotMode::Declarations).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
 
 pub(super) fn check_project_item_tree_with_spans(fixture: &str, expect: Expect) {
-    let project = fixture_crate(fixture).project();
-    let actual = ProjectItemTreeSnapshot::new(&project, SnapshotMode::Spans).render();
+    let db = ItemTreeFixtureDb::build(fixture);
+    let actual = ProjectItemTreeSnapshot::new(&db, SnapshotMode::Spans).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
+}
+
+struct ItemTreeFixtureDb {
+    parse: ParseDb,
+    item_tree: ItemTreeDb,
+}
+
+impl ItemTreeFixtureDb {
+    fn build(fixture: &str) -> Self {
+        let fixture = fixture_crate(fixture);
+        let metadata = WorkspaceMetadata::from_cargo(fixture.metadata());
+        let mut parse = ParseDb::build(&metadata).expect("fixture parse db should build");
+        let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
+        Self { parse, item_tree }
+    }
 }
 
 /// Project-level item-tree snapshot context.
 /// Renders package sections such as `package demo`.
 struct ProjectItemTreeSnapshot<'a> {
-    project: &'a Project,
+    db: &'a ItemTreeFixtureDb,
     mode: SnapshotMode,
 }
 
 impl<'a> ProjectItemTreeSnapshot<'a> {
-    fn new(project: &'a Project, mode: SnapshotMode) -> Self {
-        Self { project, mode }
+    fn new(db: &'a ItemTreeFixtureDb, mode: SnapshotMode) -> Self {
+        Self { db, mode }
     }
 
     fn render(&self) -> String {
-        let package_dumps = snapshot::sorted_packages(self.project)
+        let package_dumps = snapshot::sorted_packages(&self.db.parse)
             .into_iter()
             .map(|(package_slot, package)| {
                 let item_trees = self
-                    .project
-                    .item_tree_db()
+                    .db
+                    .item_tree
                     .package(package_slot)
                     .expect("package item trees should exist while rendering snapshot");
                 PackageItemTreeSnapshot {

@@ -1,16 +1,10 @@
 use crate::{
-    Project,
     item_tree::{FileTree, Package as ItemTreePackage, TargetRoot},
-    parse::{FileId, Package, Target},
+    parse::{FileId, Package, ParseDb, Target},
 };
 
-pub(crate) fn sorted_packages(project: &Project) -> Vec<(usize, &Package)> {
-    let mut packages = project
-        .parse_db()
-        .packages()
-        .iter()
-        .enumerate()
-        .collect::<Vec<_>>();
+pub(crate) fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
+    let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
     packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
     packages
 }

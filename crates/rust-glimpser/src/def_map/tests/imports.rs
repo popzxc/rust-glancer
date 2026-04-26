@@ -1,11 +1,10 @@
 use expect_test::expect;
 
 use super::utils;
-use crate::test_utils::fixture_crate;
 
 #[test]
 fn resolves_nested_self_imports_without_binding_literal_self() {
-    let fixture = fixture_crate(
+    let project = utils::DefMapFixtureDb::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -23,7 +22,6 @@ mod bar {
 use bar::foo::{self, self as imported_foo, work};
 "#,
     );
-    let project = fixture.analyze();
     let target = project.lib("self_import_fixture");
 
     target.entry("foo").assert_module_named(
@@ -44,7 +42,7 @@ use bar::foo::{self, self as imported_foo, work};
 
 #[test]
 fn ignores_hidden_renames() {
-    let fixture = fixture_crate(
+    let project = utils::DefMapFixtureDb::build(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -78,7 +76,6 @@ extern crate dep as _;
 use bar::work as _;
 "#,
     );
-    let project = fixture.analyze();
     let target = project.lib("app");
 
     target

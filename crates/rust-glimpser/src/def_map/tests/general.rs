@@ -1,7 +1,6 @@
 use expect_test::expect;
 
 use super::utils;
-use crate::test_utils::fixture_crate;
 
 #[test]
 fn dumps_workspace_resolution_flow() {
@@ -198,7 +197,7 @@ pub mod nested {
 
 #[test]
 fn keeps_type_and_value_bindings_separate() {
-    let fixture = fixture_crate(
+    let project = utils::DefMapFixtureDb::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -215,7 +214,6 @@ pub fn Thing() -> Thing {
 }
 "#,
     );
-    let project = fixture.analyze();
 
     project
         .lib("namespace_fixture")

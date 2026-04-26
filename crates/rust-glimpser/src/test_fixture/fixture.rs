@@ -7,21 +7,17 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{Project, WorkspaceMetadata};
-
-use super::query::FixtureProject;
-
 const CURSOR_MARKER_NAME: &str = "0";
 
 /// Parsed fixture files and source markers before they are materialized on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FixtureSpec {
+pub struct FixtureSpec {
     files: Vec<FixtureFile>,
     markers: FixtureMarkers,
 }
 
 impl FixtureSpec {
-    pub(crate) fn parse(spec: &str) -> Self {
+    pub fn parse(spec: &str) -> Self {
         let spec = Self::trim_fixture_indent(spec);
         let mut files = Vec::new();
         let mut markers = FixtureMarkers::default();
@@ -74,7 +70,11 @@ impl FixtureSpec {
         Self { files, markers }
     }
 
-    pub(crate) fn markers(&self) -> &FixtureMarkers {
+    pub fn files(&self) -> &[FixtureFile] {
+        &self.files
+    }
+
+    pub fn markers(&self) -> &FixtureMarkers {
         &self.markers
     }
 
@@ -220,14 +220,24 @@ impl FixtureSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FixtureFile {
+pub struct FixtureFile {
     relative_path: String,
     contents: String,
 }
 
+impl FixtureFile {
+    pub fn relative_path(&self) -> &str {
+        &self.relative_path
+    }
+
+    pub fn contents(&self) -> &str {
+        &self.contents
+    }
+}
+
 /// Source marker metadata stripped from a parsed fixture.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct FixtureMarkers {
+pub struct FixtureMarkers {
     markers: BTreeMap<String, Vec<FixtureMarker>>,
 }
 
@@ -235,7 +245,7 @@ impl FixtureMarkers {
     /// Returns one cursor marker by name.
     ///
     /// `$0` is exposed as marker name `"0"`. Named markers use `$name$`.
-    pub(crate) fn position(&self, name: &str) -> &FixtureMarker {
+    pub fn position(&self, name: &str) -> &FixtureMarker {
         let positions = self
             .markers
             .get(name)
@@ -256,9 +266,9 @@ impl FixtureMarkers {
 
 /// One stripped source marker position.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FixtureMarker {
-    pub(crate) path: String,
-    pub(crate) offset: u32,
+pub struct FixtureMarker {
+    pub path: String,
+    pub offset: u32,
 }
 
 /// Creates temporary on-disk crate fixtures from inline file contents.
@@ -266,7 +276,7 @@ pub(crate) struct FixtureMarker {
 /// Parser tests should exercise the same `cargo metadata` path as production code, but many of
 /// them only need a tiny crate with one or two files. This helper lets those tests define the
 /// exact crate layout they need without depending on the larger checked-in fixture projects.
-pub(crate) struct CrateFixture {
+pub struct CrateFixture {
     root: PathBuf,
 }
 
@@ -284,7 +294,7 @@ impl CrateFixture {
     ///
     /// Cargo metadata still remains the source of truth for package/target/dependency structure,
     /// so rust-analyzer header metadata such as `crate:` or `deps:` is intentionally not parsed.
-    pub(crate) fn from_fixture_spec(spec: &str) -> Self {
+    pub fn from_fixture_spec(spec: &str) -> Self {
         Self::from_parsed_fixture(FixtureSpec::parse(spec))
     }
 
@@ -316,33 +326,20 @@ impl CrateFixture {
     }
 
     /// Resolves a relative path within the fixture root.
-    pub(crate) fn path(&self, relative_path: &str) -> PathBuf {
+    pub fn path(&self, relative_path: &str) -> PathBuf {
         self.root.join(relative_path)
     }
 
     /// Loads cargo metadata for the fixture crate.
-    pub(crate) fn metadata(&self) -> cargo_metadata::Metadata {
+    pub fn metadata(&self) -> cargo_metadata::Metadata {
         cargo_metadata::MetadataCommand::new()
             .manifest_path(self.manifest_path())
             .exec()
             .expect("fixture metadata should load")
     }
 
-    /// Loads normalized workspace metadata for the fixture crate.
-    pub(crate) fn workspace_metadata(&self) -> WorkspaceMetadata {
-        WorkspaceMetadata::from_cargo(self.metadata())
-    }
-
-    /// Runs full project analysis for the fixture and exposes a test query API.
-    pub(crate) fn analyze(&self) -> FixtureProject {
-        FixtureProject {
-            project: Project::build(self.workspace_metadata())
-                .expect("fixture project should analyze"),
-        }
-    }
-
     /// Returns the package described by the fixture's root manifest.
-    pub(crate) fn package(&self) -> cargo_metadata::Package {
+    pub fn package(&self) -> cargo_metadata::Package {
         let metadata = self.metadata();
 
         metadata
@@ -350,11 +347,6 @@ impl CrateFixture {
             .cloned()
             .or_else(|| metadata.workspace_packages().into_iter().next().cloned())
             .expect("fixture package should be present in metadata")
-    }
-
-    /// Builds the full project pipeline for the fixture crate.
-    pub(crate) fn project(&self) -> Project {
-        Project::build(self.workspace_metadata()).expect("fixture project should build")
     }
 
     fn manifest_path(&self) -> PathBuf {
@@ -403,7 +395,7 @@ pub fn fixture_crate(fixture: &str) -> CrateFixture {
     CrateFixture::from_fixture_spec(fixture)
 }
 
-pub(crate) fn fixture_crate_with_markers(fixture: &str) -> (CrateFixture, FixtureMarkers) {
+pub fn fixture_crate_with_markers(fixture: &str) -> (CrateFixture, FixtureMarkers) {
     let parsed = FixtureSpec::parse(fixture);
     let markers = parsed.markers().clone();
     (CrateFixture::from_parsed_fixture(parsed), markers)
@@ -411,7 +403,7 @@ pub(crate) fn fixture_crate_with_markers(fixture: &str) -> (CrateFixture, Fixtur
 
 #[cfg(test)]
 mod tests {
-    use super::FixtureSpec;
+    use crate::test_fixture::FixtureSpec;
 
     #[test]
     fn strips_shared_source_markers_from_fixture_files() {
@@ -432,14 +424,14 @@ pub fn use_it(user: User) {
 "#,
         );
         let source = fixture
-            .files
+            .files()
             .iter()
-            .find(|file| file.relative_path == "src/lib.rs")
+            .find(|file| file.relative_path() == "src/lib.rs")
             .expect("source file should exist in parsed fixture");
 
-        assert!(source.contents.contains("let local = local;"));
-        assert!(source.contents.contains("user.id();"));
-        assert!(source.contents.contains(r#""$0 and $name$""#));
+        assert!(source.contents().contains("let local = local;"));
+        assert!(source.contents().contains("user.id();"));
+        assert!(source.contents().contains(r#""$0 and $name$""#));
 
         let goto = fixture.markers.position("goto");
         assert_eq!(goto.path, "src/lib.rs");
@@ -447,7 +439,7 @@ pub fn use_it(user: User) {
             goto.offset,
             u32::try_from(
                 source
-                    .contents
+                    .contents()
                     .find("local;")
                     .expect("local should be present")
                     + 3
@@ -461,7 +453,7 @@ pub fn use_it(user: User) {
             cursor.offset,
             u32::try_from(
                 source
-                    .contents
+                    .contents()
                     .find("id();")
                     .expect("method name should be present")
             )

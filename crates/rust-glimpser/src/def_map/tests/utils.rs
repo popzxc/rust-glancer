@@ -1,20 +1,20 @@
 use expect_test::Expect;
 
 use crate::{
-    Project,
     def_map::{
-        DefId, DefMap, ImportData, ImportKind, ModuleId, ModuleRef, Path, PathSegment,
+        DefId, DefMap, DefMapDb, ImportData, ImportKind, ModuleId, ModuleRef, Path, PathSegment,
         ResolvePathResult, ScopeBinding, ScopeEntry, TargetRef,
     },
-    item_tree::VisibilityLevel,
-    parse::{Package, Target},
-    test_utils::{fixture_crate, snapshot},
-    workspace_metadata::TargetKind,
+    item_tree::{ItemTreeDb, VisibilityLevel},
+    parse::{Package, ParseDb, Target},
+    test_fixture::fixture_crate,
+    test_utils::snapshot,
+    workspace_metadata::{TargetKind, WorkspaceMetadata},
 };
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
-    let project = fixture_crate(fixture).project();
-    let actual = ProjectDefMapSnapshot::new(&project).render();
+    let db = DefMapFixtureDb::build(fixture);
+    let actual = ProjectDefMapSnapshot::new(&db).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
@@ -24,8 +24,8 @@ pub(super) fn check_project_path_resolution(
     queries: &[PathResolutionQuery],
     expect: Expect,
 ) {
-    let project = fixture_crate(fixture).project();
-    let actual = ProjectPathResolutionSnapshot::new(&project, queries).render();
+    let db = DefMapFixtureDb::build(fixture);
+    let actual = ProjectPathResolutionSnapshot::new(&db, queries).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
@@ -52,19 +52,217 @@ impl PathResolutionQuery {
     }
 }
 
+pub(super) struct DefMapFixtureDb {
+    parse: ParseDb,
+    def_map: DefMapDb,
+}
+
+impl DefMapFixtureDb {
+    pub(super) fn build(fixture: &str) -> Self {
+        let fixture = fixture_crate(fixture);
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+        let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
+        let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
+        let def_map = DefMapDb::build(&workspace, &parse, &item_tree)
+            .expect("fixture def map db should build");
+        Self { parse, def_map }
+    }
+
+    fn parse_db(&self) -> &ParseDb {
+        &self.parse
+    }
+
+    pub(super) fn def_map_db(&self) -> &DefMapDb {
+        &self.def_map
+    }
+
+    /// Returns the library target for one package.
+    pub(super) fn lib(&self, package_name: &str) -> FixtureTarget<'_> {
+        self.target(package_name, TargetKind::Lib)
+    }
+
+    fn target(&self, package_name: &str, expected_kind: TargetKind) -> FixtureTarget<'_> {
+        let (package_slot, package) = self
+            .parse_db()
+            .packages()
+            .iter()
+            .enumerate()
+            .find(|(_, package)| package.package_name() == package_name)
+            .unwrap_or_else(|| panic!("fixture package `{package_name}` should exist"));
+        let target = package
+            .targets()
+            .iter()
+            .find(|target| target.kind == expected_kind)
+            .unwrap_or_else(|| {
+                panic!(
+                    "fixture package `{package_name}` should have a {:?} target",
+                    expected_kind
+                )
+            });
+
+        FixtureTarget {
+            db: self,
+            package,
+            target,
+            target_ref: TargetRef {
+                package: crate::def_map::PackageSlot(package_slot),
+                target: target.id,
+            },
+        }
+    }
+}
+
+/// Target-scoped assertion helper used by behavior-style def-map tests.
+pub(super) struct FixtureTarget<'a> {
+    db: &'a DefMapFixtureDb,
+    package: &'a Package,
+    target: &'a Target,
+    target_ref: TargetRef,
+}
+
+impl<'a> FixtureTarget<'a> {
+    /// Looks up one textual name in the root module scope of this target.
+    pub(super) fn entry(&self, name: &str) -> FixtureEntry<'a> {
+        let entry = self
+            .def_map()
+            .root_module()
+            .and_then(|root_module| self.def_map().module(root_module))
+            .and_then(|module| module.scope.entry(name));
+        FixtureEntry {
+            db: self.db,
+            package_name: self.package.package_name(),
+            target: self.target,
+            name: name.to_string(),
+            entry,
+        }
+    }
+
+    fn def_map(&self) -> &'a DefMap {
+        self.db
+            .def_map_db()
+            .def_map(self.target_ref)
+            .expect("target def map should exist in fixture db")
+    }
+}
+
+/// Root-scope entry assertion helper for one textual name.
+pub(super) struct FixtureEntry<'a> {
+    db: &'a DefMapFixtureDb,
+    package_name: &'a str,
+    target: &'a Target,
+    name: String,
+    entry: Option<&'a ScopeEntry>,
+}
+
+impl<'a> FixtureEntry<'a> {
+    /// Asserts that the entry is absent from the root scope.
+    pub(super) fn assert_missing(&self, reason: &str) -> &Self {
+        assert!(
+            self.entry.is_none(),
+            "{reason}: expected {} to be absent",
+            self.context(),
+        );
+        self
+    }
+
+    /// Asserts that the entry has at least one visible type binding.
+    pub(super) fn assert_type_exists(&self, reason: &str) -> &Self {
+        assert!(
+            !self.scope_entry().types.is_empty(),
+            "{reason}: expected {} to have a type binding",
+            self.context(),
+        );
+        self
+    }
+
+    /// Asserts that the entry has at least one visible value binding.
+    pub(super) fn assert_value_exists(&self, reason: &str) -> &Self {
+        assert!(
+            !self.scope_entry().values.is_empty(),
+            "{reason}: expected {} to have a value binding",
+            self.context(),
+        );
+        self
+    }
+
+    /// Asserts that one type binding resolves to a module with the requested name.
+    pub(super) fn assert_module_named(&self, module_name: &str, reason: &str) -> &Self {
+        assert!(
+            self.scope_entry()
+                .types
+                .iter()
+                .filter_map(|binding| self.binding_origin(binding))
+                .any(|origin| origin.module_name() == Some(module_name)),
+            "{reason}: expected {} to resolve to module `{module_name}`",
+            self.context(),
+        );
+        self
+    }
+
+    fn context(&self) -> String {
+        format!(
+            "root scope entry `{}` in package `{}` target `{}` ({:?})",
+            self.name, self.package_name, self.target.name, self.target.kind,
+        )
+    }
+
+    fn scope_entry(&self) -> &ScopeEntry {
+        self.entry.unwrap_or_else(|| {
+            panic!(
+                "expected {} to exist before asserting on its bindings",
+                self.context()
+            )
+        })
+    }
+
+    fn binding_origin(&self, binding: &'a ScopeBinding) -> Option<FixtureBindingOrigin<'a>> {
+        let target_ref = match binding.def {
+            DefId::Module(module_ref) => module_ref.target,
+            DefId::Local(local_def_ref) => local_def_ref.target,
+        };
+        self.db.parse_db().packages().get(target_ref.package.0)?;
+        self.db.def_map_db().def_map(target_ref)?;
+
+        Some(FixtureBindingOrigin {
+            db: self.db,
+            def: binding.def,
+        })
+    }
+}
+
+/// Project-relative view of one resolved binding origin.
+struct FixtureBindingOrigin<'a> {
+    db: &'a DefMapFixtureDb,
+    def: DefId,
+}
+
+impl FixtureBindingOrigin<'_> {
+    fn module_name(&self) -> Option<&str> {
+        let DefId::Module(module_ref) = self.def else {
+            return None;
+        };
+
+        self.db
+            .def_map_db()
+            .def_map(module_ref.target)?
+            .module(module_ref.module)
+            .and_then(|module| module.name.as_deref())
+    }
+}
+
 /// Project-level DefMap snapshot context.
 /// Renders package sections such as `package app`.
 struct ProjectDefMapSnapshot<'a> {
-    project: &'a Project,
+    project: &'a DefMapFixtureDb,
 }
 
 impl<'a> ProjectDefMapSnapshot<'a> {
-    fn new(project: &'a Project) -> Self {
+    fn new(project: &'a DefMapFixtureDb) -> Self {
         Self { project }
     }
 
     fn render(&self) -> String {
-        let package_dumps = snapshot::sorted_packages(self.project)
+        let package_dumps = snapshot::sorted_packages(self.project.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
                 PackageDefMapSnapshot {
@@ -82,12 +280,12 @@ impl<'a> ProjectDefMapSnapshot<'a> {
 
 /// Project-level path-resolution snapshot context.
 struct ProjectPathResolutionSnapshot<'a> {
-    project: &'a Project,
+    project: &'a DefMapFixtureDb,
     queries: &'a [PathResolutionQuery],
 }
 
 impl<'a> ProjectPathResolutionSnapshot<'a> {
-    fn new(project: &'a Project, queries: &'a [PathResolutionQuery]) -> Self {
+    fn new(project: &'a DefMapFixtureDb, queries: &'a [PathResolutionQuery]) -> Self {
         Self { project, queries }
     }
 
@@ -240,7 +438,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
 /// Package-level DefMap snapshot context.
 /// Renders target sections such as `app [lib]`.
 struct PackageDefMapSnapshot<'a> {
-    project: &'a Project,
+    project: &'a DefMapFixtureDb,
     package_slot: usize,
     package: &'a Package,
 }
@@ -274,7 +472,7 @@ impl<'a> PackageDefMapSnapshot<'a> {
 /// Target-level DefMap snapshot context with access to resolved module paths.
 /// Renders module scopes such as `crate::nested`.
 struct TargetDefMapSnapshot<'a> {
-    project: &'a Project,
+    project: &'a DefMapFixtureDb,
     package: &'a Package,
     target: &'a Target,
     target_ref: TargetRef,
@@ -463,7 +661,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
 /// Snapshot-only view of where a resolved scope binding came from.
 /// Renders origins such as `pub fn app[lib]::crate::make`.
 struct BindingOrigin<'a> {
-    project: &'a Project,
+    project: &'a DefMapFixtureDb,
     def: DefId,
     binding_visibility: &'a VisibilityLevel,
 }
@@ -490,7 +688,7 @@ impl BindingOrigin<'_> {
 
 /// Snapshot-only view of one resolved definition.
 struct ResolvedDefOrigin<'a> {
-    project: &'a Project,
+    project: &'a DefMapFixtureDb,
     def: DefId,
 }
 
