@@ -196,7 +196,8 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
             | SymbolAt::Function { span, .. }
             | SymbolAt::LocalItem { span, .. }
             | SymbolAt::BodyPath { span, .. }
-            | SymbolAt::Path { span, .. } => Some(*span),
+            | SymbolAt::TypePath { span, .. }
+            | SymbolAt::UsePath { span, .. } => Some(*span),
         }
     }
 }

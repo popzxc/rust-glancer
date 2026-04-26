@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-use super::data::{PathRole, SymbolAt, SymbolCandidate};
+use super::data::{SymbolAt, SymbolCandidate};
 
 pub(super) fn body_type_path_candidates(
     body_ref: BodyRef,
@@ -112,7 +112,6 @@ impl BodyTypeCursorScanner<'_> {
                         body: self.body,
                         scope: self.scope,
                         path,
-                        role: PathRole::Type,
                         span: segment.span,
                     },
                     span: segment.span,
@@ -203,17 +202,16 @@ impl CursorScanner<'_> {
             else {
                 continue;
             };
-            let context = TypePathContext::module(ModuleRef {
+            let module = ModuleRef {
                 target: self.target,
                 module: import.module,
-            });
-            self.push_use_path(context, &source_import.path);
+            };
+            self.push_use_path(module, &source_import.path);
             if let crate::item_tree::ImportAlias::Explicit { span, .. } = source_import.alias {
                 if span.touches(self.offset) {
-                    self.push_path_candidate(
-                        context,
+                    self.push_use_path_candidate(
+                        module,
                         Path::from_use_path(&source_import.path),
-                        PathRole::Use,
                         span,
                     );
                 }
@@ -258,7 +256,7 @@ impl CursorScanner<'_> {
                     },
                     field.span,
                 );
-                self.push_type_ref(context, &field.ty, PathRole::Type);
+                self.push_type_ref(context, &field.ty);
             }
         }
 
@@ -291,9 +289,9 @@ impl CursorScanner<'_> {
             };
             self.scan_generic_params(context, &data.generics);
             if let Some(trait_ref) = &data.trait_ref {
-                self.push_type_ref(context, trait_ref, PathRole::Type);
+                self.push_type_ref(context, trait_ref);
             }
-            self.push_type_ref(context, &data.self_ty, PathRole::Type);
+            self.push_type_ref(context, &data.self_ty);
         }
 
         for (idx, data) in items.functions.iter().enumerate() {
@@ -323,11 +321,11 @@ impl CursorScanner<'_> {
             self.scan_generic_params(context, &data.declaration.generics);
             for param in &data.declaration.params {
                 if let Some(ty) = &param.ty {
-                    self.push_type_ref(context, ty, PathRole::Type);
+                    self.push_type_ref(context, ty);
                 }
             }
             if let Some(ret_ty) = &data.declaration.ret_ty {
-                self.push_type_ref(context, ret_ty, PathRole::Type);
+                self.push_type_ref(context, ret_ty);
             }
         }
 
@@ -341,7 +339,7 @@ impl CursorScanner<'_> {
             self.scan_generic_params(context, &data.declaration.generics);
             self.scan_type_bounds(context, &data.declaration.bounds);
             if let Some(ty) = &data.declaration.aliased_ty {
-                self.push_type_ref(context, ty, PathRole::Type);
+                self.push_type_ref(context, ty);
             }
         }
 
@@ -354,7 +352,7 @@ impl CursorScanner<'_> {
             };
             self.scan_generic_params(context, &data.declaration.generics);
             if let Some(ty) = &data.declaration.ty {
-                self.push_type_ref(context, ty, PathRole::Type);
+                self.push_type_ref(context, ty);
             }
         }
 
@@ -363,7 +361,7 @@ impl CursorScanner<'_> {
                 continue;
             }
             if let Some(ty) = &data.ty {
-                self.push_type_ref(TypePathContext::module(data.owner), ty, PathRole::Type);
+                self.push_type_ref(TypePathContext::module(data.owner), ty);
             }
         }
     }
@@ -371,13 +369,13 @@ impl CursorScanner<'_> {
     fn scan_field_list(&mut self, owner: TypeDefRef, context: TypePathContext, fields: &FieldList) {
         for (idx, field) in fields.fields().iter().enumerate() {
             self.push_field(FieldRef { owner, index: idx }, field.span);
-            self.push_type_ref(context, &field.ty, PathRole::Type);
+            self.push_type_ref(context, &field.ty);
         }
     }
 
     fn scan_field_list_for_owner(&mut self, context: TypePathContext, fields: &FieldList) {
         for field in fields.fields() {
-            self.push_type_ref(context, &field.ty, PathRole::Type);
+            self.push_type_ref(context, &field.ty);
         }
     }
 
@@ -385,18 +383,18 @@ impl CursorScanner<'_> {
         for param in &generics.types {
             self.scan_type_bounds(context, &param.bounds);
             if let Some(default) = &param.default {
-                self.push_type_ref(context, default, PathRole::Type);
+                self.push_type_ref(context, default);
             }
         }
         for param in &generics.consts {
             if let Some(ty) = &param.ty {
-                self.push_type_ref(context, ty, PathRole::Type);
+                self.push_type_ref(context, ty);
             }
         }
         for predicate in &generics.where_predicates {
             match predicate {
                 WherePredicate::Type { ty, bounds } => {
-                    self.push_type_ref(context, ty, PathRole::Type);
+                    self.push_type_ref(context, ty);
                     self.scan_type_bounds(context, bounds);
                 }
                 WherePredicate::Lifetime { .. } | WherePredicate::Unsupported(_) => {}
@@ -407,29 +405,29 @@ impl CursorScanner<'_> {
     fn scan_type_bounds(&mut self, context: TypePathContext, bounds: &[TypeBound]) {
         for bound in bounds {
             match bound {
-                TypeBound::Trait(ty) => self.push_type_ref(context, ty, PathRole::Type),
+                TypeBound::Trait(ty) => self.push_type_ref(context, ty),
                 TypeBound::Lifetime(_) | TypeBound::Unsupported(_) => {}
             }
         }
     }
 
-    fn push_type_ref(&mut self, context: TypePathContext, ty: &TypeRef, role: PathRole) {
+    fn push_type_ref(&mut self, context: TypePathContext, ty: &TypeRef) {
         match ty {
-            TypeRef::Path(path) => self.push_type_path(context, path, role),
+            TypeRef::Path(path) => self.push_type_path(context, path),
             TypeRef::Tuple(types) => {
                 for ty in types {
-                    self.push_type_ref(context, ty, role);
+                    self.push_type_ref(context, ty);
                 }
             }
             TypeRef::Reference { inner, .. }
             | TypeRef::RawPointer { inner, .. }
-            | TypeRef::Slice(inner) => self.push_type_ref(context, inner, role),
-            TypeRef::Array { inner, .. } => self.push_type_ref(context, inner, role),
+            | TypeRef::Slice(inner) => self.push_type_ref(context, inner),
+            TypeRef::Array { inner, .. } => self.push_type_ref(context, inner),
             TypeRef::FnPointer { params, ret } => {
                 for param in params {
-                    self.push_type_ref(context, param, role);
+                    self.push_type_ref(context, param);
                 }
-                self.push_type_ref(context, ret, role);
+                self.push_type_ref(context, ret);
             }
             TypeRef::ImplTrait(bounds) | TypeRef::DynTrait(bounds) => {
                 self.scan_type_bounds(context, bounds);
@@ -438,27 +436,26 @@ impl CursorScanner<'_> {
         }
     }
 
-    fn push_type_path(&mut self, context: TypePathContext, path: &TypePath, role: PathRole) {
+    fn push_type_path(&mut self, context: TypePathContext, path: &TypePath) {
         for (idx, segment) in path.segments.iter().enumerate() {
             if segment.span.touches(self.offset) {
-                self.push_path_candidate(
+                self.push_type_path_candidate(
                     context,
                     Path::from_type_path_prefix(path, idx),
-                    role,
                     segment.span,
                 );
             }
 
             for arg in &segment.args {
-                self.push_generic_arg(context, arg, role);
+                self.push_generic_arg(context, arg);
             }
         }
     }
 
-    fn push_generic_arg(&mut self, context: TypePathContext, arg: &GenericArg, role: PathRole) {
+    fn push_generic_arg(&mut self, context: TypePathContext, arg: &GenericArg) {
         match arg {
-            GenericArg::Type(ty) => self.push_type_ref(context, ty, role),
-            GenericArg::AssocType { ty: Some(ty), .. } => self.push_type_ref(context, ty, role),
+            GenericArg::Type(ty) => self.push_type_ref(context, ty),
+            GenericArg::AssocType { ty: Some(ty), .. } => self.push_type_ref(context, ty),
             GenericArg::Lifetime(_)
             | GenericArg::Const(_)
             | GenericArg::AssocType { ty: None, .. }
@@ -466,33 +463,32 @@ impl CursorScanner<'_> {
         }
     }
 
-    fn push_use_path(&mut self, context: TypePathContext, path: &UsePath) {
+    fn push_use_path(&mut self, module: ModuleRef, path: &UsePath) {
         for (idx, segment) in path.segments.iter().enumerate() {
             if segment.span.touches(self.offset) {
-                self.push_path_candidate(
-                    context,
+                self.push_use_path_candidate(
+                    module,
                     Path::from_use_path_prefix(path, idx),
-                    PathRole::Use,
                     segment.span,
                 );
             }
         }
     }
 
-    fn push_path_candidate(
-        &mut self,
-        context: TypePathContext,
-        path: Path,
-        role: PathRole,
-        span: Span,
-    ) {
+    fn push_type_path_candidate(&mut self, context: TypePathContext, path: Path, span: Span) {
         self.candidates.push(SymbolCandidate {
-            symbol: SymbolAt::Path {
+            symbol: SymbolAt::TypePath {
                 context,
                 path,
-                role,
                 span,
             },
+            span,
+        });
+    }
+
+    fn push_use_path_candidate(&mut self, module: ModuleRef, path: Path, span: Span) {
+        self.candidates.push(SymbolCandidate {
+            symbol: SymbolAt::UsePath { module, path, span },
             span,
         });
     }

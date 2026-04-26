@@ -5,10 +5,7 @@ use crate::{
     semantic_ir::{FieldRef, SemanticTypePathResolution, TypeDefRef, TypePathContext},
 };
 
-use super::{
-    Analysis,
-    data::{PathRole, SymbolAt},
-};
+use super::{Analysis, data::SymbolAt};
 
 pub(super) struct TypeResolver<'a, 'project>(&'a Analysis<'project>);
 
@@ -39,30 +36,13 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
                 .binding(binding)
                 .map(|data| data.ty.clone()),
             SymbolAt::BodyPath {
-                body,
-                scope,
-                path,
-                role: PathRole::Type,
-                ..
+                body, scope, path, ..
             } => Some(self.ty_for_body_type_path(body, scope, &path)),
-            SymbolAt::BodyPath {
-                role: PathRole::Use,
-                ..
-            } => None,
             SymbolAt::Def { def, .. } => self.ty_for_def(def),
             SymbolAt::Field { field, .. } => self.ty_for_field(field),
             SymbolAt::LocalItem { item, .. } => Some(BodyTy::LocalNominal(vec![item])),
-            SymbolAt::Path {
-                context,
-                path,
-                role: PathRole::Type,
-                ..
-            } => Some(self.ty_for_type_path(context, &path)),
-            SymbolAt::Path {
-                role: PathRole::Use,
-                ..
-            }
-            | SymbolAt::Function { .. } => None,
+            SymbolAt::TypePath { context, path, .. } => Some(self.ty_for_type_path(context, &path)),
+            SymbolAt::UsePath { .. } | SymbolAt::Function { .. } => None,
             SymbolAt::Body { .. } => None,
         }
     }

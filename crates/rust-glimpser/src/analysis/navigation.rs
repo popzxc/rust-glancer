@@ -9,7 +9,7 @@ use crate::{
 
 use super::{
     Analysis,
-    data::{NavigationTarget, NavigationTargetKind, PathRole, SymbolAt},
+    data::{NavigationTarget, NavigationTargetKind, SymbolAt},
 };
 
 pub(super) struct SymbolResolver<'a, 'project>(&'a Analysis<'project>);
@@ -50,18 +50,12 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
                 .navigation_target_for_body_item(item)
                 .into_iter()
                 .collect(),
-            SymbolAt::Path {
-                context,
-                path,
-                role: PathRole::Type,
-                ..
-            } => self.navigation_targets_for_type_path(context, &path),
-            SymbolAt::Path {
-                context,
-                path,
-                role: PathRole::Use,
-                ..
-            } => self.navigation_targets_for_use_path(context.module, &path),
+            SymbolAt::TypePath { context, path, .. } => {
+                self.navigation_targets_for_type_path(context, &path)
+            }
+            SymbolAt::UsePath { module, path, .. } => {
+                self.navigation_targets_for_use_path(module, &path)
+            }
             SymbolAt::Body { .. } => Vec::new(),
         }
     }

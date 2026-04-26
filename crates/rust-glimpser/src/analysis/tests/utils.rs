@@ -295,7 +295,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
                     .expect("string writes should not fail");
             }
-            SymbolAt::Path { ref path, span, .. } => {
+            SymbolAt::TypePath { ref path, span, .. }
+            | SymbolAt::UsePath { ref path, span, .. } => {
                 writeln!(dump, "\n- path {path} @ {}", self.render_source_span(span))
                     .expect("string writes should not fail");
             }
