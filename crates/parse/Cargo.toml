@@ -1,5 +1,5 @@
 [package]
-name = "rust-glimpser"
+name = "rg_parse"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,9 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-clap = { workspace = true, features = ["derive"] }
-cargo_metadata.workspace = true
-rg_project.workspace = true
+ra_syntax.workspace = true
 rg_workspace.workspace = true
+
+[dev-dependencies]
+cargo_metadata = { workspace = true, features = ["builder"] }
+test_fixture.workspace = true

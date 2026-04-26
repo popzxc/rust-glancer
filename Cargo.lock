@@ -459,6 +459,112 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_analysis"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "expect-test",
+ "rg_body_ir",
+ "rg_def_map",
+ "rg_item_tree",
+ "rg_parse",
+ "rg_semantic_ir",
+ "rg_workspace",
+ "test_fixture",
+]
+
+[[package]]
+name = "rg_body_ir"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "expect-test",
+ "rg_def_map",
+ "rg_item_tree",
+ "rg_parse",
+ "rg_semantic_ir",
+ "rg_workspace",
+ "syntax",
+ "test_fixture",
+]
+
+[[package]]
+name = "rg_def_map"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "expect-test",
+ "rg_item_tree",
+ "rg_parse",
+ "rg_workspace",
+ "test_fixture",
+]
+
+[[package]]
+name = "rg_item_tree"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "expect-test",
+ "rg_parse",
+ "rg_workspace",
+ "syntax",
+ "test_fixture",
+]
+
+[[package]]
+name = "rg_parse"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo_metadata",
+ "rg_workspace",
+ "syntax",
+ "test_fixture",
+]
+
+[[package]]
+name = "rg_project"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rg_analysis",
+ "rg_body_ir",
+ "rg_def_map",
+ "rg_item_tree",
+ "rg_parse",
+ "rg_semantic_ir",
+ "rg_workspace",
+]
+
+[[package]]
+name = "rg_semantic_ir"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "expect-test",
+ "rg_def_map",
+ "rg_item_tree",
+ "rg_parse",
+ "rg_workspace",
+ "test_fixture",
+]
+
+[[package]]
+name = "rg_workspace"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+ "derive_more",
+ "expect-test",
+ "test_fixture",
+]
+
+[[package]]
 name = "rowan"
 version = "0.15.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -478,9 +584,8 @@ dependencies = [
  "anyhow",
  "cargo_metadata",
  "clap",
- "derive_more",
- "expect-test",
- "syntax",
+ "rg_project",
+ "rg_workspace",
 ]
 
 [[package]]
@@ -627,6 +732,13 @@ dependencies = [
  "stdx",
  "tracing",
  "triomphe",
+]
+
+[[package]]
+name = "test_fixture"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
 ]
 
 [[package]]

@@ -1,5 +1,16 @@
 [workspace]
-members = ["crates/rust-glimpser"]
+members = [
+  "crates/rust-glimpser",
+  "crates/workspace",
+  "crates/parse",
+  "crates/item-tree",
+  "crates/def-map",
+  "crates/semantic-ir",
+  "crates/body-ir",
+  "crates/analysis",
+  "crates/project",
+  "crates/test-fixture",
+]
 exclude = [
   "test_targets/simple_crate",
   "test_targets/moderate_crate",
@@ -28,3 +39,13 @@ derive_more = { version = "2.1.1" }
 expect-test = "1.5.1"
 
 ra_syntax = { package = "syntax", git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca"}
+
+rg_workspace = { path = "crates/workspace" }
+rg_parse = { path = "crates/parse" }
+rg_item_tree = { path = "crates/item-tree" }
+rg_def_map = { path = "crates/def-map" }
+rg_semantic_ir = { path = "crates/semantic-ir" }
+rg_body_ir = { path = "crates/body-ir" }
+rg_analysis = { path = "crates/analysis" }
+rg_project = { path = "crates/project" }
+test_fixture = { path = "crates/test-fixture" }

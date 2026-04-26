@@ -1,5 +1,5 @@
 [package]
-name = "rust-glimpser"
+name = "rg_body_ir"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,14 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-clap = { workspace = true, features = ["derive"] }
-cargo_metadata.workspace = true
-rg_project.workspace = true
+derive_more = { workspace = true, features = ["display"] }
+ra_syntax.workspace = true
+rg_def_map.workspace = true
+rg_item_tree.workspace = true
+rg_parse.workspace = true
+rg_semantic_ir.workspace = true
 rg_workspace.workspace = true
+
+[dev-dependencies]
+expect-test.workspace = true
+test_fixture.workspace = true
