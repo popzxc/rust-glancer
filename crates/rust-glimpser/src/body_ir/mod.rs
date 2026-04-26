@@ -1,3 +1,4 @@
+mod cursor;
 mod data;
 mod ids;
 mod lower;
@@ -7,6 +8,7 @@ mod resolution;
 mod tests;
 
 pub(crate) use self::{
+    cursor::BodyCursorCandidate,
     data::{
         BindingData, BodyData, BodyIrDb, BodyItemKind, BodyResolution, BodyTy,
         BodyTypePathResolution, ExprData, ExprKind, StmtKind,

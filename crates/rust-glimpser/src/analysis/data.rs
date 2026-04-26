@@ -1,19 +1,9 @@
 use crate::{
-    body_ir::{
-        BindingData, BindingId, BodyItemId, BodyItemKind, BodyItemRef, BodyRef, ExprId, ScopeId,
-    },
+    body_ir::{BindingData, BindingId, BodyItemKind, BodyItemRef, BodyRef, ExprId, ScopeId},
     def_map::{DefId, LocalDefKind, ModuleRef, Path},
     parse::{FileId, span::Span},
     semantic_ir::{FieldRef, FunctionRef, TypePathContext},
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct SourceNodeAt {
-    pub(super) body: BodyRef,
-    pub(super) expr: Option<ExprId>,
-    pub(super) binding: Option<BindingId>,
-    pub(super) local_item: Option<BodyItemId>,
-}
 
 pub(super) struct SymbolCandidate {
     pub(super) symbol: SymbolAt,
