@@ -8,8 +8,8 @@ mod tests;
 
 pub(crate) use self::{
     data::{
-        BindingData, BodyData, BodyIrDb, BodyItemKind, BodyResolution, BodyTy, ExprData, ExprKind,
-        StmtKind,
+        BindingData, BodyData, BodyIrDb, BodyItemKind, BodyResolution, BodyTy,
+        BodyTypePathResolution, ExprData, ExprKind, StmtKind,
     },
     ids::{BindingId, BodyId, BodyItemId, BodyItemRef, BodyRef, ExprId, ScopeId},
 };

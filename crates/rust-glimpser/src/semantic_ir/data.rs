@@ -15,7 +15,8 @@ use super::{
         ItemOwner, StaticId, StructId, TraitId, TraitImplRef, TraitRef, TypeAliasId, TypeDefId,
         TypeDefRef, UnionId,
     },
-    lower, resolution,
+    lower,
+    resolution::{self, SemanticTypePathResolution, TypePathContext},
 };
 
 /// Semantic item graph for all analyzed packages and targets.
@@ -87,6 +88,15 @@ impl SemanticIrDb {
         path: &Path,
     ) -> Vec<TypeDefRef> {
         resolution::resolve_type_defs_for_path(self, def_map, from, path)
+    }
+
+    pub(crate) fn resolve_type_path(
+        &self,
+        def_map: &DefMapDb,
+        context: TypePathContext,
+        path: &Path,
+    ) -> SemanticTypePathResolution {
+        resolution::resolve_type_path(self, def_map, context, path)
     }
 
     pub(crate) fn type_def_for_local_def(&self, def: LocalDefRef) -> Option<TypeDefRef> {

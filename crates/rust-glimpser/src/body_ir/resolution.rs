@@ -4,14 +4,19 @@
 //! local-vs-item path resolution and simple types that are already present in signatures.
 
 use crate::{
-    def_map::{DefId, DefMapDb, PackageSlot, Path, TargetRef},
+    def_map::{DefId, DefMapDb, ModuleRef, PackageSlot, Path, TargetRef},
     item_tree::{FieldKey, TypeRef},
     parse::TargetId,
-    semantic_ir::{FunctionRef, ImplRef, ItemId, ItemOwner, SemanticIrDb, TraitRef, TypeDefRef},
+    semantic_ir::{
+        FunctionRef, ImplRef, ItemId, ItemOwner, SemanticIrDb, SemanticTypePathResolution,
+        TraitRef, TypeDefRef, TypePathContext,
+    },
 };
 
 use super::{
-    data::{BindingKind, BodyData, BodyIrDb, BodyResolution, BodyTy, ExprKind},
+    data::{
+        BindingKind, BodyData, BodyIrDb, BodyResolution, BodyTy, BodyTypePathResolution, ExprKind,
+    },
     ids::{BindingId, BodyId, BodyItemId, BodyItemRef, BodyRef, ExprId, ScopeId},
 };
 
@@ -39,6 +44,27 @@ pub(super) fn resolve_bodies(db: &mut BodyIrDb, def_map: &DefMapDb, semantic_ir:
     }
 }
 
+pub(super) fn resolve_type_path_in_scope(
+    db: &BodyIrDb,
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    body_ref: BodyRef,
+    scope: ScopeId,
+    path: &Path,
+) -> BodyTypePathResolution {
+    let Some(body) = db.body_data(body_ref) else {
+        return BodyTypePathResolution::Unknown;
+    };
+
+    BodyTypePathResolver {
+        def_map,
+        semantic_ir,
+        body_ref,
+        body,
+    }
+    .resolve_in_scope(scope, path)
+}
+
 struct BodyResolver<'db, 'body> {
     def_map: &'db DefMapDb,
     semantic_ir: &'db SemanticIrDb,
@@ -47,6 +73,15 @@ struct BodyResolver<'db, 'body> {
 }
 
 impl<'db, 'body> BodyResolver<'db, 'body> {
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'db, '_> {
+        BodyTypePathResolver {
+            def_map: self.def_map,
+            semantic_ir: self.semantic_ir,
+            body_ref: self.body_ref,
+            body: self.body,
+        }
+    }
+
     fn resolve(&mut self) {
         self.resolve_bindings();
 
@@ -66,13 +101,17 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
     fn binding_ty(&self, binding: BindingId) -> BodyTy {
         let binding_data = &self.body.bindings[binding.0];
         if let Some(annotation) = &binding_data.annotation {
-            return self.ty_from_type_ref_in_scope(annotation, binding_data.scope);
+            return self
+                .type_path_resolver()
+                .ty_from_type_ref_in_scope(annotation, binding_data.scope);
         }
 
         if matches!(binding_data.kind, BindingKind::SelfParam)
             && binding_data.name.as_deref() == Some("self")
         {
-            let self_tys = self.impl_self_tys_for_function(self.body.owner);
+            let self_tys = self
+                .type_path_resolver()
+                .self_tys_for_function(self.body.owner);
             if !self_tys.is_empty() {
                 return BodyTy::SelfTy(self_tys);
             }
@@ -110,31 +149,27 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
     }
 
     fn resolve_path_expr(&self, expr: ExprId, path: &Path) -> (BodyResolution, BodyTy) {
+        let scope = self.body.exprs[expr.0].scope;
         if let Some(name) = path.single_name() {
-            if let Some(binding) =
-                self.resolve_local_name(self.body.exprs[expr.0].scope, name, expr)
-            {
+            if let Some(binding) = self.resolve_local_name(scope, name, expr) {
                 let ty = self.body.bindings[binding.0].ty.clone();
                 return (BodyResolution::Local(binding), ty);
             }
+        }
 
-            if let Some(item) = self.resolve_local_type_item(self.body.exprs[expr.0].scope, name) {
-                let item_ref = BodyItemRef {
-                    body: self.body_ref,
-                    item,
-                };
+        match self.type_path_resolver().resolve_in_scope(scope, path) {
+            BodyTypePathResolution::BodyLocal(item_ref) => {
                 return (
                     BodyResolution::LocalItem(item_ref),
                     BodyTy::LocalNominal(vec![item_ref]),
                 );
             }
-        }
-
-        if path.is_self_type() {
-            let self_tys = self.impl_self_tys_for_function(self.body.owner);
-            if !self_tys.is_empty() {
-                return (BodyResolution::Unknown, BodyTy::SelfTy(self_tys));
+            BodyTypePathResolution::SelfType(types) => {
+                return (BodyResolution::Unknown, BodyTy::SelfTy(types));
             }
+            BodyTypePathResolution::TypeDefs(_)
+            | BodyTypePathResolution::Traits(_)
+            | BodyTypePathResolution::Unknown => {}
         }
 
         let result = self.def_map.resolve_path(self.body.owner_module, path);
@@ -163,10 +198,9 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             let Some(field_data) = self.semantic_ir.field_data(field_ref) else {
                 continue;
             };
-            let field_ty = self.ty_from_type_ref_in_module(
+            let field_ty = self.type_path_resolver().ty_from_type_ref_in_context(
                 &field_data.field.ty,
-                field_data.owner_module,
-                self.body.owner,
+                TypePathContext::module(field_data.owner_module),
             );
             push_unique(&mut field_tys, field_ty);
         }
@@ -209,20 +243,6 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         }
     }
 
-    fn resolve_local_type_item(&self, mut scope: ScopeId, name: &str) -> Option<BodyItemId> {
-        loop {
-            let scope_data = self.body.scope(scope)?;
-            for item in scope_data.local_items.iter().rev() {
-                let item_data = self.body.local_item(*item)?;
-                if item_data.name == name {
-                    return Some(*item);
-                }
-            }
-
-            scope = scope_data.parent?;
-        }
-    }
-
     fn call_ty(&self, callee: Option<ExprId>) -> BodyTy {
         let Some(callee) = callee else {
             return BodyTy::Unknown;
@@ -258,10 +278,9 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
                 continue;
             };
 
-            let owner_module = self
-                .owner_module_for_function(function_ref)
-                .unwrap_or(self.body.owner_module);
-            let ty = self.ty_from_type_ref_in_module(ret_ty, owner_module, function_ref);
+            let ty = self
+                .type_path_resolver()
+                .ty_from_type_ref_for_function(ret_ty, function_ref);
             push_unique(&mut return_tys, ty);
         }
 
@@ -269,71 +288,6 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             return_tys.pop().expect("one return type should exist")
         } else {
             BodyTy::Unknown
-        }
-    }
-
-    fn ty_from_type_ref_in_scope(&self, ty: &TypeRef, scope: ScopeId) -> BodyTy {
-        match ty {
-            TypeRef::Path(type_path) => {
-                let path = Path::from_type_path(type_path);
-
-                if path.is_self_type() {
-                    let self_tys = self.impl_self_tys_for_function(self.body.owner);
-                    if self_tys.is_empty() {
-                        return BodyTy::Syntax(ty.clone());
-                    }
-
-                    return BodyTy::SelfTy(self_tys);
-                }
-
-                if let Some(name) = path.single_name() {
-                    if let Some(item) = self.resolve_local_type_item(scope, name) {
-                        return BodyTy::LocalNominal(vec![BodyItemRef {
-                            body: self.body_ref,
-                            item,
-                        }]);
-                    }
-                }
-
-                self.ty_from_type_ref_in_module(ty, self.body.owner_module, self.body.owner)
-            }
-            _ => self.ty_from_type_ref_in_module(ty, self.body.owner_module, self.body.owner),
-        }
-    }
-
-    fn ty_from_type_ref_in_module(
-        &self,
-        ty: &TypeRef,
-        owner_module: crate::def_map::ModuleRef,
-        owner_function: FunctionRef,
-    ) -> BodyTy {
-        match ty {
-            TypeRef::Unit => BodyTy::Unit,
-            TypeRef::Never => BodyTy::Never,
-            TypeRef::Path(type_path) => {
-                let path = Path::from_type_path(type_path);
-
-                if path.is_self_type() {
-                    let self_tys = self.impl_self_tys_for_function(owner_function);
-                    if self_tys.is_empty() {
-                        return BodyTy::Syntax(ty.clone());
-                    }
-
-                    return BodyTy::SelfTy(self_tys);
-                }
-
-                let type_defs =
-                    self.semantic_ir
-                        .type_defs_for_path(self.def_map, owner_module, &path);
-                if type_defs.is_empty() {
-                    BodyTy::Syntax(ty.clone())
-                } else {
-                    BodyTy::Nominal(type_defs)
-                }
-            }
-            TypeRef::Unknown(_) | TypeRef::Infer => BodyTy::Unknown,
-            TypeRef::Tuple(types) if types.is_empty() => BodyTy::Unit,
-            _ => BodyTy::Syntax(ty.clone()),
         }
     }
 
@@ -373,46 +327,159 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             id,
         })
     }
+}
 
-    fn owner_module_for_function(
+struct BodyTypePathResolver<'db, 'body> {
+    def_map: &'db DefMapDb,
+    semantic_ir: &'db SemanticIrDb,
+    body_ref: BodyRef,
+    body: &'body BodyData,
+}
+
+impl BodyTypePathResolver<'_, '_> {
+    fn resolve_in_scope(&self, scope: ScopeId, path: &Path) -> BodyTypePathResolution {
+        if let Some(name) = path.single_name() {
+            if let Some(item) = self.resolve_local_type_item(scope, name) {
+                return BodyTypePathResolution::BodyLocal(BodyItemRef {
+                    body: self.body_ref,
+                    item,
+                });
+            }
+        }
+
+        self.resolve_in_context(
+            self.context_for_function(self.body.owner, self.body.owner_module),
+            path,
+        )
+    }
+
+    fn resolve_in_context(&self, context: TypePathContext, path: &Path) -> BodyTypePathResolution {
+        match self
+            .semantic_ir
+            .resolve_type_path(self.def_map, context, path)
+        {
+            SemanticTypePathResolution::SelfType(types) => BodyTypePathResolution::SelfType(types),
+            SemanticTypePathResolution::TypeDefs(types) => BodyTypePathResolution::TypeDefs(types),
+            SemanticTypePathResolution::Traits(traits) => BodyTypePathResolution::Traits(traits),
+            SemanticTypePathResolution::Unknown => BodyTypePathResolution::Unknown,
+        }
+    }
+
+    fn ty_from_type_ref_in_scope(&self, ty: &TypeRef, scope: ScopeId) -> BodyTy {
+        match ty {
+            TypeRef::Path(type_path) => {
+                let path = Path::from_type_path(type_path);
+                self.ty_from_body_resolution(
+                    self.resolve_in_scope(scope, &path),
+                    BodyTy::Syntax(ty.clone()),
+                )
+            }
+            _ => self.ty_from_type_ref_in_context(
+                ty,
+                self.context_for_function(self.body.owner, self.body.owner_module),
+            ),
+        }
+    }
+
+    fn ty_from_type_ref_for_function(&self, ty: &TypeRef, function: FunctionRef) -> BodyTy {
+        self.ty_from_type_ref_in_context(
+            ty,
+            self.context_for_function(function, self.body.owner_module),
+        )
+    }
+
+    fn ty_from_type_ref_in_context(&self, ty: &TypeRef, context: TypePathContext) -> BodyTy {
+        match ty {
+            TypeRef::Unit => BodyTy::Unit,
+            TypeRef::Never => BodyTy::Never,
+            TypeRef::Path(type_path) => {
+                let path = Path::from_type_path(type_path);
+                self.ty_from_body_resolution(
+                    self.resolve_in_context(context, &path),
+                    BodyTy::Syntax(ty.clone()),
+                )
+            }
+            TypeRef::Unknown(_) | TypeRef::Infer => BodyTy::Unknown,
+            TypeRef::Tuple(types) if types.is_empty() => BodyTy::Unit,
+            _ => BodyTy::Syntax(ty.clone()),
+        }
+    }
+
+    fn self_tys_for_function(&self, function: FunctionRef) -> Vec<TypeDefRef> {
+        let Some(impl_ref) = self
+            .context_for_function(function, self.body.owner_module)
+            .impl_ref
+        else {
+            return Vec::new();
+        };
+
+        self.semantic_ir
+            .impl_data(impl_ref)
+            .map(|impl_data| impl_data.resolved_self_tys.clone())
+            .unwrap_or_default()
+    }
+
+    fn context_for_function(
         &self,
         function: FunctionRef,
-    ) -> Option<crate::def_map::ModuleRef> {
-        let function_data = self.semantic_ir.function_data(function)?;
+        fallback_module: ModuleRef,
+    ) -> TypePathContext {
+        let Some(function_data) = self.semantic_ir.function_data(function) else {
+            return TypePathContext::module(fallback_module);
+        };
+
         match function_data.owner {
-            ItemOwner::Module(module_ref) => Some(module_ref),
+            ItemOwner::Module(module_ref) => TypePathContext::module(module_ref),
             ItemOwner::Trait(trait_id) => self
                 .semantic_ir
                 .trait_data(TraitRef {
                     target: function.target,
                     id: trait_id,
                 })
-                .map(|data| data.owner),
-            ItemOwner::Impl(impl_id) => self
-                .semantic_ir
-                .impl_data(ImplRef {
+                .map(|data| TypePathContext::module(data.owner))
+                .unwrap_or_else(|| TypePathContext::module(fallback_module)),
+            ItemOwner::Impl(impl_id) => {
+                let impl_ref = ImplRef {
                     target: function.target,
                     id: impl_id,
-                })
-                .map(|data| data.owner),
+                };
+                self.semantic_ir
+                    .impl_data(impl_ref)
+                    .map(|data| TypePathContext {
+                        module: data.owner,
+                        impl_ref: Some(impl_ref),
+                    })
+                    .unwrap_or_else(|| TypePathContext::module(fallback_module))
+            }
         }
     }
 
-    fn impl_self_tys_for_function(&self, function: FunctionRef) -> Vec<TypeDefRef> {
-        let Some(function_data) = self.semantic_ir.function_data(function) else {
-            return Vec::new();
-        };
-        let ItemOwner::Impl(impl_id) = function_data.owner else {
-            return Vec::new();
-        };
+    fn resolve_local_type_item(&self, mut scope: ScopeId, name: &str) -> Option<BodyItemId> {
+        loop {
+            let scope_data = self.body.scope(scope)?;
+            for item in scope_data.local_items.iter().rev() {
+                let item_data = self.body.local_item(*item)?;
+                if item_data.name == name {
+                    return Some(*item);
+                }
+            }
 
-        self.semantic_ir
-            .impl_data(ImplRef {
-                target: function.target,
-                id: impl_id,
-            })
-            .map(|impl_data| impl_data.resolved_self_tys.clone())
-            .unwrap_or_default()
+            scope = scope_data.parent?;
+        }
+    }
+
+    fn ty_from_body_resolution(
+        &self,
+        resolution: BodyTypePathResolution,
+        fallback: BodyTy,
+    ) -> BodyTy {
+        match resolution {
+            BodyTypePathResolution::BodyLocal(item) => BodyTy::LocalNominal(vec![item]),
+            BodyTypePathResolution::SelfType(types) => BodyTy::SelfTy(types),
+            BodyTypePathResolution::TypeDefs(types) => BodyTy::Nominal(types),
+            BodyTypePathResolution::Traits(_) => fallback,
+            BodyTypePathResolution::Unknown => fallback,
+        }
     }
 }
 

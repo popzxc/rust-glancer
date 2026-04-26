@@ -2,9 +2,9 @@ use crate::{
     body_ir::{
         BindingData, BindingId, BodyItemId, BodyItemKind, BodyItemRef, BodyRef, ExprId, ScopeId,
     },
-    def_map::{DefId, LocalDefKind, ModuleRef, Path},
+    def_map::{DefId, LocalDefKind, Path},
     parse::{FileId, span::Span},
-    semantic_ir::{FieldRef, FunctionRef, ImplRef},
+    semantic_ir::{FieldRef, FunctionRef, TypePathContext},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,7 +58,7 @@ pub(crate) enum SymbolAt {
         span: Span,
     },
     Path {
-        context: PathContext,
+        context: TypePathContext,
         path: Path,
         role: PathRole,
         span: Span,
@@ -69,21 +69,6 @@ pub(crate) enum SymbolAt {
 pub(crate) enum PathRole {
     Type,
     Use,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PathContext {
-    pub(crate) module: ModuleRef,
-    pub(crate) impl_ref: Option<ImplRef>,
-}
-
-impl PathContext {
-    pub(crate) fn module(module: ModuleRef) -> Self {
-        Self {
-            module,
-            impl_ref: None,
-        }
-    }
 }
 
 /// One goto-definition destination.

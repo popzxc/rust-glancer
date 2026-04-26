@@ -9,11 +9,11 @@ use crate::{
     parse::{FileId, span::Span},
     semantic_ir::{
         FieldRef, FunctionId, FunctionRef, ImplId, ImplRef, ItemOwner, StructId, TraitRef,
-        TypeDefId, TypeDefRef, UnionId,
+        TypeDefId, TypeDefRef, TypePathContext, UnionId,
     },
 };
 
-use super::data::{PathContext, PathRole, SymbolAt, SymbolCandidate};
+use super::data::{PathRole, SymbolAt, SymbolCandidate};
 
 pub(super) fn body_type_path_candidates(
     body_ref: BodyRef,
@@ -203,7 +203,7 @@ impl CursorScanner<'_> {
             else {
                 continue;
             };
-            let context = PathContext::module(ModuleRef {
+            let context = TypePathContext::module(ModuleRef {
                 target: self.target,
                 module: import.module,
             });
@@ -235,7 +235,7 @@ impl CursorScanner<'_> {
                 target: self.target,
                 id: TypeDefId::Struct(StructId(idx)),
             };
-            let context = PathContext::module(data.owner);
+            let context = TypePathContext::module(data.owner);
             self.scan_generic_params(context, &data.generics);
             self.scan_field_list(ty, context, &data.fields);
         }
@@ -248,7 +248,7 @@ impl CursorScanner<'_> {
                 target: self.target,
                 id: TypeDefId::Union(UnionId(idx)),
             };
-            let context = PathContext::module(data.owner);
+            let context = TypePathContext::module(data.owner);
             self.scan_generic_params(context, &data.generics);
             for (field_idx, field) in data.fields.iter().enumerate() {
                 self.push_field(
@@ -266,7 +266,7 @@ impl CursorScanner<'_> {
             if data.source.file_id != self.file_id {
                 continue;
             }
-            let context = PathContext::module(data.owner);
+            let context = TypePathContext::module(data.owner);
             self.scan_generic_params(context, &data.generics);
             for variant in &data.variants {
                 self.scan_field_list_for_owner(context, &variant.fields);
@@ -277,7 +277,7 @@ impl CursorScanner<'_> {
             if data.source.file_id != self.file_id {
                 continue;
             }
-            let context = PathContext::module(data.owner);
+            let context = TypePathContext::module(data.owner);
             self.scan_generic_params(context, &data.generics);
             self.scan_type_bounds(context, &data.super_traits);
         }
@@ -286,7 +286,7 @@ impl CursorScanner<'_> {
             if data.source.file_id != self.file_id {
                 continue;
             }
-            let context = PathContext {
+            let context = TypePathContext {
                 module: data.owner,
                 impl_ref: Some(ImplRef {
                     target: self.target,
@@ -367,25 +367,25 @@ impl CursorScanner<'_> {
                 continue;
             }
             if let Some(ty) = &data.ty {
-                self.push_type_ref(PathContext::module(data.owner), ty, PathRole::Type);
+                self.push_type_ref(TypePathContext::module(data.owner), ty, PathRole::Type);
             }
         }
     }
 
-    fn scan_field_list(&mut self, owner: TypeDefRef, context: PathContext, fields: &FieldList) {
+    fn scan_field_list(&mut self, owner: TypeDefRef, context: TypePathContext, fields: &FieldList) {
         for (idx, field) in fields.fields().iter().enumerate() {
             self.push_field(FieldRef { owner, index: idx }, field.span);
             self.push_type_ref(context, &field.ty, PathRole::Type);
         }
     }
 
-    fn scan_field_list_for_owner(&mut self, context: PathContext, fields: &FieldList) {
+    fn scan_field_list_for_owner(&mut self, context: TypePathContext, fields: &FieldList) {
         for field in fields.fields() {
             self.push_type_ref(context, &field.ty, PathRole::Type);
         }
     }
 
-    fn scan_generic_params(&mut self, context: PathContext, generics: &GenericParams) {
+    fn scan_generic_params(&mut self, context: TypePathContext, generics: &GenericParams) {
         for param in &generics.types {
             self.scan_type_bounds(context, &param.bounds);
             if let Some(default) = &param.default {
@@ -408,7 +408,7 @@ impl CursorScanner<'_> {
         }
     }
 
-    fn scan_type_bounds(&mut self, context: PathContext, bounds: &[TypeBound]) {
+    fn scan_type_bounds(&mut self, context: TypePathContext, bounds: &[TypeBound]) {
         for bound in bounds {
             match bound {
                 TypeBound::Trait(ty) => self.push_type_ref(context, ty, PathRole::Type),
@@ -417,7 +417,7 @@ impl CursorScanner<'_> {
         }
     }
 
-    fn push_type_ref(&mut self, context: PathContext, ty: &TypeRef, role: PathRole) {
+    fn push_type_ref(&mut self, context: TypePathContext, ty: &TypeRef, role: PathRole) {
         match ty {
             TypeRef::Path(path) => self.push_type_path(context, path, role),
             TypeRef::Tuple(types) => {
@@ -442,7 +442,7 @@ impl CursorScanner<'_> {
         }
     }
 
-    fn push_type_path(&mut self, context: PathContext, path: &TypePath, role: PathRole) {
+    fn push_type_path(&mut self, context: TypePathContext, path: &TypePath, role: PathRole) {
         for (idx, segment) in path.segments.iter().enumerate() {
             if segment.span.touches(self.offset) {
                 self.push_path_candidate(
@@ -459,7 +459,7 @@ impl CursorScanner<'_> {
         }
     }
 
-    fn push_generic_arg(&mut self, context: PathContext, arg: &GenericArg, role: PathRole) {
+    fn push_generic_arg(&mut self, context: TypePathContext, arg: &GenericArg, role: PathRole) {
         match arg {
             GenericArg::Type(ty) => self.push_type_ref(context, ty, role),
             GenericArg::AssocType { ty: Some(ty), .. } => self.push_type_ref(context, ty, role),
@@ -470,7 +470,7 @@ impl CursorScanner<'_> {
         }
     }
 
-    fn push_use_path(&mut self, context: PathContext, path: &UsePath) {
+    fn push_use_path(&mut self, context: TypePathContext, path: &UsePath) {
         for (idx, segment) in path.segments.iter().enumerate() {
             if segment.span.touches(self.offset) {
                 self.push_path_candidate(
@@ -485,7 +485,7 @@ impl CursorScanner<'_> {
 
     fn push_path_candidate(
         &mut self,
-        context: PathContext,
+        context: TypePathContext,
         path: Path,
         role: PathRole,
         span: Span,
@@ -523,9 +523,9 @@ impl CursorScanner<'_> {
         });
     }
 
-    fn owner_context(&self, owner: ItemOwner) -> Option<PathContext> {
+    fn owner_context(&self, owner: ItemOwner) -> Option<TypePathContext> {
         match owner {
-            ItemOwner::Module(module_ref) => Some(PathContext::module(module_ref)),
+            ItemOwner::Module(module_ref) => Some(TypePathContext::module(module_ref)),
             ItemOwner::Trait(id) => self
                 .project
                 .semantic_ir_db()
@@ -533,7 +533,7 @@ impl CursorScanner<'_> {
                     target: self.target,
                     id,
                 })
-                .map(|data| PathContext::module(data.owner)),
+                .map(|data| TypePathContext::module(data.owner)),
             ItemOwner::Impl(id) => {
                 let impl_ref = ImplRef {
                     target: self.target,
@@ -542,7 +542,7 @@ impl CursorScanner<'_> {
                 self.project
                     .semantic_ir_db()
                     .impl_data(impl_ref)
-                    .map(|data| PathContext {
+                    .map(|data| TypePathContext {
                         module: data.owner,
                         impl_ref: Some(impl_ref),
                     })

@@ -5,14 +5,37 @@
 //! resolved semantic ids for query consumers.
 
 use crate::{
-    def_map::{DefId, DefMapDb, Path},
+    def_map::{DefId, DefMapDb, ModuleRef, Path},
     item_tree::TypeRef,
 };
 
 use super::{
     data::SemanticIrDb,
-    ids::{TraitRef, TypeDefRef},
+    ids::{ImplRef, TraitRef, TypeDefRef},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TypePathContext {
+    pub(crate) module: ModuleRef,
+    pub(crate) impl_ref: Option<ImplRef>,
+}
+
+impl TypePathContext {
+    pub(crate) fn module(module: ModuleRef) -> Self {
+        Self {
+            module,
+            impl_ref: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SemanticTypePathResolution {
+    SelfType(Vec<TypeDefRef>),
+    TypeDefs(Vec<TypeDefRef>),
+    Traits(Vec<TraitRef>),
+    Unknown,
+}
 
 pub(super) fn resolve_impl_headers(db: &mut SemanticIrDb, def_map: &DefMapDb) {
     let impl_refs = db.impl_refs();
@@ -42,7 +65,7 @@ pub(super) fn resolve_impl_headers(db: &mut SemanticIrDb, def_map: &DefMapDb) {
 pub(super) fn resolve_type_defs_for_path(
     db: &SemanticIrDb,
     def_map: &DefMapDb,
-    owner: crate::def_map::ModuleRef,
+    owner: ModuleRef,
     path: &Path,
 ) -> Vec<TypeDefRef> {
     resolve_path(db, def_map, owner, path, |db, def| {
@@ -54,10 +77,59 @@ pub(super) fn resolve_type_defs_for_path(
     })
 }
 
+pub(super) fn resolve_traits_for_path(
+    db: &SemanticIrDb,
+    def_map: &DefMapDb,
+    owner: ModuleRef,
+    path: &Path,
+) -> Vec<TraitRef> {
+    resolve_path(db, def_map, owner, path, |db, def| {
+        let DefId::Local(local_def) = def else {
+            return None;
+        };
+
+        db.trait_for_local_def(local_def)
+    })
+}
+
+pub(super) fn resolve_type_path(
+    db: &SemanticIrDb,
+    def_map: &DefMapDb,
+    context: TypePathContext,
+    path: &Path,
+) -> SemanticTypePathResolution {
+    if path.is_self_type() {
+        let Some(impl_ref) = context.impl_ref else {
+            return SemanticTypePathResolution::Unknown;
+        };
+        let types = db
+            .impl_data(impl_ref)
+            .map(|data| data.resolved_self_tys.clone())
+            .unwrap_or_default();
+        return if types.is_empty() {
+            SemanticTypePathResolution::Unknown
+        } else {
+            SemanticTypePathResolution::SelfType(types)
+        };
+    }
+
+    let type_defs = resolve_type_defs_for_path(db, def_map, context.module, path);
+    if type_defs.is_empty() {
+        let traits = resolve_traits_for_path(db, def_map, context.module, path);
+        if traits.is_empty() {
+            SemanticTypePathResolution::Unknown
+        } else {
+            SemanticTypePathResolution::Traits(traits)
+        }
+    } else {
+        SemanticTypePathResolution::TypeDefs(type_defs)
+    }
+}
+
 fn resolve_type_defs(
     db: &SemanticIrDb,
     def_map: &DefMapDb,
-    owner: crate::def_map::ModuleRef,
+    owner: ModuleRef,
     ty: &TypeRef,
 ) -> Vec<TypeDefRef> {
     resolve_type_ref(db, def_map, owner, ty, |db, def| {
@@ -72,7 +144,7 @@ fn resolve_type_defs(
 fn resolve_traits(
     db: &SemanticIrDb,
     def_map: &DefMapDb,
-    owner: crate::def_map::ModuleRef,
+    owner: ModuleRef,
     ty: &TypeRef,
 ) -> Vec<TraitRef> {
     resolve_type_ref(db, def_map, owner, ty, |db, def| {
@@ -87,7 +159,7 @@ fn resolve_traits(
 fn resolve_type_ref<T: PartialEq>(
     db: &SemanticIrDb,
     def_map: &DefMapDb,
-    owner: crate::def_map::ModuleRef,
+    owner: ModuleRef,
     ty: &TypeRef,
     map_def: impl Fn(&SemanticIrDb, DefId) -> Option<T>,
 ) -> Vec<T> {
@@ -101,7 +173,7 @@ fn resolve_type_ref<T: PartialEq>(
 fn resolve_path<T: PartialEq>(
     db: &SemanticIrDb,
     def_map: &DefMapDb,
-    owner: crate::def_map::ModuleRef,
+    owner: ModuleRef,
     path: &Path,
     map_def: impl Fn(&SemanticIrDb, DefId) -> Option<T>,
 ) -> Vec<T> {

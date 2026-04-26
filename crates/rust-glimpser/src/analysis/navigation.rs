@@ -1,14 +1,15 @@
 use crate::{
-    body_ir::{BodyData, BodyItemRef, BodyRef, BodyResolution, ScopeId},
+    body_ir::{BodyData, BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution, ScopeId},
     def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef, Path, TargetRef},
     parse::FileId,
-    semantic_ir::{FieldRef, FunctionRef, TypeDefRef},
+    semantic_ir::{
+        FieldRef, FunctionRef, SemanticTypePathResolution, TraitRef, TypeDefRef, TypePathContext,
+    },
 };
 
 use super::{
     Analysis,
-    data::{NavigationTarget, NavigationTargetKind, PathContext, SymbolAt},
-    ty::TypeResolver,
+    data::{NavigationTarget, NavigationTargetKind, PathRole, SymbolAt},
 };
 
 pub(super) struct SymbolResolver<'a, 'project>(&'a Analysis<'project>);
@@ -49,9 +50,18 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
                 .navigation_target_for_body_item(item)
                 .into_iter()
                 .collect(),
-            SymbolAt::Path { context, path, .. } => {
-                self.navigation_targets_for_path(context, &path)
-            }
+            SymbolAt::Path {
+                context,
+                path,
+                role: PathRole::Type,
+                ..
+            } => self.navigation_targets_for_type_path(context, &path),
+            SymbolAt::Path {
+                context,
+                path,
+                role: PathRole::Use,
+                ..
+            } => self.navigation_targets_for_use_path(context.module, &path),
             SymbolAt::Body { .. } => Vec::new(),
         }
     }
@@ -185,25 +195,29 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
         })
     }
 
-    fn navigation_targets_for_path(
+    fn navigation_targets_for_type_path(
         &self,
-        context: PathContext,
+        context: TypePathContext,
         path: &Path,
     ) -> Vec<NavigationTarget> {
-        if path.is_self_type() {
-            if let Some(impl_ref) = context.impl_ref {
-                return TypeResolver::new(self.0)
-                    .impl_self_tys(impl_ref)
-                    .into_iter()
-                    .filter_map(|ty| self.navigation_target_for_type_def(ty))
-                    .collect();
-            }
-        }
+        let resolution = self.0.project.semantic_ir_db().resolve_type_path(
+            self.0.project.def_map_db(),
+            context,
+            path,
+        );
 
+        self.navigation_targets_for_semantic_type_path_resolution(resolution)
+    }
+
+    fn navigation_targets_for_use_path(
+        &self,
+        module: ModuleRef,
+        path: &Path,
+    ) -> Vec<NavigationTarget> {
         self.0
             .project
             .def_map_db()
-            .resolve_path(context.module, path)
+            .resolve_path(module, path)
             .resolved
             .into_iter()
             .filter_map(|def| self.navigation_target_for_def(def))
@@ -216,23 +230,67 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
         scope: ScopeId,
         path: &Path,
     ) -> Vec<NavigationTarget> {
-        if let Some(item) =
-            TypeResolver::new(self.0).resolve_body_local_type_item(body_ref, scope, path)
-        {
-            return self
+        let resolution = self.0.project.body_ir_db().resolve_type_path_in_scope(
+            self.0.project.def_map_db(),
+            self.0.project.semantic_ir_db(),
+            body_ref,
+            scope,
+            path,
+        );
+
+        self.navigation_targets_for_body_type_path_resolution(resolution)
+    }
+
+    fn navigation_targets_for_semantic_type_path_resolution(
+        &self,
+        resolution: SemanticTypePathResolution,
+    ) -> Vec<NavigationTarget> {
+        match resolution {
+            SemanticTypePathResolution::SelfType(types)
+            | SemanticTypePathResolution::TypeDefs(types) => types
+                .into_iter()
+                .filter_map(|ty| self.navigation_target_for_type_def(ty))
+                .collect(),
+            SemanticTypePathResolution::Traits(traits) => traits
+                .into_iter()
+                .filter_map(|trait_ref| self.navigation_target_for_trait(trait_ref))
+                .collect(),
+            SemanticTypePathResolution::Unknown => Vec::new(),
+        }
+    }
+
+    fn navigation_targets_for_body_type_path_resolution(
+        &self,
+        resolution: BodyTypePathResolution,
+    ) -> Vec<NavigationTarget> {
+        match resolution {
+            BodyTypePathResolution::BodyLocal(item) => self
                 .navigation_target_for_body_item(item)
                 .into_iter()
-                .collect();
+                .collect(),
+            BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
+                types
+                    .into_iter()
+                    .filter_map(|ty| self.navigation_target_for_type_def(ty))
+                    .collect()
+            }
+            BodyTypePathResolution::Traits(traits) => traits
+                .into_iter()
+                .filter_map(|trait_ref| self.navigation_target_for_trait(trait_ref))
+                .collect(),
+            BodyTypePathResolution::Unknown => Vec::new(),
         }
+    }
 
-        let Some(body) = self.body_data(body_ref) else {
-            return Vec::new();
-        };
+    fn navigation_target_for_trait(&self, trait_ref: TraitRef) -> Option<NavigationTarget> {
+        let local_def = self
+            .0
+            .project
+            .semantic_ir_db()
+            .trait_data(trait_ref)?
+            .local_def;
 
-        self.navigation_targets_for_path(
-            TypeResolver::new(self.0).path_context_for_body(body),
-            path,
-        )
+        self.navigation_target_for_local_def(local_def)
     }
 
     fn navigation_target_for_type_def(&self, ty: TypeDefRef) -> Option<NavigationTarget> {

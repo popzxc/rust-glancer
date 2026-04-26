@@ -12,4 +12,5 @@ pub(crate) use self::{
         FieldRef, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, ItemOwner, StructId, TraitRef,
         TypeDefId, TypeDefRef, UnionId,
     },
+    resolution::{SemanticTypePathResolution, TypePathContext},
 };

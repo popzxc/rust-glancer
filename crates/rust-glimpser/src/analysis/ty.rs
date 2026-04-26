@@ -1,13 +1,13 @@
 use crate::{
-    body_ir::{BodyData, BodyItemRef, BodyRef, BodyTy, ScopeId},
+    body_ir::{BodyRef, BodyTy, BodyTypePathResolution, ScopeId},
     def_map::{DefId, ModuleRef, Path},
     item_tree::TypeRef,
-    semantic_ir::{FieldRef, ImplRef, ItemOwner, TypeDefRef},
+    semantic_ir::{FieldRef, SemanticTypePathResolution, TypeDefRef, TypePathContext},
 };
 
 use super::{
     Analysis,
-    data::{PathContext, PathRole, SymbolAt},
+    data::{PathRole, SymbolAt},
 };
 
 pub(super) struct TypeResolver<'a, 'project>(&'a Analysis<'project>);
@@ -67,28 +67,12 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
         }
     }
 
-    pub(super) fn ty_for_type_path(&self, context: PathContext, path: &Path) -> BodyTy {
-        if path.is_self_type() {
-            if let Some(impl_ref) = context.impl_ref {
-                let self_tys = self.impl_self_tys(impl_ref);
-                return if self_tys.is_empty() {
-                    BodyTy::Unknown
-                } else {
-                    BodyTy::SelfTy(self_tys)
-                };
-            }
-        }
-
-        let type_defs = self.0.project.semantic_ir_db().type_defs_for_path(
+    pub(super) fn ty_for_type_path(&self, context: TypePathContext, path: &Path) -> BodyTy {
+        semantic_type_path_resolution_to_ty(self.0.project.semantic_ir_db().resolve_type_path(
             self.0.project.def_map_db(),
-            context.module,
+            context,
             path,
-        );
-        if type_defs.is_empty() {
-            BodyTy::Unknown
-        } else {
-            BodyTy::Nominal(type_defs)
-        }
+        ))
     }
 
     pub(super) fn ty_for_body_type_path(
@@ -97,15 +81,13 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
         scope: ScopeId,
         path: &Path,
     ) -> BodyTy {
-        if let Some(item) = self.resolve_body_local_type_item(body_ref, scope, path) {
-            return BodyTy::LocalNominal(vec![item]);
-        }
-
-        let Some(body) = self.0.project.body_ir_db().body_data(body_ref) else {
-            return BodyTy::Unknown;
-        };
-
-        self.ty_for_type_path(self.path_context_for_body(body), path)
+        body_type_path_resolution_to_ty(self.0.project.body_ir_db().resolve_type_path_in_scope(
+            self.0.project.def_map_db(),
+            self.0.project.semantic_ir_db(),
+            body_ref,
+            scope,
+            path,
+        ))
     }
 
     pub(super) fn ty_from_type_ref_in_module(
@@ -120,65 +102,11 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
                 let Some(path) = Path::from_type_ref(ty) else {
                     return BodyTy::Syntax(ty.clone());
                 };
-                self.ty_for_type_path(PathContext::module(owner_module), &path)
+                self.ty_for_type_path(TypePathContext::module(owner_module), &path)
             }
             TypeRef::Unknown(_) | TypeRef::Infer => BodyTy::Unknown,
             TypeRef::Tuple(types) if types.is_empty() => BodyTy::Unit,
             _ => BodyTy::Syntax(ty.clone()),
-        }
-    }
-
-    pub(super) fn impl_self_tys(&self, impl_ref: ImplRef) -> Vec<TypeDefRef> {
-        self.0
-            .project
-            .semantic_ir_db()
-            .impl_data(impl_ref)
-            .map(|data| data.resolved_self_tys.clone())
-            .unwrap_or_default()
-    }
-
-    pub(super) fn path_context_for_body(&self, body: &BodyData) -> PathContext {
-        let impl_ref = self
-            .0
-            .project
-            .semantic_ir_db()
-            .function_data(body.owner)
-            .and_then(|function| match function.owner {
-                ItemOwner::Impl(id) => Some(ImplRef {
-                    target: body.owner.target,
-                    id,
-                }),
-                ItemOwner::Module(_) | ItemOwner::Trait(_) => None,
-            });
-
-        PathContext {
-            module: body.owner_module,
-            impl_ref,
-        }
-    }
-
-    pub(super) fn resolve_body_local_type_item(
-        &self,
-        body_ref: BodyRef,
-        mut scope: ScopeId,
-        path: &Path,
-    ) -> Option<BodyItemRef> {
-        let name = path.single_name()?;
-        let body = self.0.project.body_ir_db().body_data(body_ref)?;
-
-        loop {
-            let scope_data = body.scope(scope)?;
-            for item in scope_data.local_items.iter().rev() {
-                let item_data = body.local_item(*item)?;
-                if item_data.name == name {
-                    return Some(BodyItemRef {
-                        body: body_ref,
-                        item: *item,
-                    });
-                }
-            }
-
-            scope = scope_data.parent?;
         }
     }
 
@@ -196,6 +124,27 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
     fn ty_for_field(&self, field: FieldRef) -> Option<BodyTy> {
         let field_data = self.0.project.semantic_ir_db().field_data(field)?;
         Some(self.ty_from_type_ref_in_module(&field_data.field.ty, field_data.owner_module))
+    }
+}
+
+pub(super) fn semantic_type_path_resolution_to_ty(
+    resolution: SemanticTypePathResolution,
+) -> BodyTy {
+    match resolution {
+        SemanticTypePathResolution::SelfType(types) => BodyTy::SelfTy(types),
+        SemanticTypePathResolution::TypeDefs(types) => BodyTy::Nominal(types),
+        SemanticTypePathResolution::Traits(_) => BodyTy::Unknown,
+        SemanticTypePathResolution::Unknown => BodyTy::Unknown,
+    }
+}
+
+pub(super) fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution) -> BodyTy {
+    match resolution {
+        BodyTypePathResolution::BodyLocal(item) => BodyTy::LocalNominal(vec![item]),
+        BodyTypePathResolution::SelfType(types) => BodyTy::SelfTy(types),
+        BodyTypePathResolution::TypeDefs(types) => BodyTy::Nominal(types),
+        BodyTypePathResolution::Traits(_) => BodyTy::Unknown,
+        BodyTypePathResolution::Unknown => BodyTy::Unknown,
     }
 }
 

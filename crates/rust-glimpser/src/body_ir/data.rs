@@ -1,8 +1,8 @@
 use crate::{
-    def_map::{DefId, ModuleRef, PackageSlot, TargetRef},
+    def_map::{DefId, DefMapDb, ModuleRef, PackageSlot, Path, TargetRef},
     item_tree::{FieldKey, TypeRef},
     parse::{FileId, TargetId, span::Span},
-    semantic_ir::{FieldRef, FunctionId, FunctionRef, TypeDefRef},
+    semantic_ir::{FieldRef, FunctionId, FunctionRef, SemanticIrDb, TraitRef, TypeDefRef},
 };
 
 use super::{
@@ -84,6 +84,17 @@ impl BodyIrDb {
     /// Returns one body by project-wide body reference.
     pub(crate) fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
         self.target_bodies(body_ref.target)?.body(body_ref.body)
+    }
+
+    pub(crate) fn resolve_type_path_in_scope(
+        &self,
+        def_map: &DefMapDb,
+        semantic_ir: &SemanticIrDb,
+        body_ref: BodyRef,
+        scope: ScopeId,
+        path: &Path,
+    ) -> BodyTypePathResolution {
+        resolution::resolve_type_path_in_scope(self, def_map, semantic_ir, body_ref, scope, path)
     }
 }
 
@@ -461,6 +472,16 @@ pub enum BodyResolution {
     Item(Vec<DefId>),
     Field(Vec<FieldRef>),
     #[default]
+    Unknown,
+}
+
+/// Body-scoped type path resolution result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BodyTypePathResolution {
+    BodyLocal(BodyItemRef),
+    SelfType(Vec<TypeDefRef>),
+    TypeDefs(Vec<TypeDefRef>),
+    Traits(Vec<TraitRef>),
     Unknown,
 }
 
