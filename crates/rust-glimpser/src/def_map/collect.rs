@@ -203,7 +203,7 @@ impl<'db> TargetScopeCollector<'db> {
                         })?;
                 }
                 ItemKind::Use(use_item) => {
-                    self.collect_use(module_id, item, use_item);
+                    self.collect_use(module_id, item, source, use_item);
                 }
                 ItemKind::Impl(_) => self.collect_local_impl(module_id, item, source),
                 _ => self.collect_local_def(module_id, item, source),
@@ -378,10 +378,16 @@ impl<'db> TargetScopeCollector<'db> {
     ///
     /// This phase only normalizes the path and binding metadata. It does not try to resolve the
     /// import yet.
-    fn collect_use(&mut self, module_id: ModuleId, item: &ItemNode, use_item: &UseItem) {
+    fn collect_use(
+        &mut self,
+        module_id: ModuleId,
+        item: &ItemNode,
+        source: ItemTreeRef,
+        use_item: &UseItem,
+    ) {
         let imports: &[UseImport] = &use_item.imports;
 
-        for import in imports {
+        for (import_index, import) in imports.iter().enumerate() {
             let path = ImportPath::from_use_path(&import.path);
             // Imports like `use foo::{self};` strip the trailing `self`. If nothing remains, there
             // is no path to record here.
@@ -396,6 +402,8 @@ impl<'db> TargetScopeCollector<'db> {
                 kind: ImportKind::from_use_kind(import.kind),
                 path,
                 binding: ImportBinding::from_alias(&import.alias),
+                source,
+                import_index,
             });
             self.def_map
                 .modules

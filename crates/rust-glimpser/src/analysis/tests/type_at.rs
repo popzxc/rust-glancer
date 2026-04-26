@@ -120,3 +120,76 @@ pub fn use_it(pair: Pair) {
         "#]],
     );
 }
+
+#[test]
+fn returns_signature_path_and_field_declaration_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_signature_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Profile;
+
+pub struct User {
+    pub pro$type_field_decl$file: Pro$type_field_path$file,
+}
+
+pub fn make(profile: Pro$type_param$file) -> Pro$type_ret$file {
+    profile
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at field declaration", "type_field_decl"),
+            AnalysisQuery::ty("type at field type path", "type_field_path"),
+            AnalysisQuery::ty("type at parameter type", "type_param"),
+            AnalysisQuery::ty("type at return type", "type_ret"),
+        ],
+        expect![[r#"
+            type at field declaration
+            - nominal struct analysis_signature_type_at[lib]::crate::Profile
+
+            type at field type path
+            - nominal struct analysis_signature_type_at[lib]::crate::Profile
+
+            type at parameter type
+            - nominal struct analysis_signature_type_at[lib]::crate::Profile
+
+            type at return type
+            - nominal struct analysis_signature_type_at[lib]::crate::Profile
+        "#]],
+    );
+}
+
+#[test]
+fn returns_self_type_in_impl_signatures() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_impl_self_signature_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+impl User {
+    pub fn new() -> Se$type_impl_self_signature$lf {
+        User
+    }
+}
+"#,
+        &[AnalysisQuery::ty(
+            "type at impl signature Self",
+            "type_impl_self_signature",
+        )],
+        expect![[r#"
+            type at impl signature Self
+            - Self struct analysis_impl_self_signature_type[lib]::crate::User
+        "#]],
+    );
+}

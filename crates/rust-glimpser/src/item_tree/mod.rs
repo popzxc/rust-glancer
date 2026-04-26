@@ -10,10 +10,11 @@ use crate::parse::{FileId, ParseDb, TargetId};
 
 pub(crate) use self::item::{
     ConstItem, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldKey, FieldList,
-    FunctionItem, GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag, ItemTreeId,
-    ItemTreeRef, ModuleItem, ModuleSource, Mutability, ParamKind, StaticItem, StructItem,
-    TraitItem, TypeAliasItem, TypeBound, TypeRef, UnionItem, UseImport, UseImportKind, UseItem,
-    UsePath, UsePathSegment, VisibilityLevel,
+    FunctionItem, GenericArg, GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag,
+    ItemTreeId, ItemTreeRef, ModuleItem, ModuleSource, Mutability, ParamKind, StaticItem,
+    StructItem, TraitItem, TypeAliasItem, TypeBound, TypePath, TypeRef, UnionItem, UseImport,
+    UseImportKind, UseItem, UsePath, UsePathSegment, UsePathSegmentKind, VisibilityLevel,
+    WherePredicate,
 };
 
 #[cfg(test)]

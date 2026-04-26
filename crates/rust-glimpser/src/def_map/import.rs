@@ -1,6 +1,9 @@
 use std::fmt;
 
-use crate::item_tree::{ImportAlias, UseImportKind, UsePath, UsePathSegment, VisibilityLevel};
+use crate::item_tree::{
+    ImportAlias, ItemTreeRef, UseImportKind, UsePath, UsePathSegment, UsePathSegmentKind,
+    VisibilityLevel,
+};
 
 use super::ModuleId;
 
@@ -12,6 +15,8 @@ pub struct ImportData {
     pub kind: ImportKind,
     pub path: ImportPath,
     pub binding: ImportBinding,
+    pub source: ItemTreeRef,
+    pub import_index: usize,
 }
 
 impl ImportData {
@@ -42,7 +47,7 @@ impl ImportBinding {
     pub(super) fn from_alias(alias: &ImportAlias) -> Self {
         match alias {
             ImportAlias::Inferred => Self::Inferred,
-            ImportAlias::Explicit(name) => Self::Explicit(name.clone()),
+            ImportAlias::Explicit { name, .. } => Self::Explicit(name.clone()),
             ImportAlias::Hidden => Self::Hidden,
         }
     }
@@ -152,11 +157,11 @@ pub enum PathSegment {
 
 impl PathSegment {
     fn from_use_segment(segment: &UsePathSegment) -> Self {
-        match segment {
-            UsePathSegment::Name(name) => Self::Name(name.clone()),
-            UsePathSegment::SelfKw => Self::SelfKw,
-            UsePathSegment::SuperKw => Self::SuperKw,
-            UsePathSegment::CrateKw => Self::CrateKw,
+        match &segment.kind {
+            UsePathSegmentKind::Name(name) => Self::Name(name.clone()),
+            UsePathSegmentKind::SelfKw => Self::SelfKw,
+            UsePathSegmentKind::SuperKw => Self::SuperKw,
+            UsePathSegmentKind::CrateKw => Self::CrateKw,
         }
     }
 }

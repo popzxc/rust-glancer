@@ -7,22 +7,23 @@ use crate::{
     body_ir::{
         BindingId, BodyData, BodyId, BodyRef, BodyResolution, BodyTy, ExprData, ExprId, ExprKind,
     },
-    def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef, TargetRef},
-    item_tree::ParamKind,
+    def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef, Path, PathSegment, TargetRef},
+    item_tree::{ParamKind, TypeRef},
     parse::{FileId, span::Span},
-    semantic_ir::{FieldRef, FunctionData, FunctionRef, TypeDefRef},
+    semantic_ir::{FieldRef, FunctionData, FunctionRef, ImplRef, TypeDefRef},
 };
 
+mod cursor;
 mod data;
 
 #[cfg(test)]
 mod tests;
 
-use self::data::SourceNodeAt;
 pub(crate) use self::data::{
     CompletionItem, CompletionKind, CompletionTarget, NavigationTarget, NavigationTargetKind,
     SymbolAt,
 };
+use self::data::{PathContext, PathRole, SourceNodeAt, SymbolCandidate};
 
 /// High-level query API over the frozen project analysis.
 pub(crate) struct Analysis<'a> {
@@ -34,19 +35,31 @@ impl<'a> Analysis<'a> {
         Self { project }
     }
 
-    /// Returns the body symbol under a source offset, if Body IR owns that location.
+    /// Returns the smallest known symbol under a source offset.
     pub(crate) fn symbol_at(
         &self,
         target: TargetRef,
         file_id: FileId,
         offset: u32,
     ) -> Option<SymbolAt> {
-        let node = self.source_node_at(target, file_id, offset)?;
-        let body = self.body_data(node.body)?;
-        Some(self.symbol_for_source_node(body, node))
+        let mut candidates = Vec::new();
+        if let Some(candidate) = self.body_symbol_candidate(target, file_id, offset) {
+            candidates.push(candidate);
+        }
+        candidates.extend(cursor::item_signature_candidates(
+            self.project,
+            target,
+            file_id,
+            offset,
+        ));
+
+        candidates
+            .into_iter()
+            .min_by_key(|candidate| span_len(candidate.span))
+            .map(|candidate| candidate.symbol)
     }
 
-    /// Resolves a previously found body symbol to navigation targets.
+    /// Resolves a previously found symbol to navigation targets.
     pub(crate) fn resolve_symbol(&self, symbol: SymbolAt) -> Vec<NavigationTarget> {
         match symbol {
             SymbolAt::Binding { body, binding } => self
@@ -54,6 +67,7 @@ impl<'a> Analysis<'a> {
                 .and_then(|body_data| body_data.binding(binding))
                 .map(|binding_data| vec![NavigationTarget::from_binding(binding_data)])
                 .unwrap_or_default(),
+            SymbolAt::Def { def, .. } => self.navigation_target_for_def(def).into_iter().collect(),
             SymbolAt::Expr { body, expr } => self
                 .body_data(body)
                 .and_then(|body_data| {
@@ -62,11 +76,22 @@ impl<'a> Analysis<'a> {
                     })
                 })
                 .unwrap_or_default(),
+            SymbolAt::Field { field, .. } => self
+                .navigation_target_for_field(field)
+                .into_iter()
+                .collect(),
+            SymbolAt::Function { function, .. } => self
+                .navigation_target_for_function(function)
+                .into_iter()
+                .collect(),
+            SymbolAt::Path { context, path, .. } => {
+                self.navigation_targets_for_path(context, &path)
+            }
             SymbolAt::Body { .. } => Vec::new(),
         }
     }
 
-    /// Returns best-effort definitions for the body symbol under a source offset.
+    /// Returns best-effort definitions for the symbol under a source offset.
     pub(crate) fn goto_definition(
         &self,
         target: TargetRef,
@@ -95,6 +120,19 @@ impl<'a> Analysis<'a> {
                 .body_data(body)?
                 .binding(binding)
                 .map(|data| data.ty.clone()),
+            SymbolAt::Def { def, .. } => self.ty_for_def(def),
+            SymbolAt::Field { field, .. } => self.ty_for_field(field),
+            SymbolAt::Path {
+                context,
+                path,
+                role: PathRole::Type,
+                ..
+            } => Some(self.ty_for_type_path(context, &path)),
+            SymbolAt::Path {
+                role: PathRole::Use,
+                ..
+            }
+            | SymbolAt::Function { .. } => None,
             SymbolAt::Body { .. } => None,
         }
     }
@@ -126,6 +164,19 @@ impl<'a> Analysis<'a> {
                 .then(left.kind.cmp(&right.kind))
         });
         completions
+    }
+
+    fn body_symbol_candidate(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> Option<SymbolCandidate> {
+        let node = self.source_node_at(target, file_id, offset)?;
+        let body = self.body_data(node.body)?;
+        let symbol = self.symbol_for_source_node(body, node);
+        let span = self.body_symbol_span(&symbol)?;
+        Some(SymbolCandidate { symbol, span })
     }
 
     fn source_node_at(
@@ -250,6 +301,24 @@ impl<'a> Analysis<'a> {
         }
     }
 
+    fn body_symbol_span(&self, symbol: &SymbolAt) -> Option<Span> {
+        match symbol {
+            SymbolAt::Body { body } => self.body_data(*body).map(|data| data.source.span),
+            SymbolAt::Binding { body, binding } => self
+                .body_data(*body)?
+                .binding(*binding)
+                .map(|data| data.source.span),
+            SymbolAt::Expr { body, expr } => self
+                .body_data(*body)?
+                .expr(*expr)
+                .map(|data| data.source.span),
+            SymbolAt::Def { span, .. }
+            | SymbolAt::Field { span, .. }
+            | SymbolAt::Function { span, .. }
+            | SymbolAt::Path { span, .. } => Some(*span),
+        }
+    }
+
     fn navigation_targets_for_resolution(
         &self,
         body: &BodyData,
@@ -332,6 +401,125 @@ impl<'a> Analysis<'a> {
             file_id: field_data.file_id,
             span: Some(field_data.field.span),
         })
+    }
+
+    fn navigation_target_for_function(
+        &self,
+        function_ref: FunctionRef,
+    ) -> Option<NavigationTarget> {
+        let function_data = self.project.semantic_ir_db().function_data(function_ref)?;
+        let item = self
+            .project
+            .item_tree_db()
+            .package(function_ref.target.package.0)?
+            .item(function_data.source)?;
+
+        Some(NavigationTarget {
+            kind: NavigationTargetKind::Function,
+            name: function_data.name.clone(),
+            file_id: function_data.source.file_id,
+            span: Some(item.span),
+        })
+    }
+
+    fn navigation_targets_for_path(
+        &self,
+        context: PathContext,
+        path: &Path,
+    ) -> Vec<NavigationTarget> {
+        if is_self_type_path(path) {
+            if let Some(impl_ref) = context.impl_ref {
+                return self
+                    .impl_self_tys(impl_ref)
+                    .into_iter()
+                    .filter_map(|ty| self.navigation_target_for_type_def(ty))
+                    .collect();
+            }
+        }
+
+        self.project
+            .def_map_db()
+            .resolve_path(context.module, path)
+            .resolved
+            .into_iter()
+            .filter_map(|def| self.navigation_target_for_def(def))
+            .collect()
+    }
+
+    fn navigation_target_for_type_def(&self, ty: TypeDefRef) -> Option<NavigationTarget> {
+        let target_ir = self.project.semantic_ir_db().target_ir(ty.target)?;
+        let local_def = match ty.id {
+            crate::semantic_ir::TypeDefId::Struct(id) => {
+                target_ir.items().struct_data(id)?.local_def
+            }
+            crate::semantic_ir::TypeDefId::Enum(id) => target_ir.items().enum_data(id)?.local_def,
+            crate::semantic_ir::TypeDefId::Union(id) => target_ir.items().union_data(id)?.local_def,
+        };
+
+        self.navigation_target_for_local_def(local_def)
+    }
+
+    fn ty_for_def(&self, def: DefId) -> Option<BodyTy> {
+        let DefId::Local(local_def) = def else {
+            return None;
+        };
+        self.project
+            .semantic_ir_db()
+            .type_def_for_local_def(local_def)
+            .map(|ty| BodyTy::Nominal(vec![ty]))
+    }
+
+    fn ty_for_field(&self, field: FieldRef) -> Option<BodyTy> {
+        let field_data = self.project.semantic_ir_db().field_data(field)?;
+        Some(self.ty_from_type_ref_in_module(&field_data.field.ty, field_data.owner_module))
+    }
+
+    fn ty_for_type_path(&self, context: PathContext, path: &Path) -> BodyTy {
+        if is_self_type_path(path) {
+            if let Some(impl_ref) = context.impl_ref {
+                let self_tys = self.impl_self_tys(impl_ref);
+                return if self_tys.is_empty() {
+                    BodyTy::Unknown
+                } else {
+                    BodyTy::SelfTy(self_tys)
+                };
+            }
+        }
+
+        let type_defs = self.project.semantic_ir_db().type_defs_for_path(
+            self.project.def_map_db(),
+            context.module,
+            path,
+        );
+        if type_defs.is_empty() {
+            BodyTy::Unknown
+        } else {
+            BodyTy::Nominal(type_defs)
+        }
+    }
+
+    fn ty_from_type_ref_in_module(&self, ty: &TypeRef, owner_module: ModuleRef) -> BodyTy {
+        match ty {
+            TypeRef::Unit => BodyTy::Unit,
+            TypeRef::Never => BodyTy::Never,
+            TypeRef::Path(_) => {
+                let Some(path) = path_from_type_ref(ty) else {
+                    return BodyTy::Syntax(ty.clone());
+                };
+                self.ty_for_type_path(PathContext::module(owner_module), &path)
+            }
+            TypeRef::Unknown(_) | TypeRef::Infer => BodyTy::Unknown,
+            TypeRef::Tuple(types) if types.is_empty() => BodyTy::Unit,
+            _ => BodyTy::Syntax(ty.clone()),
+        }
+    }
+
+    fn impl_self_tys(&self, impl_ref: ImplRef) -> Vec<TypeDefRef> {
+        self.project
+            .semantic_ir_db()
+            .impl_data(impl_ref)
+            .map(|data| data.resolved_self_tys.clone())
+            .unwrap_or_default()
     }
 
     fn push_type_completions(&self, ty: TypeDefRef, completions: &mut Vec<CompletionItem>) {
@@ -464,6 +652,32 @@ fn dot_span(expr: &ExprData) -> Option<Span> {
         ExprKind::Field { dot_span, .. } => *dot_span,
         _ => None,
     }
+}
+
+fn path_from_type_ref(ty: &TypeRef) -> Option<Path> {
+    let TypeRef::Path(path) = ty else {
+        return None;
+    };
+
+    Some(Path {
+        absolute: path.absolute,
+        segments: path
+            .segments
+            .iter()
+            .map(|segment| match segment.name.as_str() {
+                "self" => PathSegment::SelfKw,
+                "super" => PathSegment::SuperKw,
+                "crate" => PathSegment::CrateKw,
+                name => PathSegment::Name(name.to_string()),
+            })
+            .collect(),
+    })
+}
+
+fn is_self_type_path(path: &Path) -> bool {
+    !path.absolute
+        && path.segments.len() == 1
+        && matches!(path.segments.first(), Some(PathSegment::Name(name)) if name == "Self")
 }
 
 fn contains_offset(span: Span, offset: u32) -> bool {

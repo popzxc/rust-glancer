@@ -19,7 +19,7 @@ pub struct GenericParams {
 }
 
 impl GenericParams {
-    pub(crate) fn from_ast<T>(item: &T) -> Self
+    pub(crate) fn from_ast<T>(item: &T, line_index: &LineIndex) -> Self
     where
         T: HasGenericParams,
     {
@@ -34,7 +34,7 @@ impl GenericParams {
                                 .name()
                                 .map(|name| name.text().to_string())
                                 .unwrap_or_else(|| "<missing>".to_string()),
-                            ty: param.ty().map(TypeRef::from_ast),
+                            ty: param.ty().map(|ty| TypeRef::from_ast(ty, line_index)),
                             default: param.default_val().map(|value| normalized_syntax(&value)),
                         });
                     }
@@ -53,8 +53,10 @@ impl GenericParams {
                                 .name()
                                 .map(|name| name.text().to_string())
                                 .unwrap_or_else(|| "<missing>".to_string()),
-                            bounds: TypeBound::list_from_ast(param.type_bound_list()),
-                            default: param.default_type().map(TypeRef::from_ast),
+                            bounds: TypeBound::list_from_ast(param.type_bound_list(), line_index),
+                            default: param
+                                .default_type()
+                                .map(|ty| TypeRef::from_ast(ty, line_index)),
                         });
                     }
                 }
@@ -64,7 +66,7 @@ impl GenericParams {
         if let Some(where_clause) = item.where_clause() {
             params.where_predicates = where_clause
                 .predicates()
-                .map(WherePredicate::from_ast)
+                .map(|predicate| WherePredicate::from_ast(predicate, line_index))
                 .collect();
         }
 
@@ -167,7 +169,7 @@ pub enum WherePredicate {
 }
 
 impl WherePredicate {
-    fn from_ast(predicate: ast::WherePred) -> Self {
+    fn from_ast(predicate: ast::WherePred, line_index: &LineIndex) -> Self {
         if let Some(lifetime) = predicate.lifetime() {
             return Self::Lifetime {
                 lifetime: normalized_syntax(&lifetime),
@@ -177,8 +179,8 @@ impl WherePredicate {
 
         if let Some(ty) = predicate.ty() {
             return Self::Type {
-                ty: TypeRef::from_ast(ty),
-                bounds: TypeBound::list_from_ast(predicate.type_bound_list()),
+                ty: TypeRef::from_ast(ty, line_index),
+                bounds: TypeBound::list_from_ast(predicate.type_bound_list(), line_index),
             };
         }
 
@@ -207,14 +209,14 @@ pub struct FunctionItem {
 }
 
 impl FunctionItem {
-    pub(crate) fn from_ast(item: &ast::Fn) -> Self {
+    pub(crate) fn from_ast(item: &ast::Fn, line_index: &LineIndex) -> Self {
         Self {
-            generics: GenericParams::from_ast(item),
-            params: ParamItem::list_from_ast(item.param_list()),
+            generics: GenericParams::from_ast(item, line_index),
+            params: ParamItem::list_from_ast(item.param_list(), line_index),
             ret_ty: item
                 .ret_type()
                 .and_then(|ret_ty| ret_ty.ty())
-                .map(TypeRef::from_ast),
+                .map(|ty| TypeRef::from_ast(ty, line_index)),
             qualifiers: FunctionQualifiers {
                 is_async: item.async_token().is_some(),
                 is_const: item.const_token().is_some(),
@@ -239,7 +241,10 @@ pub struct ParamItem {
 }
 
 impl ParamItem {
-    pub(crate) fn list_from_ast(param_list: Option<ast::ParamList>) -> Vec<Self> {
+    pub(crate) fn list_from_ast(
+        param_list: Option<ast::ParamList>,
+        line_index: &LineIndex,
+    ) -> Vec<Self> {
         let Some(param_list) = param_list else {
             return Vec::new();
         };
@@ -249,7 +254,7 @@ impl ParamItem {
         if let Some(self_param) = param_list.self_param() {
             params.push(Self {
                 pat: normalized_syntax(&self_param),
-                ty: self_param.ty().map(TypeRef::from_ast),
+                ty: self_param.ty().map(|ty| TypeRef::from_ast(ty, line_index)),
                 kind: ParamKind::SelfParam,
             });
         }
@@ -260,7 +265,7 @@ impl ParamItem {
                     .pat()
                     .map(|pat| normalized_syntax(&pat))
                     .unwrap_or_else(|| "<missing>".to_string()),
-                ty: param.ty().map(TypeRef::from_ast),
+                ty: param.ty().map(|ty| TypeRef::from_ast(ty, line_index)),
                 kind: ParamKind::Normal,
             });
         }
@@ -284,7 +289,7 @@ pub struct StructItem {
 impl StructItem {
     pub(crate) fn from_ast(item: &ast::Struct, line_index: &LineIndex) -> Self {
         Self {
-            generics: GenericParams::from_ast(item),
+            generics: GenericParams::from_ast(item, line_index),
             fields: FieldList::from_ast(item.field_list(), line_index),
         }
     }
@@ -299,7 +304,7 @@ pub struct UnionItem {
 impl UnionItem {
     pub(crate) fn from_ast(item: &ast::Union, line_index: &LineIndex) -> Self {
         Self {
-            generics: GenericParams::from_ast(item),
+            generics: GenericParams::from_ast(item, line_index),
             fields: item
                 .record_field_list()
                 .map(|fields| FieldItem::record_list_from_ast(fields, line_index))
@@ -317,7 +322,7 @@ pub struct EnumItem {
 impl EnumItem {
     pub(crate) fn from_ast(item: &ast::Enum, line_index: &LineIndex) -> Self {
         Self {
-            generics: GenericParams::from_ast(item),
+            generics: GenericParams::from_ast(item, line_index),
             variants: item
                 .variant_list()
                 .map(|variant_list| {
@@ -425,7 +430,7 @@ impl FieldItem {
                     visibility: VisibilityLevel::from_ast(field.visibility()),
                     ty: field
                         .ty()
-                        .map(TypeRef::from_ast)
+                        .map(|ty| TypeRef::from_ast(ty, line_index))
                         .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
                     span: Span::from_text_range(span, line_index),
                 }
@@ -442,7 +447,7 @@ impl FieldItem {
                 visibility: VisibilityLevel::from_ast(field.visibility()),
                 ty: field
                     .ty()
-                    .map(TypeRef::from_ast)
+                    .map(|ty| TypeRef::from_ast(ty, line_index))
                     .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
                 span: Span::from_text_range(field.syntax().text_range(), line_index),
             })
@@ -459,10 +464,14 @@ pub struct TraitItem {
 }
 
 impl TraitItem {
-    pub(crate) fn from_ast(item: &ast::Trait, items: Vec<ItemTreeId>) -> Self {
+    pub(crate) fn from_ast(
+        item: &ast::Trait,
+        items: Vec<ItemTreeId>,
+        line_index: &LineIndex,
+    ) -> Self {
         Self {
-            generics: GenericParams::from_ast(item),
-            super_traits: TypeBound::list_from_ast(item.type_bound_list()),
+            generics: GenericParams::from_ast(item, line_index),
+            super_traits: TypeBound::list_from_ast(item.type_bound_list(), line_index),
             items,
             is_unsafe: item.unsafe_token().is_some(),
         }
@@ -479,11 +488,15 @@ pub struct ImplItem {
 }
 
 impl ImplItem {
-    pub(crate) fn from_ast(item: &ast::Impl, items: Vec<ItemTreeId>) -> Self {
-        let (trait_ref, self_ty) = Self::header_from_ast(item);
+    pub(crate) fn from_ast(
+        item: &ast::Impl,
+        items: Vec<ItemTreeId>,
+        line_index: &LineIndex,
+    ) -> Self {
+        let (trait_ref, self_ty) = Self::header_from_ast(item, line_index);
 
         Self {
-            generics: GenericParams::from_ast(item),
+            generics: GenericParams::from_ast(item, line_index),
             trait_ref,
             self_ty,
             items,
@@ -491,7 +504,7 @@ impl ImplItem {
         }
     }
 
-    fn header_from_ast(item: &ast::Impl) -> (Option<TypeRef>, TypeRef) {
+    fn header_from_ast(item: &ast::Impl, line_index: &LineIndex) -> (Option<TypeRef>, TypeRef) {
         let types = item
             .syntax()
             .children()
@@ -499,11 +512,14 @@ impl ImplItem {
             .collect::<Vec<_>>();
 
         if item.for_token().is_some() {
-            let trait_ref = types.first().cloned().map(TypeRef::from_ast);
+            let trait_ref = types
+                .first()
+                .cloned()
+                .map(|ty| TypeRef::from_ast(ty, line_index));
             let self_ty = types
                 .get(1)
                 .cloned()
-                .map(TypeRef::from_ast)
+                .map(|ty| TypeRef::from_ast(ty, line_index))
                 .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
             return (trait_ref, self_ty);
         }
@@ -511,7 +527,7 @@ impl ImplItem {
         let self_ty = types
             .first()
             .cloned()
-            .map(TypeRef::from_ast)
+            .map(|ty| TypeRef::from_ast(ty, line_index))
             .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
         (None, self_ty)
     }
@@ -525,11 +541,11 @@ pub struct TypeAliasItem {
 }
 
 impl TypeAliasItem {
-    pub(crate) fn from_ast(item: &ast::TypeAlias) -> Self {
+    pub(crate) fn from_ast(item: &ast::TypeAlias, line_index: &LineIndex) -> Self {
         Self {
-            generics: GenericParams::from_ast(item),
-            bounds: TypeBound::list_from_ast(item.type_bound_list()),
-            aliased_ty: item.ty().map(TypeRef::from_ast),
+            generics: GenericParams::from_ast(item, line_index),
+            bounds: TypeBound::list_from_ast(item.type_bound_list(), line_index),
+            aliased_ty: item.ty().map(|ty| TypeRef::from_ast(ty, line_index)),
         }
     }
 }
@@ -541,10 +557,10 @@ pub struct ConstItem {
 }
 
 impl ConstItem {
-    pub(crate) fn from_ast(item: &ast::Const) -> Self {
+    pub(crate) fn from_ast(item: &ast::Const, line_index: &LineIndex) -> Self {
         Self {
-            generics: GenericParams::from_ast(item),
-            ty: item.ty().map(TypeRef::from_ast),
+            generics: GenericParams::from_ast(item, line_index),
+            ty: item.ty().map(|ty| TypeRef::from_ast(ty, line_index)),
         }
     }
 }
@@ -556,9 +572,9 @@ pub struct StaticItem {
 }
 
 impl StaticItem {
-    pub(crate) fn from_ast(item: &ast::Static) -> Self {
+    pub(crate) fn from_ast(item: &ast::Static, line_index: &LineIndex) -> Self {
         Self {
-            ty: item.ty().map(TypeRef::from_ast),
+            ty: item.ty().map(|ty| TypeRef::from_ast(ty, line_index)),
             mutability: Mutability::from_mut_token(item.mut_token().is_some()),
         }
     }

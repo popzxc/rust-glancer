@@ -235,7 +235,7 @@ impl<'a> FunctionBodyLowering<'a> {
 
     fn lower_self_param(&mut self, param: ast::SelfParam, scope: ScopeId) -> BindingId {
         let source = self.source(param.syntax());
-        let annotation = param.ty().map(TypeRef::from_ast);
+        let annotation = param.ty().map(|ty| TypeRef::from_ast(ty, self.line_index));
         self.builder.alloc_binding(BindingData {
             source,
             scope,
@@ -248,7 +248,7 @@ impl<'a> FunctionBodyLowering<'a> {
     }
 
     fn lower_param(&mut self, param: ast::Param, scope: ScopeId) -> Vec<BindingId> {
-        let annotation = param.ty().map(TypeRef::from_ast);
+        let annotation = param.ty().map(|ty| TypeRef::from_ast(ty, self.line_index));
         match param.pat() {
             Some(pat) => self.lower_pat_bindings(pat, scope, BindingKind::Param, annotation),
             None => vec![self.builder.alloc_binding(BindingData {
@@ -319,7 +319,9 @@ impl<'a> FunctionBodyLowering<'a> {
         let initializer = statement
             .initializer()
             .map(|initializer| self.lower_expr(initializer, scope));
-        let annotation = statement.ty().map(TypeRef::from_ast);
+        let annotation = statement
+            .ty()
+            .map(|ty| TypeRef::from_ast(ty, self.line_index));
         let bindings = statement
             .pat()
             .map(|pat| self.lower_pat_bindings(pat, scope, BindingKind::Let, annotation.clone()))

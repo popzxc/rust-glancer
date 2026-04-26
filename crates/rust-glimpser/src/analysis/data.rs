@@ -1,8 +1,8 @@
 use crate::{
     body_ir::{BindingData, BindingId, BodyRef, ExprId},
-    def_map::LocalDefKind,
+    def_map::{DefId, LocalDefKind, ModuleRef, Path},
     parse::{FileId, span::Span},
-    semantic_ir::{FieldRef, FunctionRef},
+    semantic_ir::{FieldRef, FunctionRef, ImplRef},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,12 +12,64 @@ pub(super) struct SourceNodeAt {
     pub(super) binding: Option<BindingId>,
 }
 
-/// Body-level symbol found at one source offset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct SymbolCandidate {
+    pub(super) symbol: SymbolAt,
+    pub(super) span: Span,
+}
+
+/// Symbol found at one source offset.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SymbolAt {
-    Body { body: BodyRef },
-    Binding { body: BodyRef, binding: BindingId },
-    Expr { body: BodyRef, expr: ExprId },
+    Body {
+        body: BodyRef,
+    },
+    Binding {
+        body: BodyRef,
+        binding: BindingId,
+    },
+    Def {
+        def: DefId,
+        span: Span,
+    },
+    Expr {
+        body: BodyRef,
+        expr: ExprId,
+    },
+    Field {
+        field: FieldRef,
+        span: Span,
+    },
+    Function {
+        function: FunctionRef,
+        span: Span,
+    },
+    Path {
+        context: PathContext,
+        path: Path,
+        role: PathRole,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PathRole {
+    Type,
+    Use,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PathContext {
+    pub(crate) module: ModuleRef,
+    pub(crate) impl_ref: Option<ImplRef>,
+}
+
+impl PathContext {
+    pub(crate) fn module(module: ModuleRef) -> Self {
+        Self {
+            module,
+            impl_ref: None,
+        }
+    }
 }
 
 /// One goto-definition destination.

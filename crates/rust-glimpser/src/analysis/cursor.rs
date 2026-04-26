@@ -1,0 +1,501 @@
+use crate::{
+    Project,
+    def_map::{DefId, ModuleRef, Path, PathSegment, TargetRef},
+    item_tree::{
+        FieldList, GenericArg, GenericParams, ItemKind, ItemNode, ItemTreeRef, TypeBound, TypePath,
+        TypeRef, UsePath, UsePathSegment, UsePathSegmentKind, WherePredicate,
+    },
+    parse::{FileId, span::Span},
+    semantic_ir::{
+        FieldRef, FunctionId, FunctionRef, ImplId, ImplRef, ItemOwner, StructId, TraitRef,
+        TypeDefId, TypeDefRef, UnionId,
+    },
+};
+
+use super::data::{PathContext, PathRole, SymbolAt, SymbolCandidate};
+
+pub(super) fn item_signature_candidates(
+    project: &Project,
+    target: TargetRef,
+    file_id: FileId,
+    offset: u32,
+) -> Vec<SymbolCandidate> {
+    let mut candidates = Vec::new();
+
+    CursorScanner {
+        project,
+        target,
+        file_id,
+        offset,
+        candidates: &mut candidates,
+    }
+    .scan();
+
+    candidates
+}
+
+struct CursorScanner<'a> {
+    project: &'a Project,
+    target: TargetRef,
+    file_id: FileId,
+    offset: u32,
+    candidates: &'a mut Vec<SymbolCandidate>,
+}
+
+impl CursorScanner<'_> {
+    fn scan(&mut self) {
+        self.scan_local_definitions();
+        self.scan_import_paths();
+        self.scan_semantic_items();
+    }
+
+    fn scan_local_definitions(&mut self) {
+        let Some(def_map) = self.project.def_map_db().def_map(self.target) else {
+            return;
+        };
+
+        for (local_def_idx, local_def) in def_map.local_defs().iter().enumerate() {
+            if local_def.file_id != self.file_id {
+                continue;
+            }
+
+            let span = self
+                .item(local_def.source)
+                .and_then(|item| item.name_span)
+                .unwrap_or(local_def.span);
+            if !contains_offset_or_end(span, self.offset) {
+                continue;
+            }
+
+            self.candidates.push(SymbolCandidate {
+                symbol: SymbolAt::Def {
+                    def: DefId::Local(crate::def_map::LocalDefRef {
+                        target: self.target,
+                        local_def: crate::def_map::LocalDefId(local_def_idx),
+                    }),
+                    span,
+                },
+                span,
+            });
+        }
+    }
+
+    fn scan_import_paths(&mut self) {
+        let Some(def_map) = self.project.def_map_db().def_map(self.target) else {
+            return;
+        };
+
+        for import in def_map.imports() {
+            if import.source.file_id != self.file_id {
+                continue;
+            }
+
+            let Some(source_import) = self
+                .item(import.source)
+                .and_then(|item| match &item.kind {
+                    ItemKind::Use(use_item) => use_item.imports.get(import.import_index),
+                    _ => None,
+                })
+                .cloned()
+            else {
+                continue;
+            };
+            let context = PathContext::module(ModuleRef {
+                target: self.target,
+                module: import.module,
+            });
+            self.push_use_path(context, &source_import.path);
+            if let crate::item_tree::ImportAlias::Explicit { span, .. } = source_import.alias {
+                if contains_offset_or_end(span, self.offset) {
+                    self.push_path_candidate(
+                        context,
+                        path_from_use_path(&source_import.path),
+                        PathRole::Use,
+                        span,
+                    );
+                }
+            }
+        }
+    }
+
+    fn scan_semantic_items(&mut self) {
+        let Some(target_ir) = self.project.semantic_ir_db().target_ir(self.target) else {
+            return;
+        };
+        let items = target_ir.items();
+
+        for (idx, data) in items.structs.iter().enumerate() {
+            if data.source.file_id != self.file_id {
+                continue;
+            }
+            let ty = TypeDefRef {
+                target: self.target,
+                id: TypeDefId::Struct(StructId(idx)),
+            };
+            let context = PathContext::module(data.owner);
+            self.scan_generic_params(context, &data.generics);
+            self.scan_field_list(ty, context, &data.fields);
+        }
+
+        for (idx, data) in items.unions.iter().enumerate() {
+            if data.source.file_id != self.file_id {
+                continue;
+            }
+            let ty = TypeDefRef {
+                target: self.target,
+                id: TypeDefId::Union(UnionId(idx)),
+            };
+            let context = PathContext::module(data.owner);
+            self.scan_generic_params(context, &data.generics);
+            for (field_idx, field) in data.fields.iter().enumerate() {
+                self.push_field(
+                    FieldRef {
+                        owner: ty,
+                        index: field_idx,
+                    },
+                    field.span,
+                );
+                self.push_type_ref(context, &field.ty, PathRole::Type);
+            }
+        }
+
+        for data in &items.enums {
+            if data.source.file_id != self.file_id {
+                continue;
+            }
+            let context = PathContext::module(data.owner);
+            self.scan_generic_params(context, &data.generics);
+            for variant in &data.variants {
+                self.scan_field_list_for_owner(context, &variant.fields);
+            }
+        }
+
+        for data in &items.traits {
+            if data.source.file_id != self.file_id {
+                continue;
+            }
+            let context = PathContext::module(data.owner);
+            self.scan_generic_params(context, &data.generics);
+            self.scan_type_bounds(context, &data.super_traits);
+        }
+
+        for (idx, data) in items.impls.iter().enumerate() {
+            if data.source.file_id != self.file_id {
+                continue;
+            }
+            let context = PathContext {
+                module: data.owner,
+                impl_ref: Some(ImplRef {
+                    target: self.target,
+                    id: ImplId(idx),
+                }),
+            };
+            self.scan_generic_params(context, &data.generics);
+            if let Some(trait_ref) = &data.trait_ref {
+                self.push_type_ref(context, trait_ref, PathRole::Type);
+            }
+            self.push_type_ref(context, &data.self_ty, PathRole::Type);
+        }
+
+        for (idx, data) in items.functions.iter().enumerate() {
+            if data.source.file_id != self.file_id {
+                continue;
+            }
+            if data.local_def.is_none() {
+                let span = self
+                    .item(data.source)
+                    .and_then(|item| item.name_span)
+                    .unwrap_or_else(|| {
+                        self.item(data.source)
+                            .map(|item| item.span)
+                            .expect("function source item should exist")
+                    });
+                self.push_function(
+                    FunctionRef {
+                        target: self.target,
+                        id: FunctionId(idx),
+                    },
+                    span,
+                );
+            }
+            let Some(context) = self.owner_context(data.owner) else {
+                continue;
+            };
+            self.scan_generic_params(context, &data.declaration.generics);
+            for param in &data.declaration.params {
+                if let Some(ty) = &param.ty {
+                    self.push_type_ref(context, ty, PathRole::Type);
+                }
+            }
+            if let Some(ret_ty) = &data.declaration.ret_ty {
+                self.push_type_ref(context, ret_ty, PathRole::Type);
+            }
+        }
+
+        for data in &items.type_aliases {
+            if data.source.file_id != self.file_id {
+                continue;
+            }
+            let Some(context) = self.owner_context(data.owner) else {
+                continue;
+            };
+            self.scan_generic_params(context, &data.declaration.generics);
+            self.scan_type_bounds(context, &data.declaration.bounds);
+            if let Some(ty) = &data.declaration.aliased_ty {
+                self.push_type_ref(context, ty, PathRole::Type);
+            }
+        }
+
+        for data in &items.consts {
+            if data.source.file_id != self.file_id {
+                continue;
+            }
+            let Some(context) = self.owner_context(data.owner) else {
+                continue;
+            };
+            self.scan_generic_params(context, &data.declaration.generics);
+            if let Some(ty) = &data.declaration.ty {
+                self.push_type_ref(context, ty, PathRole::Type);
+            }
+        }
+
+        for data in &items.statics {
+            if data.source.file_id != self.file_id {
+                continue;
+            }
+            if let Some(ty) = &data.ty {
+                self.push_type_ref(PathContext::module(data.owner), ty, PathRole::Type);
+            }
+        }
+    }
+
+    fn scan_field_list(&mut self, owner: TypeDefRef, context: PathContext, fields: &FieldList) {
+        for (idx, field) in fields.fields().iter().enumerate() {
+            self.push_field(FieldRef { owner, index: idx }, field.span);
+            self.push_type_ref(context, &field.ty, PathRole::Type);
+        }
+    }
+
+    fn scan_field_list_for_owner(&mut self, context: PathContext, fields: &FieldList) {
+        for field in fields.fields() {
+            self.push_type_ref(context, &field.ty, PathRole::Type);
+        }
+    }
+
+    fn scan_generic_params(&mut self, context: PathContext, generics: &GenericParams) {
+        for param in &generics.types {
+            self.scan_type_bounds(context, &param.bounds);
+            if let Some(default) = &param.default {
+                self.push_type_ref(context, default, PathRole::Type);
+            }
+        }
+        for param in &generics.consts {
+            if let Some(ty) = &param.ty {
+                self.push_type_ref(context, ty, PathRole::Type);
+            }
+        }
+        for predicate in &generics.where_predicates {
+            match predicate {
+                WherePredicate::Type { ty, bounds } => {
+                    self.push_type_ref(context, ty, PathRole::Type);
+                    self.scan_type_bounds(context, bounds);
+                }
+                WherePredicate::Lifetime { .. } | WherePredicate::Unsupported(_) => {}
+            }
+        }
+    }
+
+    fn scan_type_bounds(&mut self, context: PathContext, bounds: &[TypeBound]) {
+        for bound in bounds {
+            match bound {
+                TypeBound::Trait(ty) => self.push_type_ref(context, ty, PathRole::Type),
+                TypeBound::Lifetime(_) | TypeBound::Unsupported(_) => {}
+            }
+        }
+    }
+
+    fn push_type_ref(&mut self, context: PathContext, ty: &TypeRef, role: PathRole) {
+        match ty {
+            TypeRef::Path(path) => self.push_type_path(context, path, role),
+            TypeRef::Tuple(types) => {
+                for ty in types {
+                    self.push_type_ref(context, ty, role);
+                }
+            }
+            TypeRef::Reference { inner, .. }
+            | TypeRef::RawPointer { inner, .. }
+            | TypeRef::Slice(inner) => self.push_type_ref(context, inner, role),
+            TypeRef::Array { inner, .. } => self.push_type_ref(context, inner, role),
+            TypeRef::FnPointer { params, ret } => {
+                for param in params {
+                    self.push_type_ref(context, param, role);
+                }
+                self.push_type_ref(context, ret, role);
+            }
+            TypeRef::ImplTrait(bounds) | TypeRef::DynTrait(bounds) => {
+                self.scan_type_bounds(context, bounds);
+            }
+            TypeRef::Unknown(_) | TypeRef::Never | TypeRef::Unit | TypeRef::Infer => {}
+        }
+    }
+
+    fn push_type_path(&mut self, context: PathContext, path: &TypePath, role: PathRole) {
+        for (idx, segment) in path.segments.iter().enumerate() {
+            if contains_offset_or_end(segment.span, self.offset) {
+                self.push_path_candidate(
+                    context,
+                    Path {
+                        absolute: path.absolute,
+                        segments: path.segments[..=idx]
+                            .iter()
+                            .map(|segment| path_segment_from_name(&segment.name))
+                            .collect(),
+                    },
+                    role,
+                    segment.span,
+                );
+            }
+
+            for arg in &segment.args {
+                self.push_generic_arg(context, arg, role);
+            }
+        }
+    }
+
+    fn push_generic_arg(&mut self, context: PathContext, arg: &GenericArg, role: PathRole) {
+        match arg {
+            GenericArg::Type(ty) => self.push_type_ref(context, ty, role),
+            GenericArg::AssocType { ty: Some(ty), .. } => self.push_type_ref(context, ty, role),
+            GenericArg::Lifetime(_)
+            | GenericArg::Const(_)
+            | GenericArg::AssocType { ty: None, .. }
+            | GenericArg::Unsupported(_) => {}
+        }
+    }
+
+    fn push_use_path(&mut self, context: PathContext, path: &UsePath) {
+        for (idx, segment) in path.segments.iter().enumerate() {
+            if contains_offset_or_end(segment.span, self.offset) {
+                self.push_path_candidate(
+                    context,
+                    Path {
+                        absolute: path.absolute,
+                        segments: path.segments[..=idx]
+                            .iter()
+                            .map(path_segment_from_use_segment)
+                            .collect(),
+                    },
+                    PathRole::Use,
+                    segment.span,
+                );
+            }
+        }
+    }
+
+    fn push_path_candidate(
+        &mut self,
+        context: PathContext,
+        path: Path,
+        role: PathRole,
+        span: Span,
+    ) {
+        self.candidates.push(SymbolCandidate {
+            symbol: SymbolAt::Path {
+                context,
+                path,
+                role,
+                span,
+            },
+            span,
+        });
+    }
+
+    fn push_field(&mut self, field: FieldRef, span: Span) {
+        if !contains_offset_or_end(span, self.offset) {
+            return;
+        }
+
+        self.candidates.push(SymbolCandidate {
+            symbol: SymbolAt::Field { field, span },
+            span,
+        });
+    }
+
+    fn push_function(&mut self, function: FunctionRef, span: Span) {
+        if !contains_offset_or_end(span, self.offset) {
+            return;
+        }
+
+        self.candidates.push(SymbolCandidate {
+            symbol: SymbolAt::Function { function, span },
+            span,
+        });
+    }
+
+    fn owner_context(&self, owner: ItemOwner) -> Option<PathContext> {
+        match owner {
+            ItemOwner::Module(module_ref) => Some(PathContext::module(module_ref)),
+            ItemOwner::Trait(id) => self
+                .project
+                .semantic_ir_db()
+                .trait_data(TraitRef {
+                    target: self.target,
+                    id,
+                })
+                .map(|data| PathContext::module(data.owner)),
+            ItemOwner::Impl(id) => {
+                let impl_ref = ImplRef {
+                    target: self.target,
+                    id,
+                };
+                self.project
+                    .semantic_ir_db()
+                    .impl_data(impl_ref)
+                    .map(|data| PathContext {
+                        module: data.owner,
+                        impl_ref: Some(impl_ref),
+                    })
+            }
+        }
+    }
+
+    fn item(&self, source: ItemTreeRef) -> Option<&ItemNode> {
+        self.project
+            .item_tree_db()
+            .package(self.target.package.0)?
+            .item(source)
+    }
+}
+
+fn path_segment_from_name(name: &str) -> PathSegment {
+    match name {
+        "self" => PathSegment::SelfKw,
+        "super" => PathSegment::SuperKw,
+        "crate" => PathSegment::CrateKw,
+        name => PathSegment::Name(name.to_string()),
+    }
+}
+
+fn path_segment_from_use_segment(segment: &UsePathSegment) -> PathSegment {
+    match &segment.kind {
+        UsePathSegmentKind::Name(name) => PathSegment::Name(name.clone()),
+        UsePathSegmentKind::SelfKw => PathSegment::SelfKw,
+        UsePathSegmentKind::SuperKw => PathSegment::SuperKw,
+        UsePathSegmentKind::CrateKw => PathSegment::CrateKw,
+    }
+}
+
+fn path_from_use_path(path: &UsePath) -> Path {
+    Path {
+        absolute: path.absolute,
+        segments: path
+            .segments
+            .iter()
+            .map(path_segment_from_use_segment)
+            .collect(),
+    }
+}
+
+fn contains_offset_or_end(span: Span, offset: u32) -> bool {
+    span.text.start <= offset && offset <= span.text.end
+}

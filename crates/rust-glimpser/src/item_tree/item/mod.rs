@@ -9,14 +9,15 @@ pub(crate) use self::{
     decl::{
         ConstItem, EnumItem, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,
         GenericParams, ImplItem, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
-        UnionItem,
+        UnionItem, WherePredicate,
     },
     import::{
         ExternCrateItem, ImportAlias, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
+        UsePathSegmentKind,
     },
     kind::{ItemKind, ItemTag},
     module::{ModuleItem, ModuleSource},
-    type_ref::{Mutability, TypeBound, TypeRef},
+    type_ref::{GenericArg, Mutability, TypeBound, TypePath, TypeRef},
     visibility::VisibilityLevel,
 };
 
@@ -47,6 +48,8 @@ pub struct ItemNode {
     pub kind: ItemKind,
     /// Name (when applicable), e.g. for functions or structs.
     pub name: Option<String>,
+    /// Source span of the declaration name, when the item has one.
+    pub name_span: Option<Span>,
     pub visibility: VisibilityLevel,
     /// File where this item is declared.
     pub file_id: FileId,
@@ -59,6 +62,7 @@ impl ItemNode {
     pub(super) fn new(
         kind: ItemKind,
         name: Option<String>,
+        name_range: Option<TextRange>,
         visibility: VisibilityLevel,
         text_range: TextRange,
         file_id: FileId,
@@ -67,6 +71,7 @@ impl ItemNode {
         Self {
             kind,
             name,
+            name_span: name_range.map(|range| Span::from_text_range(range, line_index)),
             visibility,
             file_id,
             span: Span::from_text_range(text_range, line_index),

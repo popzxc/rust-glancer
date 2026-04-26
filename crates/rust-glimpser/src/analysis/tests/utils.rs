@@ -234,6 +234,18 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
+            SymbolAt::Def { def, span } => {
+                let targets = self
+                    .project
+                    .analysis()
+                    .resolve_symbol(SymbolAt::Def { def, span });
+                let label = targets
+                    .first()
+                    .map(|target| format!("{} {}", target.kind, target.name))
+                    .unwrap_or_else(|| "def <unresolved>".to_string());
+                writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
+                    .expect("string writes should not fail");
+            }
             SymbolAt::Expr { body, expr } => {
                 let body_data = self
                     .project
@@ -244,6 +256,34 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .expr(expr)
                     .expect("expr id should exist while rendering analysis symbol");
                 writeln!(dump, "\n- {}", self.render_expr_symbol(expr_data))
+                    .expect("string writes should not fail");
+            }
+            SymbolAt::Field { field, span } => {
+                let targets = self
+                    .project
+                    .analysis()
+                    .resolve_symbol(SymbolAt::Field { field, span });
+                let label = targets
+                    .first()
+                    .map(|target| format!("{} {}", target.kind, target.name))
+                    .unwrap_or_else(|| "field <unresolved>".to_string());
+                writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
+                    .expect("string writes should not fail");
+            }
+            SymbolAt::Function { function, span } => {
+                let targets = self
+                    .project
+                    .analysis()
+                    .resolve_symbol(SymbolAt::Function { function, span });
+                let label = targets
+                    .first()
+                    .map(|target| format!("{} {}", target.kind, target.name))
+                    .unwrap_or_else(|| "fn <unresolved>".to_string());
+                writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
+                    .expect("string writes should not fail");
+            }
+            SymbolAt::Path { ref path, span, .. } => {
+                writeln!(dump, "\n- path {path} @ {}", self.render_source_span(span))
                     .expect("string writes should not fail");
             }
         }

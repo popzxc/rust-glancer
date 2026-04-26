@@ -124,3 +124,146 @@ pub fn use_it(pair: Pair) {
         "#]],
     );
 }
+
+#[test]
+fn resolves_use_and_signature_paths_to_definitions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_signature_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod api {
+    pub trait Named {}
+    pub struct User;
+}
+
+use a$goto_use_module$pi::Us$goto_use$er;
+
+impl api::Na$goto_impl_trait$med for Us$goto_impl_self$er {}
+
+pub fn make(user: Us$goto_param$er) -> Us$goto_ret$er {
+    user
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto use module", "goto_use_module"),
+            AnalysisQuery::goto("goto use path", "goto_use"),
+            AnalysisQuery::goto("goto impl trait", "goto_impl_trait"),
+            AnalysisQuery::goto("goto impl self type", "goto_impl_self"),
+            AnalysisQuery::goto("goto parameter type", "goto_param"),
+            AnalysisQuery::goto("goto return type", "goto_ret"),
+        ],
+        expect![[r#"
+            goto use module
+            - module api @ 1:1-4:2
+
+            goto use path
+            - struct User @ 3:5-3:21
+
+            goto impl trait
+            - trait Named @ 2:5-2:23
+
+            goto impl self type
+            - struct User @ 3:5-3:21
+
+            goto parameter type
+            - struct User @ 3:5-3:21
+
+            goto return type
+            - struct User @ 3:5-3:21
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_field_declarations_and_field_type_paths() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_field_signature_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Profile;
+
+pub struct User {
+    pub pro$goto_field_decl$file: Pro$goto_field_type$file,
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto field declaration", "goto_field_decl"),
+            AnalysisQuery::goto("goto field type", "goto_field_type"),
+        ],
+        expect![[r#"
+            goto field declaration
+            - field profile @ 4:9-4:16
+
+            goto field type
+            - struct Profile @ 1:1-1:20
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_import_alias_cursors_to_imported_definitions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_import_alias_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod api {
+    pub struct User;
+}
+
+use api::User as Acc$goto_import_alias$ount;
+"#,
+        &[AnalysisQuery::goto(
+            "goto import alias",
+            "goto_import_alias",
+        )],
+        expect![[r#"
+            goto import alias
+            - struct User @ 2:5-2:21
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_self_in_impl_signatures_to_impl_self_type() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_impl_self_signature_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+impl User {
+    pub fn new() -> Se$goto_impl_self_signature$lf {
+        User
+    }
+}
+"#,
+        &[AnalysisQuery::goto(
+            "goto impl signature Self",
+            "goto_impl_self_signature",
+        )],
+        expect![[r#"
+            goto impl signature Self
+            - struct User @ 1:1-1:17
+        "#]],
+    );
+}

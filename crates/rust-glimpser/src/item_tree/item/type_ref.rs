@@ -5,6 +5,8 @@ use ra_syntax::{
     ast::{self, HasGenericArgs},
 };
 
+use crate::parse::span::{LineIndex, Span};
+
 use super::normalized_syntax;
 
 /// Syntax-level mutability marker used by lowered declarations and type refs.
@@ -68,18 +70,18 @@ impl TypeRef {
         Self::Unknown(text.into())
     }
 
-    pub(crate) fn from_ast(ty: ast::Type) -> Self {
+    pub(crate) fn from_ast(ty: ast::Type, line_index: &LineIndex) -> Self {
         match ty {
             ast::Type::ArrayType(ty) => Self::Array {
                 inner: Box::new(
                     ty.ty()
-                        .map(Self::from_ast)
+                        .map(|ty| Self::from_ast(ty, line_index))
                         .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
                 ),
                 len: ty.const_arg().map(|arg| normalized_syntax(&arg)),
             },
             ast::Type::DynTraitType(ty) => {
-                Self::DynTrait(TypeBound::list_from_ast(ty.type_bound_list()))
+                Self::DynTrait(TypeBound::list_from_ast(ty.type_bound_list(), line_index))
             }
             ast::Type::FnPtrType(ty) => Self::FnPointer {
                 params: ty
@@ -89,41 +91,41 @@ impl TypeRef {
                     .map(|param| {
                         param
                             .ty()
-                            .map(Self::from_ast)
+                            .map(|ty| Self::from_ast(ty, line_index))
                             .unwrap_or_else(|| Self::Unknown(String::new()))
                     })
                     .collect(),
                 ret: Box::new(
                     ty.ret_type()
                         .and_then(|ret_ty| ret_ty.ty())
-                        .map(Self::from_ast)
+                        .map(|ty| Self::from_ast(ty, line_index))
                         .unwrap_or(Self::Unit),
                 ),
             },
             ast::Type::ForType(ty) => ty
                 .ty()
-                .map(Self::from_ast)
+                .map(|ty| Self::from_ast(ty, line_index))
                 .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
             ast::Type::ImplTraitType(ty) => {
-                Self::ImplTrait(TypeBound::list_from_ast(ty.type_bound_list()))
+                Self::ImplTrait(TypeBound::list_from_ast(ty.type_bound_list(), line_index))
             }
             ast::Type::InferType(_) => Self::Infer,
             ast::Type::MacroType(ty) => Self::unknown_from_text(normalized_syntax(&ty)),
             ast::Type::NeverType(_) => Self::Never,
             ast::Type::ParenType(ty) => ty
                 .ty()
-                .map(Self::from_ast)
+                .map(|ty| Self::from_ast(ty, line_index))
                 .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
             ast::Type::PathType(ty) => ty
                 .path()
-                .map(TypePath::from_ast)
+                .map(|path| TypePath::from_ast(path, line_index))
                 .map(Self::Path)
                 .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
             ast::Type::PtrType(ty) => Self::RawPointer {
                 mutability: Mutability::from_mut_token(ty.mut_token().is_some()),
                 inner: Box::new(
                     ty.ty()
-                        .map(Self::from_ast)
+                        .map(|ty| Self::from_ast(ty, line_index))
                         .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
                 ),
             },
@@ -132,17 +134,20 @@ impl TypeRef {
                 mutability: Mutability::from_mut_token(ty.mut_token().is_some()),
                 inner: Box::new(
                     ty.ty()
-                        .map(Self::from_ast)
+                        .map(|ty| Self::from_ast(ty, line_index))
                         .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
                 ),
             },
             ast::Type::SliceType(ty) => Self::Slice(Box::new(
                 ty.ty()
-                    .map(Self::from_ast)
+                    .map(|ty| Self::from_ast(ty, line_index))
                     .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
             )),
             ast::Type::TupleType(ty) => {
-                let fields = ty.fields().map(Self::from_ast).collect::<Vec<_>>();
+                let fields = ty
+                    .fields()
+                    .map(|ty| Self::from_ast(ty, line_index))
+                    .collect::<Vec<_>>();
                 if fields.is_empty() {
                     Self::Unit
                 } else {
@@ -229,23 +234,27 @@ pub struct TypePath {
 }
 
 impl TypePath {
-    pub(crate) fn from_ast(path: ast::Path) -> Self {
+    pub(crate) fn from_ast(path: ast::Path, line_index: &LineIndex) -> Self {
         let absolute = path
             .first_segment()
             .is_some_and(|segment| segment.coloncolon_token().is_some());
         let mut segments = Vec::new();
-        Self::collect_segments(&path, &mut segments);
+        Self::collect_segments(&path, line_index, &mut segments);
 
         Self { absolute, segments }
     }
 
-    fn collect_segments(path: &ast::Path, segments: &mut Vec<TypePathSegment>) {
+    fn collect_segments(
+        path: &ast::Path,
+        line_index: &LineIndex,
+        segments: &mut Vec<TypePathSegment>,
+    ) {
         if let Some(qualifier) = path.qualifier() {
-            Self::collect_segments(&qualifier, segments);
+            Self::collect_segments(&qualifier, line_index, segments);
         }
 
         if let Some(segment) = path.segment() {
-            segments.push(TypePathSegment::from_ast(&segment));
+            segments.push(TypePathSegment::from_ast(&segment, line_index));
         }
     }
 }
@@ -271,18 +280,27 @@ impl fmt::Display for TypePath {
 pub struct TypePathSegment {
     pub name: String,
     pub args: Vec<GenericArg>,
+    pub span: Span,
 }
 
 impl TypePathSegment {
-    fn from_ast(segment: &ast::PathSegment) -> Self {
+    fn from_ast(segment: &ast::PathSegment, line_index: &LineIndex) -> Self {
         let name = segment
             .name_ref()
             .map(|name| name.syntax().text().to_string())
             .unwrap_or_else(|| normalized_syntax(segment));
+        let span = segment
+            .name_ref()
+            .map(|name| name.syntax().text_range())
+            .unwrap_or_else(|| segment.syntax().text_range());
         let mut args = Vec::new();
 
         if let Some(arg_list) = segment.generic_arg_list() {
-            args.extend(arg_list.generic_args().map(GenericArg::from_ast));
+            args.extend(
+                arg_list
+                    .generic_args()
+                    .map(|arg| GenericArg::from_ast(arg, line_index)),
+            );
         }
 
         if let Some(parenthesized_args) = segment.parenthesized_arg_list() {
@@ -291,7 +309,11 @@ impl TypePathSegment {
             )));
         }
 
-        Self { name, args }
+        Self {
+            name,
+            args,
+            span: Span::from_text_range(span, line_index),
+        }
     }
 }
 
@@ -322,14 +344,14 @@ pub enum GenericArg {
 }
 
 impl GenericArg {
-    fn from_ast(arg: ast::GenericArg) -> Self {
+    fn from_ast(arg: ast::GenericArg, line_index: &LineIndex) -> Self {
         match arg {
             ast::GenericArg::AssocTypeArg(arg) => Self::AssocType {
                 name: arg
                     .name_ref()
                     .map(|name| name.syntax().text().to_string())
                     .unwrap_or_else(|| "<missing>".to_string()),
-                ty: arg.ty().map(TypeRef::from_ast),
+                ty: arg.ty().map(|ty| TypeRef::from_ast(ty, line_index)),
             },
             ast::GenericArg::ConstArg(arg) => Self::Const(normalized_syntax(&arg)),
             ast::GenericArg::LifetimeArg(arg) => arg
@@ -338,7 +360,7 @@ impl GenericArg {
                 .unwrap_or_else(|| Self::Unsupported(normalized_syntax(&arg))),
             ast::GenericArg::TypeArg(arg) => arg
                 .ty()
-                .map(TypeRef::from_ast)
+                .map(|ty| TypeRef::from_ast(ty, line_index))
                 .map(Self::Type)
                 .unwrap_or_else(|| Self::Unsupported(normalized_syntax(&arg))),
         }
@@ -368,21 +390,24 @@ pub enum TypeBound {
 }
 
 impl TypeBound {
-    pub(crate) fn list_from_ast(bound_list: Option<ast::TypeBoundList>) -> Vec<Self> {
+    pub(crate) fn list_from_ast(
+        bound_list: Option<ast::TypeBoundList>,
+        line_index: &LineIndex,
+    ) -> Vec<Self> {
         bound_list
             .into_iter()
             .flat_map(|bound_list| bound_list.bounds())
-            .map(Self::from_ast)
+            .map(|bound| Self::from_ast(bound, line_index))
             .collect()
     }
 
-    fn from_ast(bound: ast::TypeBound) -> Self {
+    fn from_ast(bound: ast::TypeBound, line_index: &LineIndex) -> Self {
         if let Some(lifetime) = bound.lifetime() {
             return Self::Lifetime(normalized_syntax(&lifetime));
         }
 
         if let Some(ty) = bound.ty() {
-            return Self::Trait(TypeRef::from_ast(ty));
+            return Self::Trait(TypeRef::from_ast(ty, line_index));
         }
 
         Self::Unsupported(normalized_syntax(&bound))
