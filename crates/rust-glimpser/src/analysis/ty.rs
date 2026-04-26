@@ -1,6 +1,6 @@
 use crate::{
     body_ir::{BodyData, BodyItemRef, BodyRef, BodyTy, ScopeId},
-    def_map::{DefId, ModuleRef, Path, PathSegment},
+    def_map::{DefId, ModuleRef, Path},
     item_tree::TypeRef,
     semantic_ir::{FieldRef, ImplRef, ItemOwner, TypeDefRef},
 };
@@ -68,7 +68,7 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
     }
 
     pub(super) fn ty_for_type_path(&self, context: PathContext, path: &Path) -> BodyTy {
-        if is_self_type_path(path) {
+        if path.is_self_type() {
             if let Some(impl_ref) = context.impl_ref {
                 let self_tys = self.impl_self_tys(impl_ref);
                 return if self_tys.is_empty() {
@@ -117,7 +117,7 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
             TypeRef::Unit => BodyTy::Unit,
             TypeRef::Never => BodyTy::Never,
             TypeRef::Path(_) => {
-                let Some(path) = path_from_type_ref(ty) else {
+                let Some(path) = Path::from_type_ref(ty) else {
                     return BodyTy::Syntax(ty.clone());
                 };
                 self.ty_for_type_path(PathContext::module(owner_module), &path)
@@ -163,7 +163,7 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
         mut scope: ScopeId,
         path: &Path,
     ) -> Option<BodyItemRef> {
-        let name = local_name(path)?;
+        let name = path.single_name()?;
         let body = self.0.project.body_ir_db().body_data(body_ref)?;
 
         loop {
@@ -207,43 +207,5 @@ pub(super) fn type_defs_from_body_ty(ty: &BodyTy) -> Vec<TypeDefRef> {
         | BodyTy::Syntax(_)
         | BodyTy::LocalNominal(_)
         | BodyTy::Unknown => Vec::new(),
-    }
-}
-
-pub(super) fn is_self_type_path(path: &Path) -> bool {
-    !path.absolute
-        && path.segments.len() == 1
-        && matches!(path.segments.first(), Some(PathSegment::Name(name)) if name == "Self")
-}
-
-fn path_from_type_ref(ty: &TypeRef) -> Option<Path> {
-    let TypeRef::Path(path) = ty else {
-        return None;
-    };
-
-    Some(Path {
-        absolute: path.absolute,
-        segments: path
-            .segments
-            .iter()
-            .map(|segment| match segment.name.as_str() {
-                "self" => PathSegment::SelfKw,
-                "super" => PathSegment::SuperKw,
-                "crate" => PathSegment::CrateKw,
-                name => PathSegment::Name(name.to_string()),
-            })
-            .collect(),
-    })
-}
-
-fn local_name(path: &Path) -> Option<&str> {
-    if path.absolute || path.segments.len() != 1 {
-        return None;
-    }
-
-    match path.segments.first()? {
-        PathSegment::Name(name) => Some(name),
-        PathSegment::SelfKw => Some("self"),
-        PathSegment::SuperKw | PathSegment::CrateKw => None,
     }
 }

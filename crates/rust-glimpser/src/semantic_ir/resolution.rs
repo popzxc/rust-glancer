@@ -5,7 +5,7 @@
 //! resolved semantic ids for query consumers.
 
 use crate::{
-    def_map::{DefId, DefMapDb, Path, PathSegment},
+    def_map::{DefId, DefMapDb, Path},
     item_tree::TypeRef,
 };
 
@@ -91,7 +91,7 @@ fn resolve_type_ref<T: PartialEq>(
     ty: &TypeRef,
     map_def: impl Fn(&SemanticIrDb, DefId) -> Option<T>,
 ) -> Vec<T> {
-    let Some(path) = path_from_type_ref(ty) else {
+    let Some(path) = Path::from_type_ref(ty) else {
         return Vec::new();
     };
 
@@ -114,26 +114,6 @@ fn resolve_path<T: PartialEq>(
     }
 
     resolved_items
-}
-
-fn path_from_type_ref(ty: &TypeRef) -> Option<Path> {
-    let TypeRef::Path(path) = ty else {
-        return None;
-    };
-
-    Some(Path {
-        absolute: path.absolute,
-        segments: path
-            .segments
-            .iter()
-            .map(|segment| match segment.name.as_str() {
-                "self" => PathSegment::SelfKw,
-                "super" => PathSegment::SuperKw,
-                "crate" => PathSegment::CrateKw,
-                name => PathSegment::Name(name.to_string()),
-            })
-            .collect(),
-    })
 }
 
 fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {

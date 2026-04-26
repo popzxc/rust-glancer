@@ -4,7 +4,7 @@
 //! local-vs-item path resolution and simple types that are already present in signatures.
 
 use crate::{
-    def_map::{DefId, DefMapDb, PackageSlot, Path, PathSegment, TargetRef},
+    def_map::{DefId, DefMapDb, PackageSlot, Path, TargetRef},
     item_tree::{FieldKey, TypeRef},
     parse::TargetId,
     semantic_ir::{FunctionRef, ImplRef, ItemId, ItemOwner, SemanticIrDb, TraitRef, TypeDefRef},
@@ -110,7 +110,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
     }
 
     fn resolve_path_expr(&self, expr: ExprId, path: &Path) -> (BodyResolution, BodyTy) {
-        if let Some(name) = local_name(path) {
+        if let Some(name) = path.single_name() {
             if let Some(binding) =
                 self.resolve_local_name(self.body.exprs[expr.0].scope, name, expr)
             {
@@ -130,7 +130,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             }
         }
 
-        if is_self_type_path(path) {
+        if path.is_self_type() {
             let self_tys = self.impl_self_tys_for_function(self.body.owner);
             if !self_tys.is_empty() {
                 return (BodyResolution::Unknown, BodyTy::SelfTy(self_tys));
@@ -274,20 +274,19 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
 
     fn ty_from_type_ref_in_scope(&self, ty: &TypeRef, scope: ScopeId) -> BodyTy {
         match ty {
-            TypeRef::Path(path) if path.segments.len() == 1 && path.segments[0].name == "Self" => {
-                let self_tys = self.impl_self_tys_for_function(self.body.owner);
-                if self_tys.is_empty() {
-                    BodyTy::Syntax(ty.clone())
-                } else {
-                    BodyTy::SelfTy(self_tys)
-                }
-            }
-            TypeRef::Path(_) => {
-                let Some(path) = path_from_type_ref(ty) else {
-                    return BodyTy::Syntax(ty.clone());
-                };
+            TypeRef::Path(type_path) => {
+                let path = Path::from_type_path(type_path);
 
-                if let Some(name) = local_name(&path) {
+                if path.is_self_type() {
+                    let self_tys = self.impl_self_tys_for_function(self.body.owner);
+                    if self_tys.is_empty() {
+                        return BodyTy::Syntax(ty.clone());
+                    }
+
+                    return BodyTy::SelfTy(self_tys);
+                }
+
+                if let Some(name) = path.single_name() {
                     if let Some(item) = self.resolve_local_type_item(scope, name) {
                         return BodyTy::LocalNominal(vec![BodyItemRef {
                             body: self.body_ref,
@@ -311,18 +310,18 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         match ty {
             TypeRef::Unit => BodyTy::Unit,
             TypeRef::Never => BodyTy::Never,
-            TypeRef::Path(path) if path.segments.len() == 1 && path.segments[0].name == "Self" => {
-                let self_tys = self.impl_self_tys_for_function(owner_function);
-                if self_tys.is_empty() {
-                    BodyTy::Syntax(ty.clone())
-                } else {
-                    BodyTy::SelfTy(self_tys)
+            TypeRef::Path(type_path) => {
+                let path = Path::from_type_path(type_path);
+
+                if path.is_self_type() {
+                    let self_tys = self.impl_self_tys_for_function(owner_function);
+                    if self_tys.is_empty() {
+                        return BodyTy::Syntax(ty.clone());
+                    }
+
+                    return BodyTy::SelfTy(self_tys);
                 }
-            }
-            TypeRef::Path(_) => {
-                let Some(path) = path_from_type_ref(ty) else {
-                    return BodyTy::Syntax(ty.clone());
-                };
+
                 let type_defs =
                     self.semantic_ir
                         .type_defs_for_path(self.def_map, owner_module, &path);
@@ -415,44 +414,6 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             .map(|impl_data| impl_data.resolved_self_tys.clone())
             .unwrap_or_default()
     }
-}
-
-fn local_name(path: &Path) -> Option<&str> {
-    if path.absolute || path.segments.len() != 1 {
-        return None;
-    }
-
-    match path.segments.first()? {
-        PathSegment::Name(name) => Some(name),
-        PathSegment::SelfKw => Some("self"),
-        PathSegment::SuperKw | PathSegment::CrateKw => None,
-    }
-}
-
-fn is_self_type_path(path: &Path) -> bool {
-    !path.absolute
-        && path.segments.len() == 1
-        && matches!(path.segments.first(), Some(PathSegment::Name(name)) if name == "Self")
-}
-
-fn path_from_type_ref(ty: &TypeRef) -> Option<Path> {
-    let TypeRef::Path(path) = ty else {
-        return None;
-    };
-
-    Some(Path {
-        absolute: path.absolute,
-        segments: path
-            .segments
-            .iter()
-            .map(|segment| match segment.name.as_str() {
-                "self" => PathSegment::SelfKw,
-                "super" => PathSegment::SuperKw,
-                "crate" => PathSegment::CrateKw,
-                name => PathSegment::Name(name.to_string()),
-            })
-            .collect(),
-    })
 }
 
 fn type_defs_from_body_ty(ty: &BodyTy) -> Vec<TypeDefRef> {

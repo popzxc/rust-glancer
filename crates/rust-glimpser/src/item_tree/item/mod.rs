@@ -30,6 +30,8 @@ mod visibility;
 
 #[cfg(test)]
 pub(crate) use self::decl::ParamItem;
+#[cfg(test)]
+pub(crate) use self::type_ref::TypePathSegment;
 
 /// Stable file-local identifier for one lowered item-tree node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

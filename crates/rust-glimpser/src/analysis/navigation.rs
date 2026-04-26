@@ -8,7 +8,7 @@ use crate::{
 use super::{
     Analysis,
     data::{NavigationTarget, NavigationTargetKind, PathContext, SymbolAt},
-    ty::{TypeResolver, is_self_type_path},
+    ty::TypeResolver,
 };
 
 pub(super) struct SymbolResolver<'a, 'project>(&'a Analysis<'project>);
@@ -190,7 +190,7 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
         context: PathContext,
         path: &Path,
     ) -> Vec<NavigationTarget> {
-        if is_self_type_path(path) {
+        if path.is_self_type() {
             if let Some(impl_ref) = context.impl_ref {
                 return TypeResolver::new(self.0)
                     .impl_self_tys(impl_ref)

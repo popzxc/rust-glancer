@@ -18,7 +18,7 @@ pub(crate) use self::item::{
 };
 
 #[cfg(test)]
-pub(crate) use self::item::ParamItem;
+pub(crate) use self::item::{ParamItem, TypePathSegment};
 
 /// Lowered item trees for all parsed packages.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

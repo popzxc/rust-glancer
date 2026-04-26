@@ -1,10 +1,10 @@
 use crate::{
     Project,
     body_ir::{BodyData, BodyRef, ScopeId, StmtKind},
-    def_map::{DefId, ModuleRef, Path, PathSegment, TargetRef},
+    def_map::{DefId, ModuleRef, Path, TargetRef},
     item_tree::{
         FieldList, GenericArg, GenericParams, ItemKind, ItemNode, ItemTreeRef, TypeBound, TypePath,
-        TypeRef, UsePath, UsePathSegment, UsePathSegmentKind, WherePredicate,
+        TypeRef, UsePath, WherePredicate,
     },
     parse::{FileId, span::Span},
     semantic_ir::{
@@ -106,13 +106,7 @@ impl BodyTypeCursorScanner<'_> {
     fn scan_type_path(&mut self, path: &TypePath) {
         for (idx, segment) in path.segments.iter().enumerate() {
             if segment.span.touches(self.offset) {
-                let path = Path {
-                    absolute: path.absolute,
-                    segments: path.segments[..=idx]
-                        .iter()
-                        .map(|segment| path_segment_from_name(&segment.name))
-                        .collect(),
-                };
+                let path = Path::from_type_path_prefix(path, idx);
                 self.candidates.push(SymbolCandidate {
                     symbol: SymbolAt::BodyPath {
                         body: self.body,
@@ -218,7 +212,7 @@ impl CursorScanner<'_> {
                 if span.touches(self.offset) {
                     self.push_path_candidate(
                         context,
-                        path_from_use_path(&source_import.path),
+                        Path::from_use_path(&source_import.path),
                         PathRole::Use,
                         span,
                     );
@@ -453,13 +447,7 @@ impl CursorScanner<'_> {
             if segment.span.touches(self.offset) {
                 self.push_path_candidate(
                     context,
-                    Path {
-                        absolute: path.absolute,
-                        segments: path.segments[..=idx]
-                            .iter()
-                            .map(|segment| path_segment_from_name(&segment.name))
-                            .collect(),
-                    },
+                    Path::from_type_path_prefix(path, idx),
                     role,
                     segment.span,
                 );
@@ -487,13 +475,7 @@ impl CursorScanner<'_> {
             if segment.span.touches(self.offset) {
                 self.push_path_candidate(
                     context,
-                    Path {
-                        absolute: path.absolute,
-                        segments: path.segments[..=idx]
-                            .iter()
-                            .map(path_segment_from_use_segment)
-                            .collect(),
-                    },
+                    Path::from_use_path_prefix(path, idx),
                     PathRole::Use,
                     segment.span,
                 );
@@ -573,34 +555,5 @@ impl CursorScanner<'_> {
             .item_tree_db()
             .package(self.target.package.0)?
             .item(source)
-    }
-}
-
-fn path_segment_from_name(name: &str) -> PathSegment {
-    match name {
-        "self" => PathSegment::SelfKw,
-        "super" => PathSegment::SuperKw,
-        "crate" => PathSegment::CrateKw,
-        name => PathSegment::Name(name.to_string()),
-    }
-}
-
-fn path_segment_from_use_segment(segment: &UsePathSegment) -> PathSegment {
-    match &segment.kind {
-        UsePathSegmentKind::Name(name) => PathSegment::Name(name.clone()),
-        UsePathSegmentKind::SelfKw => PathSegment::SelfKw,
-        UsePathSegmentKind::SuperKw => PathSegment::SuperKw,
-        UsePathSegmentKind::CrateKw => PathSegment::CrateKw,
-    }
-}
-
-fn path_from_use_path(path: &UsePath) -> Path {
-    Path {
-        absolute: path.absolute,
-        segments: path
-            .segments
-            .iter()
-            .map(path_segment_from_use_segment)
-            .collect(),
     }
 }
