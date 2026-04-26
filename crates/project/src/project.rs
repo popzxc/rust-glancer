@@ -2,15 +2,13 @@ use std::fmt;
 
 use anyhow::Context as _;
 
-use crate::{
-    analysis::Analysis,
-    body_ir::BodyIrDb,
-    def_map::DefMapDb,
-    item_tree::{FileTree, ItemKind, ItemNode, ItemTreeDb, ModuleSource},
-    parse::{self, ParseDb},
-    semantic_ir::SemanticIrDb,
-    workspace_metadata::WorkspaceMetadata,
-};
+use rg_analysis::Analysis;
+use rg_body_ir::BodyIrDb;
+use rg_def_map::DefMapDb;
+use rg_item_tree::{FileTree, ItemKind, ItemNode, ItemTreeDb, ModuleSource};
+use rg_parse::{self, ParseDb};
+use rg_semantic_ir::SemanticIrDb;
+use rg_workspace::WorkspaceMetadata;
 
 /// Fully built project pipeline state.
 #[derive(Debug, Clone)]
@@ -80,7 +78,7 @@ impl Project {
     fn fmt_item(
         &self,
         f: &mut fmt::Formatter<'_>,
-        package: &parse::Package,
+        package: &rg_parse::Package,
         file_tree: &FileTree,
         item: &ItemNode,
         depth: usize,

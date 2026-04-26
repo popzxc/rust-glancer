@@ -1,11 +1,18 @@
-pub use rg_def_map as def_map;
-pub use rg_item_tree as item_tree;
-pub use rg_parse as parse;
-pub use rg_workspace as workspace_metadata;
-
-pub mod semantic_ir;
-
-pub use self::semantic_ir::*;
+mod cursor;
+mod data;
+mod ids;
+mod lower;
+mod resolution;
 
 #[cfg(test)]
-pub use test_fixture;
+mod tests;
+
+pub use self::{
+    cursor::SemanticCursorCandidate,
+    data::SemanticIrDb,
+    ids::{
+        FieldRef, FunctionId, FunctionRef, ImplRef, ItemId, ItemOwner, TraitRef, TypeDefId,
+        TypeDefRef,
+    },
+    resolution::{SemanticTypePathResolution, TypePathContext},
+};
