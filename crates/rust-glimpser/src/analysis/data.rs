@@ -1,5 +1,7 @@
 use crate::{
-    body_ir::{BindingData, BindingId, BodyRef, ExprId},
+    body_ir::{
+        BindingData, BindingId, BodyItemId, BodyItemKind, BodyItemRef, BodyRef, ExprId, ScopeId,
+    },
     def_map::{DefId, LocalDefKind, ModuleRef, Path},
     parse::{FileId, span::Span},
     semantic_ir::{FieldRef, FunctionRef, ImplRef},
@@ -10,6 +12,7 @@ pub(super) struct SourceNodeAt {
     pub(super) body: BodyRef,
     pub(super) expr: Option<ExprId>,
     pub(super) binding: Option<BindingId>,
+    pub(super) local_item: Option<BodyItemId>,
 }
 
 pub(super) struct SymbolCandidate {
@@ -27,6 +30,13 @@ pub(crate) enum SymbolAt {
         body: BodyRef,
         binding: BindingId,
     },
+    BodyPath {
+        body: BodyRef,
+        scope: ScopeId,
+        path: Path,
+        role: PathRole,
+        span: Span,
+    },
     Def {
         def: DefId,
         span: Span,
@@ -41,6 +51,10 @@ pub(crate) enum SymbolAt {
     },
     Function {
         function: FunctionRef,
+        span: Span,
+    },
+    LocalItem {
+        item: BodyItemRef,
         span: Span,
     },
     Path {
@@ -136,6 +150,12 @@ impl NavigationTargetKind {
             LocalDefKind::Trait => Self::Trait,
             LocalDefKind::TypeAlias => Self::TypeAlias,
             LocalDefKind::Union => Self::Union,
+        }
+    }
+
+    pub(super) fn from_body_item_kind(kind: BodyItemKind) -> Self {
+        match kind {
+            BodyItemKind::Struct => Self::Struct,
         }
     }
 }

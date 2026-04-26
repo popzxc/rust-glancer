@@ -4,23 +4,33 @@
 //! local-vs-item path resolution and simple types that are already present in signatures.
 
 use crate::{
-    def_map::{DefId, DefMapDb, Path, PathSegment},
+    def_map::{DefId, DefMapDb, PackageSlot, Path, PathSegment, TargetRef},
     item_tree::{FieldKey, TypeRef},
+    parse::TargetId,
     semantic_ir::{FunctionRef, ImplRef, ItemId, ItemOwner, SemanticIrDb, TraitRef, TypeDefRef},
 };
 
 use super::{
     data::{BindingKind, BodyData, BodyIrDb, BodyResolution, BodyTy, ExprKind},
-    ids::{BindingId, ExprId, ScopeId},
+    ids::{BindingId, BodyId, BodyItemId, BodyItemRef, BodyRef, ExprId, ScopeId},
 };
 
 pub(super) fn resolve_bodies(db: &mut BodyIrDb, def_map: &DefMapDb, semantic_ir: &SemanticIrDb) {
-    for package in db.packages_mut() {
-        for target in package.targets_mut() {
-            for body in target.bodies_mut() {
+    for (package_idx, package) in db.packages_mut().iter_mut().enumerate() {
+        for (target_idx, target) in package.targets_mut().iter_mut().enumerate() {
+            let target_ref = TargetRef {
+                package: PackageSlot(package_idx),
+                target: TargetId(target_idx),
+            };
+
+            for (body_idx, body) in target.bodies_mut().iter_mut().enumerate() {
                 BodyResolver {
                     def_map,
                     semantic_ir,
+                    body_ref: BodyRef {
+                        target: target_ref,
+                        body: BodyId(body_idx),
+                    },
                     body,
                 }
                 .resolve();
@@ -32,6 +42,7 @@ pub(super) fn resolve_bodies(db: &mut BodyIrDb, def_map: &DefMapDb, semantic_ir:
 struct BodyResolver<'db, 'body> {
     def_map: &'db DefMapDb,
     semantic_ir: &'db SemanticIrDb,
+    body_ref: BodyRef,
     body: &'body mut BodyData,
 }
 
@@ -55,7 +66,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
     fn binding_ty(&self, binding: BindingId) -> BodyTy {
         let binding_data = &self.body.bindings[binding.0];
         if let Some(annotation) = &binding_data.annotation {
-            return self.ty_from_type_ref(annotation);
+            return self.ty_from_type_ref_in_scope(annotation, binding_data.scope);
         }
 
         if matches!(binding_data.kind, BindingKind::SelfParam)
@@ -105,6 +116,17 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             {
                 let ty = self.body.bindings[binding.0].ty.clone();
                 return (BodyResolution::Local(binding), ty);
+            }
+
+            if let Some(item) = self.resolve_local_type_item(self.body.exprs[expr.0].scope, name) {
+                let item_ref = BodyItemRef {
+                    body: self.body_ref,
+                    item,
+                };
+                return (
+                    BodyResolution::LocalItem(item_ref),
+                    BodyTy::LocalNominal(vec![item_ref]),
+                );
             }
         }
 
@@ -187,6 +209,20 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         }
     }
 
+    fn resolve_local_type_item(&self, mut scope: ScopeId, name: &str) -> Option<BodyItemId> {
+        loop {
+            let scope_data = self.body.scope(scope)?;
+            for item in scope_data.local_items.iter().rev() {
+                let item_data = self.body.local_item(*item)?;
+                if item_data.name == name {
+                    return Some(*item);
+                }
+            }
+
+            scope = scope_data.parent?;
+        }
+    }
+
     fn call_ty(&self, callee: Option<ExprId>) -> BodyTy {
         let Some(callee) = callee else {
             return BodyTy::Unknown;
@@ -199,6 +235,10 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
 
         if let BodyTy::SelfTy(types) = &callee_data.ty {
             return BodyTy::SelfTy(types.clone());
+        }
+
+        if let BodyTy::LocalNominal(items) = &callee_data.ty {
+            return BodyTy::LocalNominal(items.clone());
         }
 
         let BodyResolution::Item(defs) = &callee_data.resolution else {
@@ -232,8 +272,34 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         }
     }
 
-    fn ty_from_type_ref(&self, ty: &TypeRef) -> BodyTy {
-        self.ty_from_type_ref_in_module(ty, self.body.owner_module, self.body.owner)
+    fn ty_from_type_ref_in_scope(&self, ty: &TypeRef, scope: ScopeId) -> BodyTy {
+        match ty {
+            TypeRef::Path(path) if path.segments.len() == 1 && path.segments[0].name == "Self" => {
+                let self_tys = self.impl_self_tys_for_function(self.body.owner);
+                if self_tys.is_empty() {
+                    BodyTy::Syntax(ty.clone())
+                } else {
+                    BodyTy::SelfTy(self_tys)
+                }
+            }
+            TypeRef::Path(_) => {
+                let Some(path) = path_from_type_ref(ty) else {
+                    return BodyTy::Syntax(ty.clone());
+                };
+
+                if let Some(name) = local_name(&path) {
+                    if let Some(item) = self.resolve_local_type_item(scope, name) {
+                        return BodyTy::LocalNominal(vec![BodyItemRef {
+                            body: self.body_ref,
+                            item,
+                        }]);
+                    }
+                }
+
+                self.ty_from_type_ref_in_module(ty, self.body.owner_module, self.body.owner)
+            }
+            _ => self.ty_from_type_ref_in_module(ty, self.body.owner_module, self.body.owner),
+        }
     }
 
     fn ty_from_type_ref_in_module(
@@ -392,7 +458,11 @@ fn path_from_type_ref(ty: &TypeRef) -> Option<Path> {
 fn type_defs_from_body_ty(ty: &BodyTy) -> Vec<TypeDefRef> {
     match ty {
         BodyTy::Nominal(types) | BodyTy::SelfTy(types) => types.clone(),
-        BodyTy::Unit | BodyTy::Never | BodyTy::Syntax(_) | BodyTy::Unknown => Vec::new(),
+        BodyTy::Unit
+        | BodyTy::Never
+        | BodyTy::Syntax(_)
+        | BodyTy::LocalNominal(_)
+        | BodyTy::Unknown => Vec::new(),
     }
 }
 

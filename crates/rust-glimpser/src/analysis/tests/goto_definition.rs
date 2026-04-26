@@ -267,3 +267,90 @@ impl User {
         "#]],
     );
 }
+
+#[test]
+fn resolves_body_local_structs_before_module_structs() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_local_struct_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub fn make() {
+    struct User;
+    let _local: Us$goto_local_type$er = Us$goto_local_ctor$er;
+}
+
+pub fn outside() {
+    let _outside: User = Us$goto_module_ctor$er;
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto local type path", "goto_local_type"),
+            AnalysisQuery::goto("goto local constructor", "goto_local_ctor"),
+            AnalysisQuery::goto("goto module constructor", "goto_module_ctor"),
+        ],
+        expect![[r#"
+            goto local type path
+            - struct User @ 4:5-4:17
+
+            goto local constructor
+            - struct User @ 4:5-4:17
+
+            goto module constructor
+            - struct User @ 1:1-1:17
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_let_annotation_paths_with_body_context() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_annotation_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+impl User {
+    pub fn capture(&self) {
+        let _this: Se$goto_body_self$lf = self;
+    }
+}
+
+pub fn make() {
+    struct User;
+    let _: Us$goto_wildcard_type$er = User;
+    let (_left, _right): (Us$goto_tuple_left$er, Us$goto_tuple_right$er) = User;
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto body Self annotation", "goto_body_self"),
+            AnalysisQuery::goto("goto wildcard annotation", "goto_wildcard_type"),
+            AnalysisQuery::goto("goto tuple annotation left", "goto_tuple_left"),
+            AnalysisQuery::goto("goto tuple annotation right", "goto_tuple_right"),
+        ],
+        expect![[r#"
+            goto body Self annotation
+            - struct User @ 1:1-1:17
+
+            goto wildcard annotation
+            - struct User @ 10:5-10:17
+
+            goto tuple annotation left
+            - struct User @ 10:5-10:17
+
+            goto tuple annotation right
+            - struct User @ 10:5-10:17
+        "#]],
+    );
+}

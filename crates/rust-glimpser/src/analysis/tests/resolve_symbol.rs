@@ -38,3 +38,35 @@ pub fn use_it() {
         "#]],
     );
 }
+
+#[test]
+fn resolves_body_local_struct_symbols_to_navigation_targets() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_local_struct_resolve"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub fn make() {
+    struct User;
+    let _local: Us$resolve_local_type$er = Us$resolve_local_ctor$er;
+}
+"#,
+        &[
+            AnalysisQuery::resolve("resolve local type path", "resolve_local_type"),
+            AnalysisQuery::resolve("resolve local constructor", "resolve_local_ctor"),
+        ],
+        expect![[r#"
+            resolve local type path
+            - struct User @ 4:5-4:17
+
+            resolve local constructor
+            - struct User @ 4:5-4:17
+        "#]],
+    );
+}

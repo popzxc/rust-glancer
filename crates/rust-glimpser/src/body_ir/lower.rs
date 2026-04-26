@@ -21,10 +21,11 @@ use crate::{
 
 use super::{
     data::{
-        BindingData, BindingKind, BodyBuilder, BodyData, BodyIrDb, BodyResolution, BodySource,
-        BodyTy, ExprData, ExprKind, LiteralKind, PackageBodies, StmtData, StmtKind, TargetBodies,
+        BindingData, BindingKind, BodyBuilder, BodyData, BodyIrDb, BodyItemData, BodyItemKind,
+        BodyResolution, BodySource, BodyTy, ExprData, ExprKind, LiteralKind, PackageBodies,
+        StmtData, StmtKind, TargetBodies,
     },
-    ids::{BindingId, ExprId, ScopeId, StmtId},
+    ids::{BindingId, BodyItemId, ExprId, ScopeId, StmtId},
 };
 
 pub(super) fn build_db(
@@ -306,11 +307,35 @@ impl<'a> FunctionBodyLowering<'a> {
                     },
                 })
             }
-            ast::Stmt::Item(item) => self.builder.alloc_statement(StmtData {
-                source: self.source(item.syntax()),
-                kind: StmtKind::ItemIgnored,
-            }),
+            ast::Stmt::Item(item) => self.lower_item_statement(item, scope),
         }
+    }
+
+    fn lower_item_statement(&mut self, item: ast::Item, scope: ScopeId) -> StmtId {
+        let source = self.source(item.syntax());
+        let kind = match item {
+            ast::Item::Struct(item) => self
+                .lower_local_struct_item(item, scope)
+                .map(|item| StmtKind::Item { item })
+                .unwrap_or(StmtKind::ItemIgnored),
+            _ => StmtKind::ItemIgnored,
+        };
+
+        self.builder.alloc_statement(StmtData { source, kind })
+    }
+
+    fn lower_local_struct_item(&mut self, item: ast::Struct, scope: ScopeId) -> Option<BodyItemId> {
+        let name = item.name()?;
+        // TODO: Lower body-local struct fields once local nominal types participate in member
+        // completion and field access. For now, the item itself is enough for shadowing, type
+        // identity, and navigation.
+        Some(self.builder.alloc_local_item(BodyItemData {
+            source: self.source(item.syntax()),
+            name_source: self.source(name.syntax()),
+            scope,
+            kind: BodyItemKind::Struct,
+            name: name.text().to_string(),
+        }))
     }
 
     fn lower_let_statement(&mut self, statement: ast::LetStmt, scope: ScopeId) -> StmtId {
@@ -330,6 +355,7 @@ impl<'a> FunctionBodyLowering<'a> {
         self.builder.alloc_statement(StmtData {
             source: self.source(statement.syntax()),
             kind: StmtKind::Let {
+                scope,
                 bindings,
                 annotation,
                 initializer,

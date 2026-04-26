@@ -6,9 +6,10 @@ use crate::{
     Project,
     body_ir::{
         data::{
-            BindingData, BodyData, BodyResolution, BodySource, BodyTy, ExprData, ExprKind, StmtKind,
+            BindingData, BodyData, BodyItemData, BodyResolution, BodySource, BodyTy, ExprData,
+            ExprKind, StmtKind,
         },
-        ids::{BindingId, BodyId, ExprId, StmtId},
+        ids::{BindingId, BodyId, BodyItemId, BodyItemRef, ExprId, StmtId},
     },
     def_map::{DefId, LocalDefRef, ModuleRef, TargetRef},
     semantic_ir::{
@@ -125,8 +126,28 @@ impl TargetBodyIrSnapshot<'_> {
                     .collect::<Vec<_>>()
                     .join(", ")
             };
-            writeln!(dump, "- s{idx} parent {parent}: {bindings}")
+            let items = if scope.local_items.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; items {}",
+                    scope
+                        .local_items
+                        .iter()
+                        .map(|item| format!("i{}", item.0))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            writeln!(dump, "- s{idx} parent {parent}: {bindings}{items}")
                 .expect("string writes should not fail");
+        }
+
+        if !body.local_items.is_empty() {
+            writeln!(dump, "items").expect("string writes should not fail");
+            for (idx, item) in body.local_items.iter().enumerate() {
+                self.render_local_item(BodyItemId(idx), item, dump);
+            }
         }
 
         writeln!(dump, "bindings").expect("string writes should not fail");
@@ -136,6 +157,18 @@ impl TargetBodyIrSnapshot<'_> {
 
         writeln!(dump, "body").expect("string writes should not fail");
         self.render_expr(body, body.root_expr, 0, dump);
+    }
+
+    fn render_local_item(&self, id: BodyItemId, item: &BodyItemData, dump: &mut String) {
+        writeln!(
+            dump,
+            "- i{} {} {} @ {}",
+            id.0,
+            item.kind,
+            item.name,
+            self.render_source(item.source),
+        )
+        .expect("string writes should not fail");
     }
 
     fn render_binding(
@@ -184,6 +217,7 @@ impl TargetBodyIrSnapshot<'_> {
 
         match &data.kind {
             StmtKind::Let {
+                scope: _,
                 bindings,
                 annotation,
                 initializer,
@@ -225,6 +259,17 @@ impl TargetBodyIrSnapshot<'_> {
                 )
                 .expect("string writes should not fail");
                 self.render_expr(body, *expr, depth + 1, dump);
+            }
+            StmtKind::Item { item } => {
+                writeln!(
+                    dump,
+                    "{}stmt s{} item i{} @ {}",
+                    indent(depth),
+                    statement.0,
+                    item.0,
+                    self.render_source(data.source),
+                )
+                .expect("string writes should not fail");
             }
             StmtKind::ItemIgnored => {
                 writeln!(
@@ -333,6 +378,9 @@ impl TargetBodyIrSnapshot<'_> {
     fn render_resolution(&self, resolution: &BodyResolution) -> String {
         match resolution {
             BodyResolution::Local(binding) => format!(" -> local v{}", binding.0),
+            BodyResolution::LocalItem(item) => {
+                format!(" -> local item {}", self.render_body_item_ref(*item))
+            }
             BodyResolution::Item(defs) if defs.is_empty() => " -> item <unresolved>".to_string(),
             BodyResolution::Item(defs) => {
                 let mut defs = defs
@@ -359,6 +407,14 @@ impl TargetBodyIrSnapshot<'_> {
             BodyTy::Unit => "()".to_string(),
             BodyTy::Never => "!".to_string(),
             BodyTy::Syntax(ty) => format!("syntax {ty}"),
+            BodyTy::LocalNominal(items) => {
+                let mut items = items
+                    .iter()
+                    .map(|item| self.render_body_item_ref(*item))
+                    .collect::<Vec<_>>();
+                items.sort();
+                format!("local nominal {}", items.join(" | "))
+            }
             BodyTy::Nominal(types) => {
                 let mut types = types
                     .iter()
@@ -377,6 +433,23 @@ impl TargetBodyIrSnapshot<'_> {
             }
             BodyTy::Unknown => "<unknown>".to_string(),
         }
+    }
+
+    fn render_body_item_ref(&self, item_ref: BodyItemRef) -> String {
+        let Some(body) = self.project.body_ir_db().body_data(item_ref.body) else {
+            return "<missing>".to_string();
+        };
+        let Some(item) = body.local_item(item_ref.item) else {
+            return "<missing>".to_string();
+        };
+
+        format!(
+            "{} {}::{} @ {}",
+            item.kind,
+            self.render_function_ref(body.owner),
+            item.name,
+            self.render_source(item.source),
+        )
     }
 
     fn render_def(&self, def: DefId) -> String {

@@ -7,6 +7,9 @@ mod resolution;
 mod tests;
 
 pub(crate) use self::{
-    data::{BindingData, BodyData, BodyIrDb, BodyResolution, BodyTy, ExprData, ExprKind},
-    ids::{BindingId, BodyId, BodyRef, ExprId},
+    data::{
+        BindingData, BodyData, BodyIrDb, BodyItemKind, BodyResolution, BodyTy, ExprData, ExprKind,
+        StmtKind,
+    },
+    ids::{BindingId, BodyId, BodyItemId, BodyItemRef, BodyRef, ExprId, ScopeId},
 };

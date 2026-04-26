@@ -11,6 +11,17 @@ pub struct BodyRef {
     pub body: BodyId,
 }
 
+/// Stable identifier for one item declared inside a function body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BodyItemId(pub usize);
+
+/// Stable reference to one item declared inside a function body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BodyItemRef {
+    pub body: BodyRef,
+    pub item: BodyItemId,
+}
+
 /// Stable identifier for one expression inside a body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExprId(pub usize);

@@ -193,3 +193,95 @@ impl User {
         "#]],
     );
 }
+
+#[test]
+fn returns_body_local_struct_types_before_module_structs() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_local_struct_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub fn make() {
+    struct User;
+    let local$type_binding$: Us$type_local_path$er = User;
+    let _again: User = loc$type_local_expr$al;
+}
+
+pub fn outside() {
+    let outside$type_module_binding$: User = User;
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at local binding", "type_binding"),
+            AnalysisQuery::ty("type at local type path", "type_local_path"),
+            AnalysisQuery::ty("type at local expr", "type_local_expr"),
+            AnalysisQuery::ty("type at module binding", "type_module_binding"),
+        ],
+        expect![[r#"
+            type at local binding
+            - local nominal struct fn analysis_local_struct_type[lib]::crate::make::User
+
+            type at local type path
+            - local nominal struct fn analysis_local_struct_type[lib]::crate::make::User
+
+            type at local expr
+            - local nominal struct fn analysis_local_struct_type[lib]::crate::make::User
+
+            type at module binding
+            - nominal struct analysis_local_struct_type[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
+fn returns_body_let_annotation_types_with_body_context() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_annotation_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+impl User {
+    pub fn capture(&self) {
+        let _this: Se$type_body_self$lf = self;
+    }
+}
+
+pub fn make() {
+    struct User;
+    let _: Us$type_wildcard_type$er = User;
+    let (_left, _right): (Us$type_tuple_left$er, Us$type_tuple_right$er) = User;
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at body Self annotation", "type_body_self"),
+            AnalysisQuery::ty("type at wildcard annotation", "type_wildcard_type"),
+            AnalysisQuery::ty("type at tuple annotation left", "type_tuple_left"),
+            AnalysisQuery::ty("type at tuple annotation right", "type_tuple_right"),
+        ],
+        expect![[r#"
+            type at body Self annotation
+            - Self struct analysis_body_annotation_type[lib]::crate::User
+
+            type at wildcard annotation
+            - local nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
+
+            type at tuple annotation left
+            - local nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
+
+            type at tuple annotation right
+            - local nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
+        "#]],
+    );
+}

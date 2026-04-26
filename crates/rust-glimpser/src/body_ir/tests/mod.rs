@@ -279,3 +279,61 @@ pub fn use_it(pair: Pair) -> Right {
         "#]],
     );
 }
+
+#[test]
+fn resolves_body_local_structs_before_module_structs() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_item_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub fn use_it() {
+    struct User;
+    let local: User = User;
+    {
+        struct User;
+        let nested: User = User;
+    }
+    let again: User = User;
+}
+"#,
+        expect![[r#"
+            package body_local_item_fixture
+
+            body_local_item_fixture [lib]
+            body b0 fn body_local_item_fixture[lib]::crate::use_it @ 3:1-11:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v2; items i0
+            - s2 parent s1: v1; items i1
+            items
+            - i0 struct User @ 4:5-4:17
+            - i1 struct User @ 7:9-7:21
+            bindings
+            - v0 let local `local`: User => local nominal struct fn body_local_item_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 5:9-5:14
+            - v1 let nested `nested`: User => local nominal struct fn body_local_item_fixture[lib]::crate::use_it::User @ 7:9-7:21 @ 8:13-8:19
+            - v2 let again `again`: User => local nominal struct fn body_local_item_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 10:9-10:14
+            body
+            expr e4 block s1 => () @ 3:17-11:2
+              stmt s0 item i0 @ 4:5-4:17
+              stmt s1 let v0: User @ 5:5-5:28
+                initializer
+                  expr e0 path User -> local item struct fn body_local_item_fixture[lib]::crate::use_it::User @ 4:5-4:17 => local nominal struct fn body_local_item_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 5:23-5:27
+              stmt s4 expr @ 6:5-9:6
+                expr e2 block s2 => () @ 6:5-9:6
+                  stmt s2 item i1 @ 7:9-7:21
+                  stmt s3 let v1: User @ 8:9-8:33
+                    initializer
+                      expr e1 path User -> local item struct fn body_local_item_fixture[lib]::crate::use_it::User @ 7:9-7:21 => local nominal struct fn body_local_item_fixture[lib]::crate::use_it::User @ 7:9-7:21 @ 8:28-8:32
+              stmt s5 let v2: User @ 10:5-10:28
+                initializer
+                  expr e3 path User -> local item struct fn body_local_item_fixture[lib]::crate::use_it::User @ 4:5-4:17 => local nominal struct fn body_local_item_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 10:23-10:27
+        "#]],
+    );
+}

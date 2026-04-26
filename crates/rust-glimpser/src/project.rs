@@ -168,10 +168,11 @@ impl fmt::Display for Project {
         let body_ir_stats = self.body_ir_db().stats();
         writeln!(
             f,
-            "BodyIR {} targets (bodies: {}, scopes: {}, bindings: {}, stmts: {}, exprs: {})",
+            "BodyIR {} targets (bodies: {}, scopes: {}, items: {}, bindings: {}, stmts: {}, exprs: {})",
             body_ir_stats.target_count,
             body_ir_stats.body_count,
             body_ir_stats.scope_count,
+            body_ir_stats.local_item_count,
             body_ir_stats.binding_count,
             body_ir_stats.statement_count,
             body_ir_stats.expression_count,

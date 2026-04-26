@@ -6,7 +6,7 @@ use crate::{
 };
 
 use super::{
-    ids::{BindingId, BodyId, BodyRef, ExprId, ScopeId, StmtId},
+    ids::{BindingId, BodyId, BodyItemId, BodyItemRef, BodyRef, ExprId, ScopeId, StmtId},
     lower, resolution,
 };
 
@@ -41,6 +41,7 @@ impl BodyIrDb {
                 stats.body_count += target.bodies.len();
                 for body in target.bodies() {
                     stats.scope_count += body.scopes.len();
+                    stats.local_item_count += body.local_items.len();
                     stats.binding_count += body.bindings.len();
                     stats.statement_count += body.statements.len();
                     stats.expression_count += body.exprs.len();
@@ -98,6 +99,7 @@ pub(crate) struct BodyIrStats {
     pub(crate) target_count: usize,
     pub(crate) body_count: usize,
     pub(crate) scope_count: usize,
+    pub(crate) local_item_count: usize,
     pub(crate) binding_count: usize,
     pub(crate) statement_count: usize,
     pub(crate) expression_count: usize,
@@ -187,6 +189,7 @@ pub struct BodyData {
     pub root_expr: ExprId,
     pub params: Vec<BindingId>,
     pub scopes: Vec<ScopeData>,
+    pub local_items: Vec<BodyItemData>,
     pub bindings: Vec<BindingData>,
     pub statements: Vec<StmtData>,
     pub exprs: Vec<ExprData>,
@@ -200,6 +203,10 @@ impl BodyData {
 
     pub(crate) fn scope(&self, scope: ScopeId) -> Option<&ScopeData> {
         self.scopes.get(scope.0)
+    }
+
+    pub(crate) fn local_item(&self, item: BodyItemId) -> Option<&BodyItemData> {
+        self.local_items.get(item.0)
     }
 
     pub(crate) fn statement(&self, statement: StmtId) -> Option<&StmtData> {
@@ -229,6 +236,7 @@ impl BodyData {
             root_expr,
             params,
             scopes: builder.scopes,
+            local_items: builder.local_items,
             bindings: builder.bindings,
             statements: builder.statements,
             exprs: builder.exprs,
@@ -240,6 +248,7 @@ impl BodyData {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(super) struct BodyBuilder {
     pub(super) scopes: Vec<ScopeData>,
+    pub(super) local_items: Vec<BodyItemData>,
     pub(super) bindings: Vec<BindingData>,
     pub(super) statements: Vec<StmtData>,
     pub(super) exprs: Vec<ExprData>,
@@ -250,9 +259,22 @@ impl BodyBuilder {
         let scope = ScopeId(self.scopes.len());
         self.scopes.push(ScopeData {
             parent,
+            local_items: Vec::new(),
             bindings: Vec::new(),
         });
         scope
+    }
+
+    pub(super) fn alloc_local_item(&mut self, data: BodyItemData) -> BodyItemId {
+        let item = BodyItemId(self.local_items.len());
+        let scope = data.scope;
+        self.local_items.push(data);
+        self.scopes
+            .get_mut(scope.0)
+            .expect("local item scope should exist while lowering body")
+            .local_items
+            .push(item);
+        item
     }
 
     pub(super) fn alloc_binding(&mut self, data: BindingData) -> BindingId {
@@ -291,7 +313,25 @@ pub struct BodySource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeData {
     pub parent: Option<ScopeId>,
+    pub local_items: Vec<BodyItemId>,
     pub bindings: Vec<BindingId>,
+}
+
+/// One item declared inside a function body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyItemData {
+    pub source: BodySource,
+    pub name_source: BodySource,
+    pub scope: ScopeId,
+    pub kind: BodyItemKind,
+    pub name: String,
+}
+
+/// Body-local item category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+pub enum BodyItemKind {
+    #[display("struct")]
+    Struct,
 }
 
 /// One local binding introduced by a parameter or `let`.
@@ -328,6 +368,7 @@ pub struct StmtData {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StmtKind {
     Let {
+        scope: ScopeId,
         bindings: Vec<BindingId>,
         annotation: Option<TypeRef>,
         initializer: Option<ExprId>,
@@ -335,6 +376,9 @@ pub enum StmtKind {
     Expr {
         expr: ExprId,
         has_semicolon: bool,
+    },
+    Item {
+        item: BodyItemId,
     },
     ItemIgnored,
 }
@@ -413,6 +457,7 @@ pub enum LiteralKind {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum BodyResolution {
     Local(BindingId),
+    LocalItem(BodyItemRef),
     Item(Vec<DefId>),
     Field(Vec<FieldRef>),
     #[default]
@@ -425,6 +470,7 @@ pub enum BodyTy {
     Unit,
     Never,
     Syntax(TypeRef),
+    LocalNominal(Vec<BodyItemRef>),
     Nominal(Vec<TypeDefRef>),
     SelfTy(Vec<TypeDefRef>),
     #[default]

@@ -5,10 +5,10 @@ use expect_test::Expect;
 use crate::{
     Project,
     analysis::{CompletionItem, NavigationTarget, SymbolAt},
-    body_ir::{BodyTy, ExprData, ExprKind},
+    body_ir::{BodyItemRef, BodyTy, ExprData, ExprKind},
     def_map::{ModuleRef, PackageSlot, TargetRef},
     parse::{FileId, span::Span},
-    semantic_ir::{TypeDefId, TypeDefRef},
+    semantic_ir::{FunctionRef, ItemOwner, TraitRef, TypeDefId, TypeDefRef},
     test_utils::{FixtureMarkers, fixture_crate_with_markers},
     workspace_metadata::TargetKind,
 };
@@ -234,6 +234,14 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
+            SymbolAt::BodyPath { ref path, span, .. } => {
+                writeln!(
+                    dump,
+                    "\n- body path {path} @ {}",
+                    self.render_source_span(span)
+                )
+                .expect("string writes should not fail");
+            }
             SymbolAt::Def { def, span } => {
                 let targets = self
                     .project
@@ -279,6 +287,11 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
                     .unwrap_or_else(|| "fn <unresolved>".to_string());
+                writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
+                    .expect("string writes should not fail");
+            }
+            SymbolAt::LocalItem { item, span } => {
+                let label = self.render_body_item_ref(item);
                 writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
                     .expect("string writes should not fail");
             }
@@ -362,6 +375,14 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             BodyTy::Unit => "()".to_string(),
             BodyTy::Never => "!".to_string(),
             BodyTy::Syntax(ty) => format!("syntax {ty}"),
+            BodyTy::LocalNominal(items) => {
+                let mut items = items
+                    .iter()
+                    .map(|item| self.render_body_item_ref(*item))
+                    .collect::<Vec<_>>();
+                items.sort();
+                format!("local nominal {}", items.join(" | "))
+            }
             BodyTy::Nominal(types) => {
                 let mut types = types
                     .iter()
@@ -380,6 +401,24 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             BodyTy::Unknown => "<unknown>".to_string(),
         }
+    }
+
+    fn render_body_item_ref(&self, item_ref: BodyItemRef) -> String {
+        let body = self
+            .project
+            .body_ir_db()
+            .body_data(item_ref.body)
+            .expect("body item body should exist while rendering analysis type");
+        let item = body
+            .local_item(item_ref.item)
+            .expect("body item id should exist while rendering analysis type");
+
+        format!(
+            "{} {}::{}",
+            item.kind,
+            self.render_function_ref(body.owner),
+            item.name
+        )
     }
 
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
@@ -420,6 +459,35 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
             }
         }
+    }
+
+    fn render_function_ref(&self, function_ref: FunctionRef) -> String {
+        let data = self
+            .project
+            .semantic_ir_db()
+            .function_data(function_ref)
+            .expect("function ref should exist while rendering analysis body item");
+        let owner = match data.owner {
+            ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
+            ItemOwner::Trait(trait_id) => {
+                let trait_data = self
+                    .project
+                    .semantic_ir_db()
+                    .trait_data(TraitRef {
+                        target: function_ref.target,
+                        id: trait_id,
+                    })
+                    .expect("trait owner should exist while rendering analysis body item");
+                format!(
+                    "trait {}::{}",
+                    self.render_module_ref(trait_data.owner),
+                    trait_data.name
+                )
+            }
+            ItemOwner::Impl(_) => "impl".to_string(),
+        };
+
+        format!("fn {owner}::{}", data.name)
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
