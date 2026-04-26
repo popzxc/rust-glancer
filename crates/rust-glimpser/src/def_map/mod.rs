@@ -2,6 +2,7 @@ mod collect;
 mod data;
 mod ids;
 mod import;
+mod path;
 mod path_resolution;
 mod resolve;
 
@@ -14,7 +15,8 @@ pub use self::{
         DefId, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
         PackageSlot, TargetRef,
     },
-    import::{ImportBinding, ImportData, ImportKind, ImportPath, Path, PathSegment},
+    import::{ImportBinding, ImportData, ImportKind, ImportPath},
+    path::{Path, PathSegment},
     path_resolution::ResolvePathResult,
 };
 use crate::{item_tree::ItemTreeDb, parse};
