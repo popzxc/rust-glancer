@@ -99,6 +99,34 @@ impl SemanticIrDb {
         resolution::resolve_type_path(self, def_map, context, path)
     }
 
+    pub(crate) fn type_path_context_for_function(
+        &self,
+        function_ref: FunctionRef,
+    ) -> Option<TypePathContext> {
+        let function_data = self.function_data(function_ref)?;
+        self.type_path_context_for_owner(function_ref.target, function_data.owner)
+    }
+
+    pub(crate) fn type_path_context_for_owner(
+        &self,
+        target: TargetRef,
+        owner: ItemOwner,
+    ) -> Option<TypePathContext> {
+        match owner {
+            ItemOwner::Module(module_ref) => Some(TypePathContext::module(module_ref)),
+            ItemOwner::Trait(id) => self
+                .trait_data(TraitRef { target, id })
+                .map(|data| TypePathContext::module(data.owner)),
+            ItemOwner::Impl(id) => {
+                let impl_ref = ImplRef { target, id };
+                self.impl_data(impl_ref).map(|data| TypePathContext {
+                    module: data.owner,
+                    impl_ref: Some(impl_ref),
+                })
+            }
+        }
+    }
+
     pub(crate) fn type_def_for_local_def(&self, def: LocalDefRef) -> Option<TypeDefRef> {
         let item = self
             .target_ir(def.target)?

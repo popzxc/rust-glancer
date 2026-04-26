@@ -8,8 +8,7 @@ use crate::{
     item_tree::{FieldKey, TypeRef},
     parse::TargetId,
     semantic_ir::{
-        FunctionRef, ImplRef, ItemId, ItemOwner, SemanticIrDb, SemanticTypePathResolution,
-        TraitRef, TypeDefRef, TypePathContext,
+        FunctionRef, ItemId, SemanticIrDb, SemanticTypePathResolution, TypeDefRef, TypePathContext,
     },
 };
 
@@ -424,34 +423,9 @@ impl BodyTypePathResolver<'_, '_> {
         function: FunctionRef,
         fallback_module: ModuleRef,
     ) -> TypePathContext {
-        let Some(function_data) = self.semantic_ir.function_data(function) else {
-            return TypePathContext::module(fallback_module);
-        };
-
-        match function_data.owner {
-            ItemOwner::Module(module_ref) => TypePathContext::module(module_ref),
-            ItemOwner::Trait(trait_id) => self
-                .semantic_ir
-                .trait_data(TraitRef {
-                    target: function.target,
-                    id: trait_id,
-                })
-                .map(|data| TypePathContext::module(data.owner))
-                .unwrap_or_else(|| TypePathContext::module(fallback_module)),
-            ItemOwner::Impl(impl_id) => {
-                let impl_ref = ImplRef {
-                    target: function.target,
-                    id: impl_id,
-                };
-                self.semantic_ir
-                    .impl_data(impl_ref)
-                    .map(|data| TypePathContext {
-                        module: data.owner,
-                        impl_ref: Some(impl_ref),
-                    })
-                    .unwrap_or_else(|| TypePathContext::module(fallback_module))
-            }
-        }
+        self.semantic_ir
+            .type_path_context_for_function(function)
+            .unwrap_or_else(|| TypePathContext::module(fallback_module))
     }
 
     fn resolve_local_type_item(&self, mut scope: ScopeId, name: &str) -> Option<BodyItemId> {

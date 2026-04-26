@@ -8,8 +8,8 @@ use crate::{
     },
     parse::{FileId, span::Span},
     semantic_ir::{
-        FieldRef, FunctionId, FunctionRef, ImplId, ImplRef, ItemOwner, StructId, TraitRef,
-        TypeDefId, TypeDefRef, TypePathContext, UnionId,
+        FieldRef, FunctionId, FunctionRef, ImplId, ItemOwner, StructId, TypeDefId, TypeDefRef,
+        TypePathContext, UnionId,
     },
 };
 
@@ -286,12 +286,8 @@ impl CursorScanner<'_> {
             if data.source.file_id != self.file_id {
                 continue;
             }
-            let context = TypePathContext {
-                module: data.owner,
-                impl_ref: Some(ImplRef {
-                    target: self.target,
-                    id: ImplId(idx),
-                }),
+            let Some(context) = self.owner_context(ItemOwner::Impl(ImplId(idx))) else {
+                continue;
             };
             self.scan_generic_params(context, &data.generics);
             if let Some(trait_ref) = &data.trait_ref {
@@ -524,30 +520,9 @@ impl CursorScanner<'_> {
     }
 
     fn owner_context(&self, owner: ItemOwner) -> Option<TypePathContext> {
-        match owner {
-            ItemOwner::Module(module_ref) => Some(TypePathContext::module(module_ref)),
-            ItemOwner::Trait(id) => self
-                .project
-                .semantic_ir_db()
-                .trait_data(TraitRef {
-                    target: self.target,
-                    id,
-                })
-                .map(|data| TypePathContext::module(data.owner)),
-            ItemOwner::Impl(id) => {
-                let impl_ref = ImplRef {
-                    target: self.target,
-                    id,
-                };
-                self.project
-                    .semantic_ir_db()
-                    .impl_data(impl_ref)
-                    .map(|data| TypePathContext {
-                        module: data.owner,
-                        impl_ref: Some(impl_ref),
-                    })
-            }
-        }
+        self.project
+            .semantic_ir_db()
+            .type_path_context_for_owner(self.target, owner)
     }
 
     fn item(&self, source: ItemTreeRef) -> Option<&ItemNode> {
