@@ -7,10 +7,10 @@ use crate::{
 
 use super::{Analysis, data::SymbolAt};
 
-pub(super) struct TypeResolver<'a, 'project>(&'a Analysis<'project>);
+pub(super) struct TypeResolver<'a, 'db>(&'a Analysis<'db>);
 
-impl<'a, 'project> TypeResolver<'a, 'project> {
-    pub(super) fn new(analysis: &'a Analysis<'project>) -> Self {
+impl<'a, 'db> TypeResolver<'a, 'db> {
+    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
@@ -23,15 +23,13 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
         match self.0.symbol_at(target, file_id, offset)? {
             SymbolAt::Expr { body, expr } => self
                 .0
-                .project
-                .body_ir_db()
+                .body_ir
                 .body_data(body)?
                 .expr(expr)
                 .map(|data| data.ty.clone()),
             SymbolAt::Binding { body, binding } => self
                 .0
-                .project
-                .body_ir_db()
+                .body_ir
                 .body_data(body)?
                 .binding(binding)
                 .map(|data| data.ty.clone()),
@@ -48,8 +46,8 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
     }
 
     pub(super) fn ty_for_type_path(&self, context: TypePathContext, path: &Path) -> BodyTy {
-        semantic_type_path_resolution_to_ty(self.0.project.semantic_ir_db().resolve_type_path(
-            self.0.project.def_map_db(),
+        semantic_type_path_resolution_to_ty(self.0.semantic_ir.resolve_type_path(
+            self.0.def_map,
             context,
             path,
         ))
@@ -61,9 +59,9 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
         scope: ScopeId,
         path: &Path,
     ) -> BodyTy {
-        body_type_path_resolution_to_ty(self.0.project.body_ir_db().resolve_type_path_in_scope(
-            self.0.project.def_map_db(),
-            self.0.project.semantic_ir_db(),
+        body_type_path_resolution_to_ty(self.0.body_ir.resolve_type_path_in_scope(
+            self.0.def_map,
+            self.0.semantic_ir,
             body_ref,
             scope,
             path,
@@ -95,14 +93,13 @@ impl<'a, 'project> TypeResolver<'a, 'project> {
             return None;
         };
         self.0
-            .project
-            .semantic_ir_db()
+            .semantic_ir
             .type_def_for_local_def(local_def)
             .map(|ty| BodyTy::Nominal(vec![ty]))
     }
 
     fn ty_for_field(&self, field: FieldRef) -> Option<BodyTy> {
-        let field_data = self.0.project.semantic_ir_db().field_data(field)?;
+        let field_data = self.0.semantic_ir.field_data(field)?;
         Some(self.ty_from_type_ref_in_module(&field_data.field.ty, field_data.owner_module))
     }
 }

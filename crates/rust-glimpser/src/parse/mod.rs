@@ -2,7 +2,7 @@ use std::{fmt, path::PathBuf};
 
 use anyhow::Context as _;
 
-pub(crate) use self::file::{FileDb, FileId};
+pub(crate) use self::file::{FileId, ParsedFile};
 pub use self::{
     package::Package,
     target::{Target, TargetId},
@@ -53,14 +53,24 @@ impl ParseDb {
             .filter(|package| package.is_workspace_member())
     }
 
+    /// Returns the number of parsed packages.
+    pub(crate) fn package_count(&self) -> usize {
+        self.packages.len()
+    }
+
     /// Returns all parsed packages.
     pub(crate) fn packages(&self) -> &[Package] {
         &self.packages
     }
 
-    /// Returns mutable parsed packages for later phases that enrich the same source data.
-    pub(crate) fn packages_mut(&mut self) -> &mut [Package] {
-        &mut self.packages
+    /// Returns one parsed package by slot.
+    pub(crate) fn package(&self, package_slot: usize) -> Option<&Package> {
+        self.packages.get(package_slot)
+    }
+
+    /// Returns one mutable parsed package by slot.
+    pub(crate) fn package_mut(&mut self, package_slot: usize) -> Option<&mut Package> {
+        self.packages.get_mut(package_slot)
     }
 }
 

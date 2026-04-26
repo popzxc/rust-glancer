@@ -3,20 +3,20 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    Project,
-    analysis::{CompletionItem, NavigationTarget, SymbolAt},
-    body_ir::{BodyItemRef, BodyTy, ExprData, ExprKind},
-    def_map::{ModuleRef, PackageSlot, TargetRef},
-    parse::{FileId, span::Span},
-    semantic_ir::{FunctionRef, ItemOwner, TraitRef, TypeDefId, TypeDefRef},
+    analysis::{Analysis, CompletionItem, NavigationTarget, SymbolAt},
+    body_ir::{BodyIrDb, BodyItemRef, BodyTy, ExprData, ExprKind},
+    def_map::{DefMapDb, ModuleRef, PackageSlot, TargetRef},
+    item_tree::ItemTreeDb,
+    parse::{FileId, ParseDb, span::Span},
+    semantic_ir::{FunctionRef, ItemOwner, SemanticIrDb, TraitRef, TypeDefId, TypeDefRef},
     test_utils::{FixtureMarkers, fixture_crate_with_markers},
-    workspace_metadata::TargetKind,
+    workspace_metadata::{TargetKind, WorkspaceMetadata},
 };
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
-    let project = fixture.project();
-    let renderer = AnalysisQuerySnapshot::new(&project, markers, queries);
+    let db = AnalysisFixtureDb::build(fixture.workspace_metadata());
+    let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
     expect.assert_eq(&actual);
 }
@@ -78,16 +78,58 @@ enum AnalysisQueryKind {
     CompletionsAtDot,
 }
 
+struct AnalysisFixtureDb {
+    parse: ParseDb,
+    item_tree: ItemTreeDb,
+    def_map: DefMapDb,
+    semantic_ir: SemanticIrDb,
+    body_ir: BodyIrDb,
+}
+
+impl AnalysisFixtureDb {
+    fn build(workspace: WorkspaceMetadata) -> Self {
+        let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
+        let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
+        let def_map = DefMapDb::build(&workspace, &parse, &item_tree)
+            .expect("fixture def map db should build");
+        let semantic_ir =
+            SemanticIrDb::build(&item_tree, &def_map).expect("fixture semantic ir db should build");
+        let body_ir = BodyIrDb::build(&parse, &item_tree, &def_map, &semantic_ir)
+            .expect("fixture body ir db should build");
+
+        Self {
+            parse,
+            item_tree,
+            def_map,
+            semantic_ir,
+            body_ir,
+        }
+    }
+
+    fn analysis(&self) -> Analysis<'_> {
+        Analysis::new(
+            &self.item_tree,
+            &self.def_map,
+            &self.semantic_ir,
+            &self.body_ir,
+        )
+    }
+}
+
 struct AnalysisQuerySnapshot<'a> {
-    project: &'a Project,
+    db: &'a AnalysisFixtureDb,
     markers: FixtureMarkers,
     queries: &'a [AnalysisQuery],
 }
 
 impl<'a> AnalysisQuerySnapshot<'a> {
-    fn new(project: &'a Project, markers: FixtureMarkers, queries: &'a [AnalysisQuery]) -> Self {
+    fn new(
+        db: &'a AnalysisFixtureDb,
+        markers: FixtureMarkers,
+        queries: &'a [AnalysisQuery],
+    ) -> Self {
         Self {
-            project,
+            db,
             markers,
             queries,
         }
@@ -107,28 +149,25 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         match query.kind {
             AnalysisQueryKind::SymbolAt => {
                 self.render_symbol(
-                    self.project.analysis().symbol_at(target, file_id, offset),
+                    self.db.analysis().symbol_at(target, file_id, offset),
                     &mut dump,
                 );
             }
             AnalysisQueryKind::ResolveSymbol => {
-                let Some(symbol) = self.project.analysis().symbol_at(target, file_id, offset)
-                else {
+                let Some(symbol) = self.db.analysis().symbol_at(target, file_id, offset) else {
                     self.render_targets(Vec::new(), &mut dump);
                     return dump;
                 };
-                self.render_targets(self.project.analysis().resolve_symbol(symbol), &mut dump);
+                self.render_targets(self.db.analysis().resolve_symbol(symbol), &mut dump);
             }
             AnalysisQueryKind::GotoDefinition => {
                 self.render_targets(
-                    self.project
-                        .analysis()
-                        .goto_definition(target, file_id, offset),
+                    self.db.analysis().goto_definition(target, file_id, offset),
                     &mut dump,
                 );
             }
             AnalysisQueryKind::TypeAt => {
-                let ty = self.project.analysis().type_at(target, file_id, offset);
+                let ty = self.db.analysis().type_at(target, file_id, offset);
                 writeln!(
                     dump,
                     "\n- {}",
@@ -140,7 +179,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             AnalysisQueryKind::CompletionsAtDot => {
                 self.render_completions(
-                    self.project
+                    self.db
                         .analysis()
                         .completions_at_dot(target, file_id, offset),
                     &mut dump,
@@ -165,8 +204,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
     fn lib_target_for_path(&self, path: &str) -> (TargetRef, FileId) {
         let mut matches = self
-            .project
-            .parse_db()
+            .db
+            .parse
             .packages()
             .iter()
             .enumerate()
@@ -205,8 +244,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         match symbol {
             SymbolAt::Body { body } => {
                 let body_data = self
-                    .project
-                    .body_ir_db()
+                    .db
+                    .body_ir
                     .body_data(body)
                     .expect("body ref should exist while rendering analysis symbol");
                 writeln!(
@@ -218,8 +257,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             SymbolAt::Binding { body, binding } => {
                 let body_data = self
-                    .project
-                    .body_ir_db()
+                    .db
+                    .body_ir
                     .body_data(body)
                     .expect("body ref should exist while rendering analysis symbol");
                 let binding_data = body_data
@@ -244,7 +283,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             SymbolAt::Def { def, span } => {
                 let targets = self
-                    .project
+                    .db
                     .analysis()
                     .resolve_symbol(SymbolAt::Def { def, span });
                 let label = targets
@@ -256,8 +295,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             SymbolAt::Expr { body, expr } => {
                 let body_data = self
-                    .project
-                    .body_ir_db()
+                    .db
+                    .body_ir
                     .body_data(body)
                     .expect("body ref should exist while rendering analysis symbol");
                 let expr_data = body_data
@@ -268,7 +307,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             SymbolAt::Field { field, span } => {
                 let targets = self
-                    .project
+                    .db
                     .analysis()
                     .resolve_symbol(SymbolAt::Field { field, span });
                 let label = targets
@@ -280,7 +319,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             SymbolAt::Function { function, span } => {
                 let targets = self
-                    .project
+                    .db
                     .analysis()
                     .resolve_symbol(SymbolAt::Function { function, span });
                 let label = targets
@@ -406,8 +445,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
     fn render_body_item_ref(&self, item_ref: BodyItemRef) -> String {
         let body = self
-            .project
-            .body_ir_db()
+            .db
+            .body_ir
             .body_data(item_ref.body)
             .expect("body item body should exist while rendering analysis type");
         let item = body
@@ -424,8 +463,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
         let target_ir = self
-            .project
-            .semantic_ir_db()
+            .db
+            .semantic_ir
             .target_ir(ty.target)
             .expect("target semantic IR should exist while rendering analysis type");
 
@@ -464,16 +503,16 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {
         let data = self
-            .project
-            .semantic_ir_db()
+            .db
+            .semantic_ir
             .function_data(function_ref)
             .expect("function ref should exist while rendering analysis body item");
         let owner = match data.owner {
             ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
             ItemOwner::Trait(trait_id) => {
                 let trait_data = self
-                    .project
-                    .semantic_ir_db()
+                    .db
+                    .semantic_ir
                     .trait_data(TraitRef {
                         target: function_ref.target,
                         id: trait_id,
@@ -493,8 +532,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
         let package = self
-            .project
-            .parse_db()
+            .db
+            .parse
             .packages()
             .get(module_ref.target.package.0)
             .expect("package slot should exist while rendering analysis module");
@@ -512,8 +551,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
-            .project
-            .def_map_db()
+            .db
+            .def_map
             .def_map(module_ref.target)
             .expect("target def map should exist while rendering analysis module path")
             .module(module_ref.module)

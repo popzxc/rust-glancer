@@ -12,10 +12,10 @@ use super::{
     ty::type_defs_from_body_ty,
 };
 
-pub(super) struct CompletionResolver<'a, 'project>(&'a Analysis<'project>);
+pub(super) struct CompletionResolver<'a, 'db>(&'a Analysis<'db>);
 
-impl<'a, 'project> CompletionResolver<'a, 'project> {
-    pub(super) fn new(analysis: &'a Analysis<'project>) -> Self {
+impl<'a, 'db> CompletionResolver<'a, 'db> {
+    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
@@ -53,7 +53,7 @@ impl<'a, 'project> CompletionResolver<'a, 'project> {
         file_id: FileId,
         offset: u32,
     ) -> Option<(BodyRef, ExprId)> {
-        let target_bodies = self.0.project.body_ir_db().target_bodies(target)?;
+        let target_bodies = self.0.body_ir.target_bodies(target)?;
         let mut best = None::<(BodyRef, ExprId, u32)>;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
@@ -84,30 +84,25 @@ impl<'a, 'project> CompletionResolver<'a, 'project> {
     }
 
     fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
-        self.0.project.body_ir_db().body_data(body_ref)
+        self.0.body_ir.body_data(body_ref)
     }
 
     fn push_type_completions(&self, ty: TypeDefRef, completions: &mut Vec<CompletionItem>) {
-        for field in self.0.project.semantic_ir_db().fields_for_type(ty) {
+        for field in self.0.semantic_ir.fields_for_type(ty) {
             self.push_field_completion(field, completions);
         }
 
-        for function in self
-            .0
-            .project
-            .semantic_ir_db()
-            .inherent_functions_for_type(ty)
-        {
+        for function in self.0.semantic_ir.inherent_functions_for_type(ty) {
             self.push_function_completion(function, CompletionKind::InherentMethod, completions);
         }
 
-        for function in self.0.project.semantic_ir_db().trait_functions_for_type(ty) {
+        for function in self.0.semantic_ir.trait_functions_for_type(ty) {
             self.push_function_completion(function, CompletionKind::TraitMethod, completions);
         }
     }
 
     fn push_field_completion(&self, field: FieldRef, completions: &mut Vec<CompletionItem>) {
-        let Some(data) = self.0.project.semantic_ir_db().field_data(field) else {
+        let Some(data) = self.0.semantic_ir.field_data(field) else {
             return;
         };
         let Some(key) = data.field.key.as_ref() else {
@@ -134,7 +129,7 @@ impl<'a, 'project> CompletionResolver<'a, 'project> {
         kind: CompletionKind,
         completions: &mut Vec<CompletionItem>,
     ) {
-        let Some(data) = self.0.project.semantic_ir_db().function_data(function) else {
+        let Some(data) = self.0.semantic_ir.function_data(function) else {
             return;
         };
         if !function_has_self_receiver(data) {

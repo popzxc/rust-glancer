@@ -74,7 +74,12 @@ impl Project {
     /// Returns the high-level query API for this frozen project analysis.
     #[allow(dead_code)]
     pub(crate) fn analysis(&self) -> Analysis<'_> {
-        Analysis::new(self)
+        Analysis::new(
+            self.item_tree_db(),
+            self.def_map_db(),
+            self.semantic_ir_db(),
+            self.body_ir_db(),
+        )
     }
 
     fn fmt_item(
@@ -219,19 +224,17 @@ impl fmt::Display for Project {
             }
 
             let has_errors = package
-                .files
                 .parsed_files()
-                .iter()
-                .any(|file| !file.parse_errors.is_empty());
+                .any(|file| !file.parse_errors().is_empty());
             if has_errors {
                 writeln!(f)?;
                 writeln!(f, "Parser errors:")?;
-                for file in package.files.parsed_files() {
-                    for parse_error in &file.parse_errors {
+                for file in package.parsed_files() {
+                    for parse_error in file.parse_errors() {
                         writeln!(
                             f,
                             "- {}:{}:{} [{}..{}]: {}",
-                            file.path.display(),
+                            file.path().display(),
                             parse_error.span.line_column.start.line + 1,
                             parse_error.span.line_column.start.column + 1,
                             parse_error.span.text.start,

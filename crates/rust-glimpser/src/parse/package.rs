@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context as _;
 
 use crate::{
-    parse::{FileDb, FileId, Target, TargetId},
+    parse::{FileId, ParsedFile, Target, TargetId, file::FileDb},
     workspace_metadata::{PackageId, TargetKind},
 };
 
@@ -17,12 +17,27 @@ pub struct Package {
     /// Whether this package belongs to the analyzed workspace.
     is_workspace_member: bool,
     /// All parsed files known to this package.
-    pub(crate) files: FileDb,
+    files: FileDb,
     /// Parsed targets rooted in this package.
-    pub(crate) targets: Vec<Target>,
+    targets: Vec<Target>,
 }
 
 impl Package {
+    /// Parses a package-local source file, or returns its existing file id if it is already cached.
+    pub(crate) fn parse_file(&mut self, file_path: &Path) -> anyhow::Result<FileId> {
+        self.files.get_or_parse_file(file_path)
+    }
+
+    /// Returns the cached parsed file for a previously known `FileId`.
+    pub(crate) fn parsed_file(&self, file_id: FileId) -> Option<ParsedFile<'_>> {
+        self.files.parsed_file(file_id)
+    }
+
+    /// Iterates over all files parsed for this package.
+    pub(crate) fn parsed_files(&self) -> impl Iterator<Item = ParsedFile<'_>> {
+        self.files.parsed_files()
+    }
+
     /// Returns the path associated with a file id, if the id is valid.
     pub(crate) fn file_path(&self, file_id: FileId) -> Option<&Path> {
         self.files.file_path(file_id)
@@ -44,7 +59,6 @@ impl Package {
     }
 
     /// Returns all parsed targets for this package.
-    #[cfg(test)]
     pub(crate) fn targets(&self) -> &[Target] {
         &self.targets
     }

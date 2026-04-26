@@ -37,8 +37,7 @@ pub(super) fn build_db(
 
     for (package_idx, package_ir) in semantic_ir.packages().iter().enumerate() {
         let parse_package = parse
-            .packages()
-            .get(package_idx)
+            .package(package_idx)
             .with_context(|| format!("while attempting to fetch parse package {package_idx}"))?;
         let item_tree_package = item_tree.package(package_idx).with_context(|| {
             format!("while attempting to fetch item tree package {package_idx}")
@@ -102,12 +101,11 @@ impl<'a> TargetLowering<'a> {
                 continue;
             };
 
-            let line_index = &self
+            let line_index = self
                 .parse_package
-                .files
                 .parsed_file(function.source.file_id)
                 .expect("function source file should exist while lowering body")
-                .line_index;
+                .line_index();
             let source = source_for(function.source.file_id, ast_fn.syntax(), line_index);
             let body = FunctionBodyLowering::new(function_ref, owner_module, source, line_index)
                 .lower(ast_fn, body_ast);
@@ -149,7 +147,6 @@ impl<'a> TargetLowering<'a> {
         })?;
         let parsed_file = self
             .parse_package
-            .files
             .parsed_file(source.file_id)
             .with_context(|| {
                 format!(
@@ -160,7 +157,7 @@ impl<'a> TargetLowering<'a> {
 
         let expected = item.span.text;
         Ok(parsed_file
-            .tree
+            .syntax()
             .syntax()
             .descendants()
             .filter_map(ast::Fn::cast)

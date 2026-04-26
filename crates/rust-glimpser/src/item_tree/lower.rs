@@ -15,7 +15,7 @@ use ra_syntax::{
     ast::{self, HasModuleItem, HasName, HasVisibility},
 };
 
-use crate::parse::{FileDb, FileId, Target as ParseTarget, span::LineIndex};
+use crate::parse::{FileId, Package as ParsePackage, span::LineIndex};
 
 use super::{
     ConstItem, EnumItem, ExternCrateItem, FileTree, FunctionItem, ImplItem, ItemKind, ItemNode,
@@ -24,11 +24,8 @@ use super::{
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
-pub(super) fn build_package(
-    files: &mut FileDb,
-    targets: &[ParseTarget],
-) -> anyhow::Result<Package> {
-    PackageLowering::new(files).build(targets)
+pub(super) fn build_package(parse_package: &mut ParsePackage) -> anyhow::Result<Package> {
+    PackageLowering::new(parse_package).build()
 }
 
 /// Mutable lowering context shared while walking all target roots in one package.
@@ -36,22 +33,23 @@ pub(super) fn build_package(
 /// `file_trees` is the cache being built, and `active_stack` prevents infinite recursion while
 /// following out-of-line `mod foo;` chains.
 struct PackageLowering<'db> {
-    files: &'db mut FileDb,
+    parse_package: &'db mut ParsePackage,
     active_stack: HashSet<FileId>,
     file_trees: Vec<Option<FileTree>>,
 }
 
 impl<'db> PackageLowering<'db> {
-    fn new(files: &'db mut FileDb) -> Self {
+    fn new(parse_package: &'db mut ParsePackage) -> Self {
         Self {
-            files,
+            parse_package,
             active_stack: HashSet::default(),
             file_trees: Vec::new(),
         }
     }
 
     /// Starts from every target root file and lowers the reachable file set once.
-    fn build(mut self, targets: &[ParseTarget]) -> anyhow::Result<Package> {
+    fn build(mut self) -> anyhow::Result<Package> {
+        let targets = self.parse_package.targets().to_vec();
         let target_roots = targets
             .iter()
             .map(|target| {
@@ -87,16 +85,19 @@ impl<'db> PackageLowering<'db> {
         }
 
         let (items, line_index, module_file_context) = {
-            let parsed_file = self.files.parsed_file(current_file_id).with_context(|| {
-                format!(
-                    "while attempting to fetch parsed file {:?}",
-                    current_file_id
-                )
-            })?;
+            let parsed_file = self
+                .parse_package
+                .parsed_file(current_file_id)
+                .with_context(|| {
+                    format!(
+                        "while attempting to fetch parsed file {:?}",
+                        current_file_id
+                    )
+                })?;
             (
-                parsed_file.tree.items().collect::<Vec<_>>(),
-                parsed_file.line_index.clone(),
-                ModuleFileContext::from_definition_file(&parsed_file.path),
+                parsed_file.syntax().items().collect::<Vec<_>>(),
+                parsed_file.line_index().clone(),
+                ModuleFileContext::from_definition_file(parsed_file.path()),
             )
         };
 
@@ -351,8 +352,8 @@ impl<'db> PackageLowering<'db> {
         };
 
         let module_file_id = self
-            .files
-            .get_or_parse_file(&module_file_path)
+            .parse_package
+            .parse_file(&module_file_path)
             .with_context(|| {
                 format!(
                     "while attempting to parse module file {}",

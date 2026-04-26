@@ -1,9 +1,10 @@
 use anyhow::Context as _;
-use ra_syntax::{Edition, SourceFile};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+
+use ra_syntax::{Edition, SourceFile};
 
 use crate::parse::{
     error::ParseError,
@@ -16,15 +17,51 @@ pub struct FileId(pub usize);
 
 /// Internal parsed representation used by the parser cache.
 #[derive(Debug, Clone)]
-pub(crate) struct ParsedFile {
+struct ParsedFileData {
     /// Canonical filesystem path for this source file.
-    pub path: PathBuf,
+    path: PathBuf,
     /// Parse diagnostics produced while parsing the file.
-    pub parse_errors: Vec<ParseError>,
+    parse_errors: Vec<ParseError>,
     /// Line-start index used to convert byte offsets into line/column coordinates.
-    pub(crate) line_index: LineIndex,
+    line_index: LineIndex,
     /// Parsed Rust syntax tree produced by `ra_syntax`.
-    pub(crate) tree: SourceFile,
+    tree: SourceFile,
+}
+
+/// Borrowed view over one cached source file.
+///
+/// Later phases need syntax and source coordinates, but they should not know that parsing is backed
+/// by a mutable file cache. This view is the stable boundary between `parse` and AST-consuming
+/// phases.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ParsedFile<'a> {
+    data: &'a ParsedFileData,
+}
+
+impl<'a> ParsedFile<'a> {
+    fn new(data: &'a ParsedFileData) -> Self {
+        Self { data }
+    }
+
+    /// Returns the canonical path for this parsed source file.
+    pub(crate) fn path(&self) -> &'a Path {
+        self.data.path.as_path()
+    }
+
+    /// Returns parser diagnostics produced for this source file.
+    pub(crate) fn parse_errors(&self) -> &'a [ParseError] {
+        &self.data.parse_errors
+    }
+
+    /// Returns the line index used for byte-offset to line/column conversion.
+    pub(crate) fn line_index(&self) -> &'a LineIndex {
+        &self.data.line_index
+    }
+
+    /// Returns the parsed Rust syntax tree.
+    pub(crate) fn syntax(&self) -> &'a SourceFile {
+        &self.data.tree
+    }
 }
 
 /// Shared parse cache that owns filesystem-backed source files and syntax trees.
@@ -33,13 +70,13 @@ pub(crate) struct ParsedFile {
 /// and reused during multiple target traversals.
 #[derive(Default, Debug, Clone)]
 pub(crate) struct FileDb {
-    parsed_files: Vec<ParsedFile>,
+    parsed_files: Vec<ParsedFileData>,
     file_ids_by_path: HashMap<PathBuf, FileId>,
 }
 
 impl FileDb {
     /// Returns an existing `FileId` for `file_path` or parses and caches the file.
-    pub(crate) fn get_or_parse_file(&mut self, file_path: &Path) -> anyhow::Result<FileId> {
+    pub(super) fn get_or_parse_file(&mut self, file_path: &Path) -> anyhow::Result<FileId> {
         let canonical_file_path = file_path
             .canonicalize()
             .with_context(|| format!("while attempting to canonicalize {}", file_path.display()))?;
@@ -65,7 +102,7 @@ impl FileDb {
             })
             .collect();
 
-        self.parsed_files.push(ParsedFile {
+        self.parsed_files.push(ParsedFileData {
             path: canonical_file_path.clone(),
             parse_errors,
             line_index,
@@ -77,17 +114,17 @@ impl FileDb {
     }
 
     /// Returns the cached parsed file for a previously known `FileId`.
-    pub(crate) fn parsed_file(&self, file_id: FileId) -> Option<&ParsedFile> {
-        self.parsed_files.get(file_id.0)
+    pub(super) fn parsed_file(&self, file_id: FileId) -> Option<ParsedFile<'_>> {
+        self.parsed_files.get(file_id.0).map(ParsedFile::new)
     }
 
     /// Returns all cached parsed files.
-    pub(crate) fn parsed_files(&self) -> &[ParsedFile] {
-        &self.parsed_files
+    pub(super) fn parsed_files(&self) -> impl Iterator<Item = ParsedFile<'_>> {
+        self.parsed_files.iter().map(ParsedFile::new)
     }
 
     /// Returns the canonical path associated with `file_id`.
-    pub(crate) fn file_path(&self, file_id: FileId) -> Option<&Path> {
+    pub(super) fn file_path(&self, file_id: FileId) -> Option<&Path> {
         self.parsed_files
             .get(file_id.0)
             .map(|parsed_file| parsed_file.path.as_path())

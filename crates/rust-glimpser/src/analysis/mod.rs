@@ -2,7 +2,13 @@
 // yet. Snapshot tests exercise it until that production entrypoint exists.
 #![allow(dead_code)]
 
-use crate::{Project, body_ir::BodyTy, def_map::TargetRef, parse::FileId};
+use crate::{
+    body_ir::{BodyIrDb, BodyTy},
+    def_map::{DefMapDb, TargetRef},
+    item_tree::ItemTreeDb,
+    parse::FileId,
+    semantic_ir::SemanticIrDb,
+};
 
 mod completion;
 mod cursor;
@@ -18,14 +24,27 @@ pub(crate) use self::data::{CompletionItem, NavigationTarget, SymbolAt};
 #[allow(unused_imports)]
 pub(crate) use self::data::{CompletionKind, CompletionTarget, NavigationTargetKind};
 
-/// High-level query API over the frozen project analysis.
+/// High-level query API over the frozen phase databases.
 pub(crate) struct Analysis<'a> {
-    project: &'a Project,
+    item_tree: &'a ItemTreeDb,
+    def_map: &'a DefMapDb,
+    semantic_ir: &'a SemanticIrDb,
+    body_ir: &'a BodyIrDb,
 }
 
 impl<'a> Analysis<'a> {
-    pub(crate) fn new(project: &'a Project) -> Self {
-        Self { project }
+    pub(crate) fn new(
+        item_tree: &'a ItemTreeDb,
+        def_map: &'a DefMapDb,
+        semantic_ir: &'a SemanticIrDb,
+        body_ir: &'a BodyIrDb,
+    ) -> Self {
+        Self {
+            item_tree,
+            def_map,
+            semantic_ir,
+            body_ir,
+        }
     }
 
     /// Returns the smallest known symbol under a source offset.

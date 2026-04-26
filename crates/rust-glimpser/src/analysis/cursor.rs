@@ -1,5 +1,4 @@
 use crate::{
-    Project,
     body_ir::{BodyData, BodyRef, ScopeId, StmtKind},
     def_map::{DefId, ModuleRef, Path, TargetRef},
     item_tree::{
@@ -13,7 +12,10 @@ use crate::{
     },
 };
 
-use super::data::{SymbolAt, SymbolCandidate};
+use super::{
+    Analysis,
+    data::{SymbolAt, SymbolCandidate},
+};
 
 pub(super) fn body_type_path_candidates(
     body_ref: BodyRef,
@@ -47,7 +49,7 @@ pub(super) fn body_type_path_candidates(
 }
 
 pub(super) fn item_signature_candidates(
-    project: &Project,
+    analysis: &Analysis<'_>,
     target: TargetRef,
     file_id: FileId,
     offset: u32,
@@ -55,7 +57,7 @@ pub(super) fn item_signature_candidates(
     let mut candidates = Vec::new();
 
     CursorScanner {
-        project,
+        analysis,
         target,
         file_id,
         offset,
@@ -136,15 +138,15 @@ impl BodyTypeCursorScanner<'_> {
     }
 }
 
-struct CursorScanner<'a> {
-    project: &'a Project,
+struct CursorScanner<'a, 'db> {
+    analysis: &'a Analysis<'db>,
     target: TargetRef,
     file_id: FileId,
     offset: u32,
     candidates: &'a mut Vec<SymbolCandidate>,
 }
 
-impl CursorScanner<'_> {
+impl CursorScanner<'_, '_> {
     fn scan(&mut self) {
         self.scan_local_definitions();
         self.scan_import_paths();
@@ -152,7 +154,7 @@ impl CursorScanner<'_> {
     }
 
     fn scan_local_definitions(&mut self) {
-        let Some(def_map) = self.project.def_map_db().def_map(self.target) else {
+        let Some(def_map) = self.analysis.def_map.def_map(self.target) else {
             return;
         };
 
@@ -183,7 +185,7 @@ impl CursorScanner<'_> {
     }
 
     fn scan_import_paths(&mut self) {
-        let Some(def_map) = self.project.def_map_db().def_map(self.target) else {
+        let Some(def_map) = self.analysis.def_map.def_map(self.target) else {
             return;
         };
 
@@ -220,7 +222,7 @@ impl CursorScanner<'_> {
     }
 
     fn scan_semantic_items(&mut self) {
-        let Some(target_ir) = self.project.semantic_ir_db().target_ir(self.target) else {
+        let Some(target_ir) = self.analysis.semantic_ir.target_ir(self.target) else {
             return;
         };
         let items = target_ir.items();
@@ -516,14 +518,14 @@ impl CursorScanner<'_> {
     }
 
     fn owner_context(&self, owner: ItemOwner) -> Option<TypePathContext> {
-        self.project
-            .semantic_ir_db()
+        self.analysis
+            .semantic_ir
             .type_path_context_for_owner(self.target, owner)
     }
 
     fn item(&self, source: ItemTreeRef) -> Option<&ItemNode> {
-        self.project
-            .item_tree_db()
+        self.analysis
+            .item_tree
             .package(self.target.package.0)?
             .item(source)
     }

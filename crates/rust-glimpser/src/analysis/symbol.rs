@@ -9,10 +9,10 @@ use super::{
     data::{SourceNodeAt, SymbolAt, SymbolCandidate},
 };
 
-pub(super) struct SymbolFinder<'a, 'project>(&'a Analysis<'project>);
+pub(super) struct SymbolFinder<'a, 'db>(&'a Analysis<'db>);
 
-impl<'a, 'project> SymbolFinder<'a, 'project> {
-    pub(super) fn new(analysis: &'a Analysis<'project>) -> Self {
+impl<'a, 'db> SymbolFinder<'a, 'db> {
+    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
@@ -25,10 +25,7 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
         let mut candidates = Vec::new();
         candidates.extend(self.body_symbol_candidates(target, file_id, offset));
         candidates.extend(cursor::item_signature_candidates(
-            self.0.project,
-            target,
-            file_id,
-            offset,
+            self.0, target, file_id, offset,
         ));
 
         candidates
@@ -67,7 +64,7 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
         file_id: FileId,
         offset: u32,
     ) -> Option<SourceNodeAt> {
-        let target_bodies = self.0.project.body_ir_db().target_bodies(target)?;
+        let target_bodies = self.0.body_ir.target_bodies(target)?;
         let mut best = None;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
@@ -131,7 +128,7 @@ impl<'a, 'project> SymbolFinder<'a, 'project> {
     }
 
     fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
-        self.0.project.body_ir_db().body_data(body_ref)
+        self.0.body_ir.body_data(body_ref)
     }
 
     fn symbol_for_source_node(&self, body: &BodyData, node: SourceNodeAt) -> SymbolAt {

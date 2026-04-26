@@ -12,10 +12,10 @@ use super::{
     data::{NavigationTarget, NavigationTargetKind, SymbolAt},
 };
 
-pub(super) struct SymbolResolver<'a, 'project>(&'a Analysis<'project>);
+pub(super) struct SymbolResolver<'a, 'db>(&'a Analysis<'db>);
 
-impl<'a, 'project> SymbolResolver<'a, 'project> {
-    pub(super) fn new(analysis: &'a Analysis<'project>) -> Self {
+impl<'a, 'db> SymbolResolver<'a, 'db> {
+    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
@@ -61,7 +61,7 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
     }
 
     fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
-        self.0.project.body_ir_db().body_data(body_ref)
+        self.0.body_ir.body_data(body_ref)
     }
 
     fn navigation_targets_for_resolution(
@@ -101,8 +101,7 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
     fn navigation_target_for_module(&self, module_ref: ModuleRef) -> Option<NavigationTarget> {
         let module = self
             .0
-            .project
-            .def_map_db()
+            .def_map
             .def_map(module_ref.target)?
             .module(module_ref.module)?;
         let (file_id, span) = match module.origin {
@@ -129,8 +128,7 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
     fn navigation_target_for_local_def(&self, local_def: LocalDefRef) -> Option<NavigationTarget> {
         let local_def_data = self
             .0
-            .project
-            .def_map_db()
+            .def_map
             .def_map(local_def.target)?
             .local_defs()
             .get(local_def.local_def.0)?;
@@ -155,7 +153,7 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
     }
 
     fn navigation_target_for_field(&self, field_ref: FieldRef) -> Option<NavigationTarget> {
-        let field_data = self.0.project.semantic_ir_db().field_data(field_ref)?;
+        let field_data = self.0.semantic_ir.field_data(field_ref)?;
         let key = field_data.field.key.as_ref()?;
         Some(NavigationTarget {
             kind: NavigationTargetKind::Field,
@@ -169,15 +167,10 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
         &self,
         function_ref: FunctionRef,
     ) -> Option<NavigationTarget> {
-        let function_data = self
-            .0
-            .project
-            .semantic_ir_db()
-            .function_data(function_ref)?;
+        let function_data = self.0.semantic_ir.function_data(function_ref)?;
         let item = self
             .0
-            .project
-            .item_tree_db()
+            .item_tree
             .package(function_ref.target.package.0)?
             .item(function_data.source)?;
 
@@ -194,11 +187,10 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
         context: TypePathContext,
         path: &Path,
     ) -> Vec<NavigationTarget> {
-        let resolution = self.0.project.semantic_ir_db().resolve_type_path(
-            self.0.project.def_map_db(),
-            context,
-            path,
-        );
+        let resolution = self
+            .0
+            .semantic_ir
+            .resolve_type_path(self.0.def_map, context, path);
 
         self.navigation_targets_for_semantic_type_path_resolution(resolution)
     }
@@ -209,8 +201,7 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
         path: &Path,
     ) -> Vec<NavigationTarget> {
         self.0
-            .project
-            .def_map_db()
+            .def_map
             .resolve_path(module, path)
             .resolved
             .into_iter()
@@ -224,9 +215,9 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
         scope: ScopeId,
         path: &Path,
     ) -> Vec<NavigationTarget> {
-        let resolution = self.0.project.body_ir_db().resolve_type_path_in_scope(
-            self.0.project.def_map_db(),
-            self.0.project.semantic_ir_db(),
+        let resolution = self.0.body_ir.resolve_type_path_in_scope(
+            self.0.def_map,
+            self.0.semantic_ir,
             body_ref,
             scope,
             path,
@@ -277,18 +268,13 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
     }
 
     fn navigation_target_for_trait(&self, trait_ref: TraitRef) -> Option<NavigationTarget> {
-        let local_def = self
-            .0
-            .project
-            .semantic_ir_db()
-            .trait_data(trait_ref)?
-            .local_def;
+        let local_def = self.0.semantic_ir.trait_data(trait_ref)?.local_def;
 
         self.navigation_target_for_local_def(local_def)
     }
 
     fn navigation_target_for_type_def(&self, ty: TypeDefRef) -> Option<NavigationTarget> {
-        let target_ir = self.0.project.semantic_ir_db().target_ir(ty.target)?;
+        let target_ir = self.0.semantic_ir.target_ir(ty.target)?;
         let local_def = match ty.id {
             crate::semantic_ir::TypeDefId::Struct(id) => {
                 target_ir.items().struct_data(id)?.local_def
@@ -301,10 +287,10 @@ impl<'a, 'project> SymbolResolver<'a, 'project> {
     }
 }
 
-pub(super) struct GotoResolver<'a, 'project>(&'a Analysis<'project>);
+pub(super) struct GotoResolver<'a, 'db>(&'a Analysis<'db>);
 
-impl<'a, 'project> GotoResolver<'a, 'project> {
-    pub(super) fn new(analysis: &'a Analysis<'project>) -> Self {
+impl<'a, 'db> GotoResolver<'a, 'db> {
+    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 

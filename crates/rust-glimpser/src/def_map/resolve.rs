@@ -11,7 +11,7 @@ use anyhow::Context as _;
 
 use crate::{
     item_tree::ItemTreeDb,
-    parse::{self, package::Package},
+    parse::{self, Package},
     workspace_metadata::WorkspaceMetadata,
 };
 
@@ -80,7 +80,7 @@ fn build_implicit_roots(
         .enumerate()
         .filter_map(|(package_slot, package)| {
             package
-                .targets
+                .targets()
                 .iter()
                 .find(|target| target.kind.is_lib())
                 .map(|target| {
@@ -97,7 +97,7 @@ fn build_implicit_roots(
     let mut roots = Vec::with_capacity(packages.len());
 
     for package in packages {
-        let mut package_roots = Vec::with_capacity(package.targets.len());
+        let mut package_roots = Vec::with_capacity(package.targets().len());
         let workspace_package = workspace.package(package.id()).with_context(|| {
             format!(
                 "while attempting to fetch workspace metadata for package {}",
@@ -105,7 +105,7 @@ fn build_implicit_roots(
             )
         })?;
 
-        for target in &package.targets {
+        for target in package.targets() {
             let mut target_roots = HashMap::new();
 
             // Cargo lets package targets refer to their sibling library by crate name, but build
@@ -113,8 +113,7 @@ fn build_implicit_roots(
             if let Some(&lib_target) = lib_targets.get(package.id()) {
                 if lib_target.target != target.id && !target.kind.is_custom_build() {
                     let lib_name = package
-                        .targets
-                        .get(lib_target.target.0)
+                        .target(lib_target.target)
                         .expect("library target should exist")
                         .name
                         .clone();

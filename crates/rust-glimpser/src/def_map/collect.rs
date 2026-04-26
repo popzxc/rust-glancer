@@ -57,9 +57,9 @@ pub(super) fn collect_target_states(
                 package.package_name()
             )
         })?;
-        let mut package_states = Vec::with_capacity(package.targets.len());
+        let mut package_states = Vec::with_capacity(package.targets().len());
 
-        for target in &package.targets {
+        for target in package.targets() {
             let target_ref = TargetRef {
                 package: PackageSlot(package_slot),
                 target: target.id,

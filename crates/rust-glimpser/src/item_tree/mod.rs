@@ -29,18 +29,19 @@ pub struct ItemTreeDb {
 impl ItemTreeDb {
     /// Builds file-local item trees on top of the parsed source database.
     pub(crate) fn build(parse: &mut ParseDb) -> anyhow::Result<Self> {
-        let package_count = parse.packages().len();
+        let package_count = parse.package_count();
         let mut packages = Vec::with_capacity(package_count);
 
-        for package in parse.packages_mut() {
-            packages.push(
-                lower::build_package(&mut package.files, &package.targets).with_context(|| {
-                    format!(
-                        "while attempting to build item trees for package {}",
-                        package.package_name()
-                    )
-                })?,
-            );
+        for package_slot in 0..package_count {
+            let package = parse.package_mut(package_slot).with_context(|| {
+                format!("while attempting to fetch parsed package {package_slot}")
+            })?;
+            packages.push(lower::build_package(package).with_context(|| {
+                format!(
+                    "while attempting to build item trees for package {}",
+                    package.package_name()
+                )
+            })?);
         }
 
         Ok(Self { packages })
