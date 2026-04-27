@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Runs project analysis for the Cargo manifest at `path` and prints the current analysis report.
+/// Runs project analysis for the Cargo manifest at `path` and prints a small build summary.
 fn analyze(path: PathBuf) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("folder {} does not exist", path.display());
@@ -48,7 +48,38 @@ fn analyze(path: PathBuf) -> anyhow::Result<()> {
 
     let workspace = WorkspaceMetadata::from_cargo(metadata);
     let project = Project::build(workspace).context("while attempting to build project")?;
-    println!("{project}");
+    print_project_summary(&project);
 
     Ok(())
+}
+
+fn print_project_summary(project: &Project) {
+    let workspace_package_count = project.parse_db().workspace_packages().count();
+    let package_count = project.parse_db().package_count();
+    let def_map_stats = project.def_map_db().stats();
+    let semantic_ir_stats = project.semantic_ir_db().stats();
+    let body_ir_stats = project.body_ir_db().stats();
+
+    println!("rust-glimpser analysis built");
+    println!("packages: {package_count} ({workspace_package_count} workspace)");
+    println!(
+        "def maps: {} targets, {} modules, {} unresolved imports",
+        def_map_stats.target_count,
+        def_map_stats.module_count,
+        def_map_stats.unresolved_import_count
+    );
+    println!(
+        "semantic IR: {} targets, {} type defs, {} traits, {} impls, {} functions",
+        semantic_ir_stats.target_count,
+        semantic_ir_stats.struct_count
+            + semantic_ir_stats.enum_count
+            + semantic_ir_stats.union_count,
+        semantic_ir_stats.trait_count,
+        semantic_ir_stats.impl_count,
+        semantic_ir_stats.function_count
+    );
+    println!(
+        "body IR: {} targets, {} bodies, {} expressions",
+        body_ir_stats.target_count, body_ir_stats.body_count, body_ir_stats.expression_count
+    );
 }
