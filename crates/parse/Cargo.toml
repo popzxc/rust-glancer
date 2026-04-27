@@ -16,5 +16,5 @@ ra_syntax.workspace = true
 rg_workspace.workspace = true
 
 [dev-dependencies]
-cargo_metadata = { workspace = true, features = ["builder"] }
+expect-test.workspace = true
 test_fixture.workspace = true
