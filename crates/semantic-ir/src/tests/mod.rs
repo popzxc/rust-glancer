@@ -185,6 +185,91 @@ impl ImportedTrait for Local {
 }
 
 #[test]
+fn resolves_bin_queries_to_sibling_lib_and_dependencies() {
+    check_project_semantic_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub struct Thing;
+
+impl Thing {
+    pub fn external(&self) {}
+}
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "app-bin"
+path = "src/main.rs"
+
+//- /crates/app/src/lib.rs
+pub struct Api;
+
+impl Api {
+    pub fn local(&self) {}
+}
+
+//- /crates/app/src/main.rs
+fn main() {}
+"#,
+        &[
+            SemanticQuery::bin("app", "app::Api"),
+            SemanticQuery::bin("app", "dep::Thing"),
+        ],
+        expect![[r#"
+            query app [bin] crate resolves app::Api -> struct app[lib]::crate::Api
+            impls
+            - impl Api
+            trait impls
+            - <none>
+            traits
+            - <none>
+            inherent functions
+            - fn impl Api::local
+            trait functions
+            - <none>
+            trait impl functions
+            - <none>
+
+
+            query app [bin] crate resolves dep::Thing -> struct dep[lib]::crate::Thing
+            impls
+            - impl Thing
+            trait impls
+            - <none>
+            traits
+            - <none>
+            inherent functions
+            - fn impl Thing::external
+            trait functions
+            - <none>
+            trait impl functions
+            - <none>
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_module_scoped_semantic_queries() {
     check_project_semantic_queries(
         r#"

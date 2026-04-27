@@ -110,6 +110,23 @@ pub enum ModuleOrigin {
     },
 }
 
+impl ModuleOrigin {
+    /// Returns whether this module's source touches the requested file.
+    pub fn contains_file(&self, file_id: FileId) -> bool {
+        match self {
+            Self::Root { file_id: root_file } => *root_file == file_id,
+            Self::Inline {
+                declaration_file, ..
+            } => *declaration_file == file_id,
+            Self::OutOfLine {
+                declaration_file,
+                definition_file,
+                ..
+            } => *declaration_file == file_id || *definition_file == Some(file_id),
+        }
+    }
+}
+
 /// One module-scope definition collected from source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalDefData {

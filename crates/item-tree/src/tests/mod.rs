@@ -75,6 +75,160 @@ fn main() {
 }
 
 #[test]
+fn lowers_distinct_out_of_line_modules_for_lib_and_bin_roots() {
+    utils::check_project_item_tree(
+        r#"
+//- /Cargo.toml
+[package]
+name = "target_module_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "target-module-fixture"
+path = "src/main.rs"
+
+//- /src/lib.rs
+pub mod library;
+
+//- /src/library.rs
+pub struct LibraryThing;
+
+//- /src/main.rs
+mod cli;
+
+fn main() {}
+
+//- /src/cli.rs
+pub struct CliThing;
+"#,
+        expect![[r#"
+            package target_module_fixture
+
+            targets
+            - target_module_fixture [lib] -> lib.rs
+
+            - target-module-fixture [bin] -> main.rs
+
+            files
+            file cli.rs
+            - pub struct CliThing
+
+            file lib.rs
+            - pub module library [out_of_line library.rs]
+
+            file library.rs
+            - pub struct LibraryThing
+
+            file main.rs
+            - module cli [out_of_line cli.rs]
+            - fn main
+        "#]],
+    );
+}
+
+#[test]
+fn lowers_shared_out_of_line_file_once_for_multiple_target_roots() {
+    utils::check_project_item_tree(
+        r#"
+//- /Cargo.toml
+[package]
+name = "shared_module_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "shared-module-fixture"
+path = "src/main.rs"
+
+//- /src/lib.rs
+pub mod shared;
+
+//- /src/main.rs
+mod shared;
+
+fn main() {}
+
+//- /src/shared.rs
+pub struct Shared;
+"#,
+        expect![[r#"
+            package shared_module_fixture
+
+            targets
+            - shared_module_fixture [lib] -> lib.rs
+
+            - shared-module-fixture [bin] -> main.rs
+
+            files
+            file lib.rs
+            - pub module shared [out_of_line shared.rs]
+
+            file main.rs
+            - module shared [out_of_line shared.rs]
+            - fn main
+
+            file shared.rs
+            - pub struct Shared
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_out_of_line_multi_module_chains() {
+    utils::check_project_item_tree(
+        r#"
+//- /Cargo.toml
+[package]
+name = "module_chain_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod outer;
+
+//- /src/outer.rs
+pub mod inner;
+pub struct Outer;
+
+//- /src/outer/inner.rs
+pub mod leaf;
+pub struct Inner;
+
+//- /src/outer/inner/leaf.rs
+pub struct Leaf;
+"#,
+        expect![[r#"
+            package module_chain_fixture
+
+            targets
+            - module_chain_fixture [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - pub module outer [out_of_line outer.rs]
+
+            file leaf.rs
+            - pub struct Leaf
+
+            file inner.rs
+            - pub module leaf [out_of_line leaf.rs]
+            - pub struct Inner
+
+            file outer.rs
+            - pub module inner [out_of_line inner.rs]
+            - pub struct Outer
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_out_of_line_files_inside_inline_modules() {
     utils::check_project_item_tree(
         r#"

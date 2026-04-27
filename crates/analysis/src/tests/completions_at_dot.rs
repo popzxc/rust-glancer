@@ -90,6 +90,46 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn completes_methods_for_bin_root_library_type() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_bin_completion"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "analysis-bin-completion"
+path = "src/main.rs"
+
+//- /src/lib.rs
+pub struct Api;
+
+impl Api {
+    pub fn ping(&self) {}
+    pub fn work(&self) {}
+}
+
+//- /src/main.rs
+fn main() {
+    let api: analysis_bin_completion::Api = todo!();
+    api.$0;
+}
+"#,
+        &[AnalysisQuery::complete("bin root completions", "0").in_bin("analysis_bin_completion")],
+        expect![[r#"
+            bin root completions
+            - inherent_method ping
+            - inherent_method work
+        "#]],
+    );
+}
+
+#[test]
 fn does_not_trigger_inside_method_arguments() {
     check_analysis_queries(
         r#"

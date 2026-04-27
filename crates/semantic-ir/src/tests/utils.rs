@@ -59,6 +59,23 @@ impl SemanticQuery {
             path,
         }
     }
+
+    pub(super) fn bin(package_name: &'static str, path: &'static str) -> Self {
+        Self::bin_from(package_name, "crate", path)
+    }
+
+    pub(super) fn bin_from(
+        package_name: &'static str,
+        module_path: &'static str,
+        path: &'static str,
+    ) -> Self {
+        Self {
+            package_name,
+            target_kind: TargetKind::Bin,
+            module_path,
+            path,
+        }
+    }
 }
 
 struct SemanticIrFixtureDb {

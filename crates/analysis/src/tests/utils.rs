@@ -22,48 +22,82 @@ pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], e
 pub(super) struct AnalysisQuery {
     title: &'static str,
     marker: &'static str,
+    target: AnalysisTarget,
     kind: AnalysisQueryKind,
 }
 
 impl AnalysisQuery {
     pub(super) fn symbol(title: &'static str, marker: &'static str) -> Self {
-        Self {
-            title,
-            marker,
-            kind: AnalysisQueryKind::SymbolAt,
-        }
+        Self::new(title, marker, AnalysisQueryKind::SymbolAt)
     }
 
     pub(super) fn resolve(title: &'static str, marker: &'static str) -> Self {
-        Self {
-            title,
-            marker,
-            kind: AnalysisQueryKind::ResolveSymbol,
-        }
+        Self::new(title, marker, AnalysisQueryKind::ResolveSymbol)
     }
 
     pub(super) fn goto(title: &'static str, marker: &'static str) -> Self {
-        Self {
-            title,
-            marker,
-            kind: AnalysisQueryKind::GotoDefinition,
-        }
+        Self::new(title, marker, AnalysisQueryKind::GotoDefinition)
     }
 
     pub(super) fn ty(title: &'static str, marker: &'static str) -> Self {
-        Self {
-            title,
-            marker,
-            kind: AnalysisQueryKind::TypeAt,
-        }
+        Self::new(title, marker, AnalysisQueryKind::TypeAt)
     }
 
     pub(super) fn complete(title: &'static str, marker: &'static str) -> Self {
+        Self::new(title, marker, AnalysisQueryKind::CompletionsAtDot)
+    }
+
+    pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
+        self.target = AnalysisTarget::bin(package_name);
+        self
+    }
+
+    pub(super) fn in_lib(mut self, package_name: &'static str) -> Self {
+        self.target = AnalysisTarget::lib_package(package_name);
+        self
+    }
+
+    fn new(title: &'static str, marker: &'static str, kind: AnalysisQueryKind) -> Self {
         Self {
             title,
             marker,
-            kind: AnalysisQueryKind::CompletionsAtDot,
+            target: AnalysisTarget::lib(),
+            kind,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AnalysisTarget {
+    package_name: Option<&'static str>,
+    kind: TargetKind,
+}
+
+impl AnalysisTarget {
+    fn lib() -> Self {
+        Self {
+            package_name: None,
+            kind: TargetKind::Lib,
+        }
+    }
+
+    fn lib_package(package_name: &'static str) -> Self {
+        Self {
+            package_name: Some(package_name),
+            kind: TargetKind::Lib,
+        }
+    }
+
+    fn bin(package_name: &'static str) -> Self {
+        Self {
+            package_name: Some(package_name),
+            kind: TargetKind::Bin,
+        }
+    }
+
+    fn matches_package(&self, package_name: &str) -> bool {
+        self.package_name
+            .is_none_or(|expected| expected == package_name)
     }
 }
 
@@ -137,7 +171,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn render_query(&self, query: &AnalysisQuery) -> String {
-        let (target, file_id, offset) = self.query_location(query.marker);
+        let (target, file_id, offset) = self.query_location(query);
         let mut dump = query.title.to_string();
         match query.kind {
             AnalysisQueryKind::SymbolAt => {
@@ -183,49 +217,68 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         dump
     }
 
-    fn query_location(&self, marker_name: &str) -> (TargetRef, FileId, u32) {
-        let marker = self.markers.position(marker_name);
-        let (target, root_file) = self.lib_target_for_path(&marker.path);
+    fn query_location(&self, query: &AnalysisQuery) -> (TargetRef, FileId, u32) {
+        let marker = self.markers.position(query.marker);
+        let (target, file_id) = self.target_and_file_for_path(&query.target, &marker.path);
 
-        assert_eq!(
-            marker.path, "src/lib.rs",
-            "analysis query tests currently use target-root markers only"
-        );
-
-        (target, root_file, marker.offset)
+        (target, file_id, marker.offset)
     }
 
-    fn lib_target_for_path(&self, path: &str) -> (TargetRef, FileId) {
-        let mut matches = self
-            .db
-            .parse
-            .packages()
-            .iter()
-            .enumerate()
-            .flat_map(|(package_slot, package)| {
-                package
-                    .targets()
-                    .iter()
-                    .filter(move |target| {
-                        target.kind == TargetKind::Lib && target.src_path.ends_with(path)
-                    })
-                    .map(move |target| (package_slot, target))
-            })
-            .collect::<Vec<_>>();
+    fn target_and_file_for_path(
+        &self,
+        selected: &AnalysisTarget,
+        path: &str,
+    ) -> (TargetRef, FileId) {
+        let mut matches = Vec::new();
+
+        for (package_slot, package) in self.db.parse.packages().iter().enumerate() {
+            if !selected.matches_package(package.package_name()) {
+                continue;
+            }
+
+            for target in package
+                .targets()
+                .iter()
+                .filter(|target| target.kind == selected.kind)
+            {
+                let Some(file_id) = package
+                    .parsed_files()
+                    .find(|file| file.path().ends_with(path))
+                    .map(|file| file.file_id())
+                else {
+                    continue;
+                };
+
+                let target_ref = TargetRef {
+                    package: PackageSlot(package_slot),
+                    target: target.id,
+                };
+                if self.target_owns_file(target_ref, file_id) {
+                    matches.push((target_ref, file_id));
+                }
+            }
+        }
+
         assert_eq!(
             matches.len(),
             1,
-            "marker path `{path}` should identify exactly one lib target"
+            "marker path `{path}` should identify exactly one file owned by one {} target",
+            selected.kind
         );
-        let (package_slot, target) = matches.pop().expect("one match should be present");
+        matches.pop().expect("one match should be present")
+    }
 
-        (
-            TargetRef {
-                package: PackageSlot(package_slot),
-                target: target.id,
-            },
-            target.root_file,
-        )
+    fn target_owns_file(&self, target: TargetRef, file_id: FileId) -> bool {
+        let def_map = self
+            .db
+            .def_map
+            .def_map(target)
+            .expect("selected fixture target should have a def map");
+
+        def_map
+            .modules()
+            .iter()
+            .any(|module| module.origin.contains_file(file_id))
     }
 
     fn render_symbol(&self, symbol: Option<SymbolAt>, dump: &mut String) {

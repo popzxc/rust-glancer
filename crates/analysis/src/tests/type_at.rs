@@ -65,6 +65,56 @@ pub fn use_it() {
 }
 
 #[test]
+fn returns_bin_root_dependency_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub struct Thing;
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "app-bin"
+path = "src/main.rs"
+
+//- /crates/app/src/lib.rs
+pub struct Api;
+
+//- /crates/app/src/main.rs
+fn main() {
+    let thing$type_bin_dep$: dep::Thing = todo!();
+}
+"#,
+        &[AnalysisQuery::ty("type at bin dependency binding", "type_bin_dep").in_bin("app")],
+        expect![[r#"
+            type at bin dependency binding
+            - nominal struct dep[lib]::crate::Thing
+        "#]],
+    );
+}
+
+#[test]
 fn returns_field_access_types() {
     check_analysis_queries(
         r#"

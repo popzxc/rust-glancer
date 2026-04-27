@@ -180,6 +180,94 @@ pub fn make(user: Us$goto_param$er) -> Us$goto_ret$er {
 }
 
 #[test]
+fn resolves_bin_root_paths_to_library_definitions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub struct Thing;
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "app-bin"
+path = "src/main.rs"
+
+//- /crates/app/src/lib.rs
+pub struct Api;
+
+//- /crates/app/src/main.rs
+fn main() {
+    let _api: app::A$goto_bin_lib$pi = todo!();
+    let _thing: dep::Th$goto_bin_dep$ing = todo!();
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto bin root to library item", "goto_bin_lib").in_bin("app"),
+            AnalysisQuery::goto("goto bin root to dependency item", "goto_bin_dep").in_bin("app"),
+        ],
+        expect![[r#"
+            goto bin root to library item
+            - struct Api @ 1:1-1:16
+
+            goto bin root to dependency item
+            - struct Thing @ 1:1-1:18
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_cursors_inside_out_of_line_nested_modules() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "nested_analysis"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Api;
+pub mod outer;
+
+//- /src/outer.rs
+pub mod inner;
+
+//- /src/outer/inner.rs
+pub fn use_it(_: crate::A$goto_nested_file$pi) {}
+"#,
+        &[
+            AnalysisQuery::goto("goto from nested file", "goto_nested_file")
+                .in_lib("nested_analysis"),
+        ],
+        expect![[r#"
+            goto from nested file
+            - struct Api @ 1:1-1:16
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_field_declarations_and_field_type_paths() {
     check_analysis_queries(
         r#"

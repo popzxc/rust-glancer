@@ -47,6 +47,19 @@ impl PathResolutionQuery {
             path,
         }
     }
+
+    pub(super) fn bin(
+        package_name: &'static str,
+        module_path: &'static str,
+        path: &'static str,
+    ) -> Self {
+        Self {
+            package_name,
+            target_kind: TargetKind::Bin,
+            module_path,
+            path,
+        }
+    }
 }
 
 pub(super) struct DefMapFixtureDb {

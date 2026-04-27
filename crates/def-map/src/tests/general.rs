@@ -157,6 +157,55 @@ pub fn work() {}
 }
 
 #[test]
+fn exposes_shared_out_of_line_modules_from_lib_and_bin_roots() {
+    utils::check_project_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "shared_module_def_map"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "shared-module-def-map"
+path = "src/main.rs"
+
+//- /src/lib.rs
+pub mod shared;
+
+//- /src/main.rs
+mod shared;
+
+fn main() {}
+
+//- /src/shared.rs
+pub struct Shared;
+"#,
+        expect![[r#"
+            package shared_module_def_map
+
+            shared_module_def_map [lib]
+            crate
+            - shared : type [pub module shared_module_def_map[lib]::crate::shared]
+
+            crate::shared
+            - Shared : type [pub struct shared_module_def_map[lib]::crate::shared::Shared]
+
+            shared_module_def_map [bin]
+            crate
+            - main : value [fn shared_module_def_map[bin]::crate::main]
+            - shared : type [module shared_module_def_map[bin]::crate::shared]
+
+            crate::shared
+            - Shared : type [pub struct shared_module_def_map[bin]::crate::shared::Shared]
+        "#]],
+    );
+}
+
+#[test]
 fn records_impl_blocks_without_scope_bindings() {
     utils::check_project_def_map(
         r#"

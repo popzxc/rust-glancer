@@ -35,12 +35,18 @@ struct ParsedFileData {
 /// phases.
 #[derive(Debug, Clone, Copy)]
 pub struct ParsedFile<'a> {
+    file_id: FileId,
     data: &'a ParsedFileData,
 }
 
 impl<'a> ParsedFile<'a> {
-    fn new(data: &'a ParsedFileData) -> Self {
-        Self { data }
+    fn new(file_id: FileId, data: &'a ParsedFileData) -> Self {
+        Self { file_id, data }
+    }
+
+    /// Returns the stable package-local id for this parsed source file.
+    pub fn file_id(&self) -> FileId {
+        self.file_id
     }
 
     /// Returns the canonical path for this parsed source file.
@@ -115,12 +121,17 @@ impl FileDb {
 
     /// Returns the cached parsed file for a previously known `FileId`.
     pub(super) fn parsed_file(&self, file_id: FileId) -> Option<ParsedFile<'_>> {
-        self.parsed_files.get(file_id.0).map(ParsedFile::new)
+        self.parsed_files
+            .get(file_id.0)
+            .map(|data| ParsedFile::new(file_id, data))
     }
 
     /// Returns all cached parsed files.
     pub(super) fn parsed_files(&self) -> impl Iterator<Item = ParsedFile<'_>> {
-        self.parsed_files.iter().map(ParsedFile::new)
+        self.parsed_files
+            .iter()
+            .enumerate()
+            .map(|(idx, data)| ParsedFile::new(FileId(idx), data))
     }
 
     /// Returns the canonical path associated with `file_id`.
