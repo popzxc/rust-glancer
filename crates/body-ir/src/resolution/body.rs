@@ -24,6 +24,7 @@ use super::{
         local_function_applies_to_receiver, local_impl_self_subst,
         semantic_function_applies_to_receiver, semantic_impl_self_subst,
     },
+    pat::PatternTypePropagator,
     push_unique,
     ty::{TypeSubst, subst_from_generics, type_ref_is_self},
     type_path::BodyTypePathResolver,
@@ -59,8 +60,26 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         self.resolve_bindings();
         self.resolve_local_impls();
 
-        for expr_idx in 0..self.body.exprs.len() {
-            self.resolve_expr(ExprId(expr_idx));
+        // Pattern propagation can unlock later expression types, and those expressions can then
+        // unlock more patterns. Every successful pass should discover at least one new binding or
+        // expression fact, so a body-sized cap is enough to avoid a hidden magic constant.
+        let max_passes = self.body.exprs.len() + self.body.bindings.len() + 1;
+        for _ in 0..max_passes {
+            let mut changed = false;
+            for expr_idx in 0..self.body.exprs.len() {
+                changed |= self.resolve_expr(ExprId(expr_idx));
+            }
+            changed |= PatternTypePropagator::new(
+                self.def_map,
+                self.semantic_ir,
+                self.body_ref,
+                self.body,
+            )
+            .propagate();
+
+            if !changed {
+                break;
+            }
         }
     }
 
@@ -111,7 +130,9 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         }
     }
 
-    fn resolve_expr(&mut self, expr: ExprId) {
+    fn resolve_expr(&mut self, expr: ExprId) -> bool {
+        let old_resolution = self.body.exprs[expr.0].resolution.clone();
+        let old_ty = self.body.exprs[expr.0].ty.clone();
         let kind = self.body.exprs[expr.0].kind.clone();
 
         match kind {
@@ -123,6 +144,19 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             }
             ExprKind::Call { callee, .. } => {
                 self.body.exprs[expr.0].ty = self.call_ty(callee);
+            }
+            ExprKind::Match { arms, .. } => {
+                let mut arm_tys = Vec::new();
+                for arm in arms {
+                    if let Some(expr) = arm.expr {
+                        push_unique(&mut arm_tys, self.body.exprs[expr.0].ty.clone());
+                    }
+                }
+                self.body.exprs[expr.0].ty = if arm_tys.len() == 1 {
+                    arm_tys.pop().expect("one arm type should exist")
+                } else {
+                    BodyTy::Unknown
+                };
             }
             ExprKind::Block { tail, .. } => {
                 self.body.exprs[expr.0].ty = tail
@@ -147,6 +181,8 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             }
             ExprKind::Literal { .. } | ExprKind::Unknown { .. } => {}
         }
+
+        self.body.exprs[expr.0].resolution != old_resolution || self.body.exprs[expr.0].ty != old_ty
     }
 
     fn resolve_path_expr(&self, expr: ExprId, path: &Path) -> (BodyResolution, BodyTy) {

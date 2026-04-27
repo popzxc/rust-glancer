@@ -510,6 +510,58 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_fields_and_methods_after_enum_pattern_payloads() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_enum_pattern_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Id;
+
+pub struct User {
+    id: Id,
+}
+
+impl User {
+    fn label(&self) {}
+}
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub fn use_it(maybe: Option<User>) {
+    let Some(value) = maybe else { return; };
+    value.$let_payload$;
+
+    match maybe {
+        Some(user) => user.$match_payload$,
+        None => {}
+    }
+}
+"#,
+        &[
+            AnalysisQuery::complete("let pattern payload completions", "let_payload"),
+            AnalysisQuery::complete("match pattern payload completions", "match_payload"),
+        ],
+        expect![[r#"
+            let pattern payload completions
+            - field id
+            - inherent_method label
+
+            match pattern payload completions
+            - field id
+            - inherent_method label
+        "#]],
+    );
+}
+
+#[test]
 fn completes_tuple_fields_at_dot() {
     check_analysis_queries(
         r#"

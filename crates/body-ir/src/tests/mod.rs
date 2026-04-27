@@ -220,7 +220,7 @@ impl User {
             - v2 let this `this`: Self => Self struct body_expr_fixture[lib]::crate::User @ 13:13-13:17
             - v3 let built `built`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:13-14:18
             - v4 let via_fn `via_fn`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 15:13-15:19
-            - v5 let field `field` => <unknown> @ 16:13-16:18
+            - v5 let field `field` => nominal struct body_expr_fixture[lib]::crate::UserId @ 16:13-16:18
             body
             expr e12 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 12:44-18:6
               stmt s0 let v2: Self @ 13:9-13:31
@@ -304,7 +304,7 @@ pub fn use_it() {
             - s1 parent s0: v0, v1
             bindings
             - v0 let wrapper `wrapper`: Wrapper<User> => nominal struct body_generic_fixture[lib]::crate::Wrapper<nominal struct body_generic_fixture[lib]::crate::User> @ 12:9-12:16
-            - v1 let user `user` => <unknown> @ 13:9-13:13
+            - v1 let user `user` => nominal struct body_generic_fixture[lib]::crate::User @ 13:9-13:13
             body
             expr e3 block s1 => () @ 11:17-14:2
               stmt s0 let v0: Wrapper<User> @ 12:5-12:32
@@ -315,6 +315,63 @@ pub fn use_it() {
                       expr e1 field slot -> field struct body_generic_fixture[lib]::crate::Wrapper::slot => nominal struct body_generic_fixture[lib]::crate::Slot<nominal struct body_generic_fixture[lib]::crate::User> @ 13:16-13:28
                         base
                           expr e0 path wrapper -> local v0 => nominal struct body_generic_fixture[lib]::crate::Wrapper<nominal struct body_generic_fixture[lib]::crate::User> @ 13:16-13:23
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_enum_variant_payload_types_through_patterns() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_enum_pattern_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub fn use_it(maybe: Option<User>) {
+    let Some(value) = maybe else { return; };
+    match maybe {
+        Some(user) => user,
+        None => value,
+    }
+}
+"#,
+        expect![[r#"
+            package body_enum_pattern_fixture
+
+            body_enum_pattern_fixture [lib]
+            body b0 fn body_enum_pattern_fixture[lib]::crate::use_it @ 8:1-14:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            - s2 parent s1: v2
+            - s3 parent s1: <none>
+            bindings
+            - v0 param maybe `maybe`: Option<User> => nominal enum body_enum_pattern_fixture[lib]::crate::Option<nominal struct body_enum_pattern_fixture[lib]::crate::User> @ 8:15-8:20
+            - v1 let value `value` => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 9:14-9:19
+            - v2 let user `user` => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 11:14-11:18
+            body
+            expr e5 block s1 => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 8:36-14:2
+              stmt s0 let v1 @ 9:5-9:46
+                initializer
+                  expr e0 path maybe -> local v0 => nominal enum body_enum_pattern_fixture[lib]::crate::Option<nominal struct body_enum_pattern_fixture[lib]::crate::User> @ 9:23-9:28
+              tail
+                expr e4 match => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 10:5-13:6
+                  scrutinee
+                    expr e1 path maybe -> local v0 => nominal enum body_enum_pattern_fixture[lib]::crate::Option<nominal struct body_enum_pattern_fixture[lib]::crate::User> @ 10:11-10:16
+                  arm s2
+                    expr e2 path user -> local v2 => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 11:23-11:27
+                  arm s3
+                    expr e3 path value -> local v1 => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 12:17-12:22
         "#]],
     );
 }
@@ -527,8 +584,8 @@ pub fn use_it() {
             - i1 struct Pair @ 8:5-8:37
             bindings
             - v0 let user `user`: User => local nominal struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6 @ 10:9-10:13
-            - v1 let id `id` => <unknown> @ 11:9-11:11
-            - v2 let right `right` => <unknown> @ 12:9-12:14
+            - v1 let id `id` => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 11:9-11:11
+            - v2 let right `right` => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 12:9-12:14
             body
             expr e5 block s1 => () @ 3:17-13:2
               stmt s0 item i0 @ 4:5-7:6
@@ -602,8 +659,8 @@ pub fn use_it() {
               - f2 fn associated() -> GlobalId
             bindings
             - v0 let user `user`: User => local nominal struct fn body_local_impl_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 20:9-20:13
-            - v1 let id `id` => <unknown> @ 21:9-21:11
-            - v2 let again `again` => <unknown> @ 22:9-22:14
+            - v1 let id `id` => nominal struct body_local_impl_fixture[lib]::crate::GlobalId @ 21:9-21:11
+            - v2 let again `again` => local nominal struct fn body_local_impl_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 22:9-22:14
             body
             expr e4 block s1 => () @ 3:17-23:2
               stmt s0 item i0 @ 4:5-4:17

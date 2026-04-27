@@ -461,6 +461,65 @@ pub fn use_it() {
 }
 
 #[test]
+fn propagates_enum_variant_payload_types_into_patterns() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_enum_pattern_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Profile;
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub enum Message<T> {
+    User { profile: T },
+    Empty,
+}
+
+pub fn use_it(maybe: Option<User>, message: Message<Profile>) {
+    let Some(value) = maybe else { return; };
+    let _from_let = val$type_let$ue;
+
+    let Message::User { profile } = message else { return; };
+    let _from_record = pro$type_record$file;
+}
+
+pub fn match_it(maybe: Option<User>) {
+    match maybe {
+        Option::Some(user) => {
+            let _from_match = us$type_match$er;
+        }
+        Option::None => {}
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("type from tuple variant let pattern", "type_let"),
+            AnalysisQuery::ty("type from record variant let pattern", "type_record"),
+            AnalysisQuery::ty("type from tuple variant match pattern", "type_match"),
+        ],
+        expect![[r#"
+            type from tuple variant let pattern
+            - nominal struct analysis_enum_pattern_type_at[lib]::crate::User
+
+            type from record variant let pattern
+            - nominal struct analysis_enum_pattern_type_at[lib]::crate::Profile
+
+            type from tuple variant match pattern
+            - nominal struct analysis_enum_pattern_type_at[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
 fn returns_tuple_field_access_types() {
     check_analysis_queries(
         r#"

@@ -451,6 +451,26 @@ impl SemanticIrDb {
         }
     }
 
+    pub fn enum_data_for_type_def(&self, ty: TypeDefRef) -> Option<&EnumData> {
+        let target_ir = self.target_ir(ty.target)?;
+        let TypeDefId::Enum(id) = ty.id else {
+            return None;
+        };
+        target_ir.items().enum_data(id)
+    }
+
+    pub fn enum_variant_for_type_def(
+        &self,
+        ty: TypeDefRef,
+        variant_name: &str,
+    ) -> Option<(usize, &rg_item_tree::EnumVariantItem)> {
+        let data = self.enum_data_for_type_def(ty)?;
+        data.variants
+            .iter()
+            .enumerate()
+            .find(|(_, variant)| variant.name == variant_name)
+    }
+
     pub fn impl_data(&self, impl_ref: ImplRef) -> Option<&ImplData> {
         self.target_ir(impl_ref.target)?
             .items()

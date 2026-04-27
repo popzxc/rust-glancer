@@ -4,6 +4,7 @@ mod expr;
 mod ids;
 mod item;
 mod lower;
+mod pat;
 mod resolution;
 mod resolved;
 mod stmt;
@@ -24,12 +25,13 @@ pub use self::{
     expr::{ExprData, ExprKind, LiteralKind},
     ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
-        BodyItemRef, BodyRef, ExprId, ScopeId,
+        BodyItemRef, BodyRef, ExprId, PatId, ScopeId,
     },
     item::{
         BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData,
         BodyItemKind,
     },
+    pat::{PatData, PatKind, RecordPatField},
     resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
     stmt::{BindingData, BindingKind, StmtData, StmtKind},
     ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},

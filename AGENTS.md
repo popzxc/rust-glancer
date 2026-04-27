@@ -47,3 +47,22 @@ e.g. `def_map::Package` instead of `Package`.
 
 This software is heavily WIP, we don't care about backward compatibility.
 It is not yet in production, so we must optimize for the code quality right now rather than legacy compatibility.
+
+## Comments
+
+Add short (1-3 lines) comments in logically complex blocks to hint reader what's going on.
+Typically, a comment on a non-trivial function is sufficient.
+Not every function needs a comment, only ones that are not obvious right away.
+Same goes for types.
+Inside of functions, comments might be helpful to explain an intention or non-trivial
+block of logic.
+
+The goal of comments is to reduce cognitive complexity and help read the code as a book.
+Prefer commenting what exists, not cross-reference.
+Avoid documenting things that can go stale quick and do NOT help reading the code, e.g.
+the scope of the task you're working on, other files/modules that use this function.
+
+Rules of thumb:
+- user should not need to go to other places to understand the comment, it should keep reading with more knowledge
+- user should not have special knowledge to understand the comment (e.g. project roadmap/tasks/private discussions)
+- user should get a knowledge from comment that otherwise would require them to spend time reasoning about codebase.

@@ -425,6 +425,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             ExprKind::Block { .. } => "block".to_string(),
             ExprKind::Path { path } => format!("path {path}"),
             ExprKind::Call { .. } => "call".to_string(),
+            ExprKind::Match { .. } => "match".to_string(),
             ExprKind::MethodCall { method_name, .. } => {
                 format!("method_call {method_name}")
             }

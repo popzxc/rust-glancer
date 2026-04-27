@@ -5,6 +5,7 @@
 
 mod body;
 mod method;
+mod pat;
 mod ty;
 mod type_path;
 

@@ -48,6 +48,10 @@ pub struct BodyFunctionRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExprId(pub usize);
 
+/// Stable identifier for one pattern inside a body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PatId(pub usize);
+
 /// Stable identifier for one statement inside a body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StmtId(pub usize);

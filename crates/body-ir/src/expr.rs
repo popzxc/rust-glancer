@@ -4,7 +4,7 @@ use rg_parse::Span;
 
 use crate::{
     body::BodySource,
-    ids::{ExprId, ScopeId, StmtId},
+    ids::{ExprId, PatId, ScopeId, StmtId},
     resolved::BodyResolution,
     ty::BodyTy,
 };
@@ -39,6 +39,10 @@ pub enum ExprKind {
         callee: Option<ExprId>,
         args: Vec<ExprId>,
     },
+    Match {
+        scrutinee: Option<ExprId>,
+        arms: Vec<MatchArmData>,
+    },
     MethodCall {
         receiver: Option<ExprId>,
         dot_span: Option<Span>,
@@ -60,6 +64,14 @@ pub enum ExprKind {
         text: String,
         children: Vec<ExprId>,
     },
+}
+
+/// One match arm with its pattern scope and lowered arm expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchArmData {
+    pub pat: Option<PatId>,
+    pub scope: ScopeId,
+    pub expr: Option<ExprId>,
 }
 
 /// Literal category used for display and future cheap inference.

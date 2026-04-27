@@ -363,6 +363,7 @@ impl TargetBodyIrSnapshot<'_> {
         match &data.kind {
             StmtKind::Let {
                 scope: _,
+                pat: _,
                 bindings,
                 annotation,
                 initializer,
@@ -481,6 +482,20 @@ impl TargetBodyIrSnapshot<'_> {
                     self.render_expr(body, *arg, depth + 2, dump);
                 }
             }
+            ExprKind::Match { scrutinee, arms } => {
+                if let Some(scrutinee) = scrutinee {
+                    writeln!(dump, "{}scrutinee", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *scrutinee, depth + 2, dump);
+                }
+                for arm in arms {
+                    writeln!(dump, "{}arm s{}", indent(depth + 1), arm.scope.0)
+                        .expect("string writes should not fail");
+                    if let Some(expr) = arm.expr {
+                        self.render_expr(body, expr, depth + 2, dump);
+                    }
+                }
+            }
             ExprKind::MethodCall { receiver, args, .. } => {
                 if let Some(receiver) = receiver {
                     writeln!(dump, "{}receiver", indent(depth + 1))
@@ -516,6 +531,7 @@ impl TargetBodyIrSnapshot<'_> {
             ExprKind::Block { scope, .. } => format!("block s{}", scope.0),
             ExprKind::Path { path } => format!("path {path}"),
             ExprKind::Call { .. } => "call".to_string(),
+            ExprKind::Match { .. } => "match".to_string(),
             ExprKind::MethodCall { method_name, .. } => {
                 format!("method_call {method_name}")
             }

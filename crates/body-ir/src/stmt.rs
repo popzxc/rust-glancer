@@ -2,7 +2,7 @@ use rg_item_tree::TypeRef;
 
 use crate::{
     body::BodySource,
-    ids::{BindingId, BodyImplId, BodyItemId, ExprId, ScopeId},
+    ids::{BindingId, BodyImplId, BodyItemId, ExprId, PatId, ScopeId},
     ty::BodyTy,
 };
 
@@ -41,6 +41,7 @@ pub struct StmtData {
 pub enum StmtKind {
     Let {
         scope: ScopeId,
+        pat: Option<PatId>,
         bindings: Vec<BindingId>,
         annotation: Option<TypeRef>,
         initializer: Option<ExprId>,

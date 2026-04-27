@@ -5,9 +5,10 @@ use crate::{
     expr::ExprData,
     ids::{
         BindingId, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
-        BodyRef, ExprId, ScopeId, StmtId,
+        BodyRef, ExprId, PatId, ScopeId, StmtId,
     },
     item::{BodyFunctionData, BodyImplData, BodyItemData},
+    pat::PatData,
     stmt::{BindingData, StmtData},
 };
 
@@ -138,6 +139,7 @@ pub struct BodyData {
     pub local_impls: Vec<BodyImplData>,
     pub local_functions: Vec<BodyFunctionData>,
     pub bindings: Vec<BindingData>,
+    pub pats: Vec<PatData>,
     pub statements: Vec<StmtData>,
     pub exprs: Vec<ExprData>,
 }
@@ -146,6 +148,10 @@ pub struct BodyData {
 impl BodyData {
     pub fn binding(&self, binding: BindingId) -> Option<&BindingData> {
         self.bindings.get(binding.0)
+    }
+
+    pub fn pat(&self, pat: PatId) -> Option<&PatData> {
+        self.pats.get(pat.0)
     }
 
     pub fn scope(&self, scope: ScopeId) -> Option<&ScopeData> {
@@ -193,6 +199,7 @@ impl BodyData {
             local_impls: builder.local_impls,
             local_functions: builder.local_functions,
             bindings: builder.bindings,
+            pats: builder.pats,
             statements: builder.statements,
             exprs: builder.exprs,
         }
@@ -237,6 +244,7 @@ pub(super) struct BodyBuilder {
     pub(super) local_impls: Vec<BodyImplData>,
     pub(super) local_functions: Vec<BodyFunctionData>,
     pub(super) bindings: Vec<BindingData>,
+    pub(super) pats: Vec<PatData>,
     pub(super) statements: Vec<StmtData>,
     pub(super) exprs: Vec<ExprData>,
 }
@@ -305,6 +313,12 @@ impl BodyBuilder {
             .bindings
             .push(binding);
         binding
+    }
+
+    pub(super) fn alloc_pat(&mut self, data: PatData) -> PatId {
+        let pat = PatId(self.pats.len());
+        self.pats.push(data);
+        pat
     }
 
     pub(super) fn alloc_statement(&mut self, data: StmtData) -> StmtId {

@@ -181,3 +181,37 @@ pub fn use_it() {
         "#]],
     );
 }
+
+#[test]
+fn resolves_enum_pattern_payload_type_definitions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_goto_type_enum_pattern"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub fn use_it(maybe: Option<User>) {
+    let Some(value) = maybe else { return; };
+    let _again = val$goto_type$ue;
+}
+"#,
+        &[AnalysisQuery::goto_type(
+            "goto type from enum pattern payload",
+            "goto_type",
+        )],
+        expect![[r#"
+            goto type from enum pattern payload
+            - struct User @ 1:1-1:17
+        "#]],
+    );
+}
