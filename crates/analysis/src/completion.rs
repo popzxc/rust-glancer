@@ -1,6 +1,7 @@
+use rg_body_ir::{BodyItemRef, ResolvedFieldRef, ResolvedFunctionRef};
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
-use rg_semantic_ir::{FieldRef, FunctionRef, TypeDefRef};
+use rg_semantic_ir::TypeDefRef;
 
 use super::{
     Analysis,
@@ -21,11 +22,17 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> Vec<CompletionItem> {
-        let Some(receiver_ty) = self.0.body_ir.receiver_ty_at_dot(target, file_id, offset) else {
+        let Some(receiver) = self.0.body_ir.receiver_at_dot(target, file_id, offset) else {
+            return Vec::new();
+        };
+        let Some(receiver_ty) = self.0.body_ir.receiver_ty(receiver) else {
             return Vec::new();
         };
 
         let mut completions = Vec::new();
+        for item in receiver_ty.local_items() {
+            self.push_local_type_completions(*item, &mut completions);
+        }
         for ty in type_defs_from_body_ty(receiver_ty) {
             self.push_type_completions(ty, &mut completions);
         }
@@ -39,23 +46,50 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
 
     fn push_type_completions(&self, ty: TypeDefRef, completions: &mut Vec<CompletionItem>) {
         for field in self.0.semantic_ir.fields_for_type(ty) {
-            self.push_field_completion(field, completions);
+            self.push_field_completion(ResolvedFieldRef::Semantic(field), completions);
         }
 
         for function in self.0.semantic_ir.inherent_functions_for_type(ty) {
-            self.push_function_completion(function, CompletionKind::InherentMethod, completions);
+            self.push_function_completion(
+                ResolvedFunctionRef::Semantic(function),
+                CompletionKind::InherentMethod,
+                completions,
+            );
         }
 
         for function in self.0.semantic_ir.trait_functions_for_type(ty) {
-            self.push_function_completion(function, CompletionKind::TraitMethod, completions);
+            self.push_function_completion(
+                ResolvedFunctionRef::Semantic(function),
+                CompletionKind::TraitMethod,
+                completions,
+            );
         }
     }
 
-    fn push_field_completion(&self, field: FieldRef, completions: &mut Vec<CompletionItem>) {
-        let Some(data) = self.0.semantic_ir.field_data(field) else {
-            return;
-        };
-        let Some(key) = data.field.key.as_ref() else {
+    fn push_local_type_completions(
+        &self,
+        item: BodyItemRef,
+        completions: &mut Vec<CompletionItem>,
+    ) {
+        for field in self.0.body_ir.fields_for_local_type(item) {
+            self.push_field_completion(ResolvedFieldRef::BodyLocal(field), completions);
+        }
+
+        for function in self.0.body_ir.inherent_functions_for_local_type(item) {
+            self.push_function_completion(
+                ResolvedFunctionRef::BodyLocal(function),
+                CompletionKind::InherentMethod,
+                completions,
+            );
+        }
+    }
+
+    fn push_field_completion(
+        &self,
+        field: ResolvedFieldRef,
+        completions: &mut Vec<CompletionItem>,
+    ) {
+        let Some(label) = self.field_completion_label(field) else {
             return;
         };
         let target = CompletionTarget::Field(field);
@@ -67,24 +101,42 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         }
 
         completions.push(CompletionItem {
-            label: key.to_string(),
+            label,
             kind: CompletionKind::Field,
             target,
         });
     }
 
+    fn field_completion_label(&self, field: ResolvedFieldRef) -> Option<String> {
+        match field {
+            ResolvedFieldRef::Semantic(field) => self
+                .0
+                .semantic_ir
+                .field_data(field)?
+                .field
+                .key
+                .as_ref()
+                .map(ToString::to_string),
+            ResolvedFieldRef::BodyLocal(field) => self
+                .0
+                .body_ir
+                .local_field_data(field)?
+                .field
+                .key
+                .as_ref()
+                .map(ToString::to_string),
+        }
+    }
+
     fn push_function_completion(
         &self,
-        function: FunctionRef,
+        function: ResolvedFunctionRef,
         kind: CompletionKind,
         completions: &mut Vec<CompletionItem>,
     ) {
-        let Some(data) = self.0.semantic_ir.function_data(function) else {
+        let Some(name) = self.function_completion_name(function) else {
             return;
         };
-        if !data.has_self_receiver() {
-            return;
-        }
         if completions
             .iter()
             .any(|completion| completion.target == CompletionTarget::Function(function))
@@ -93,9 +145,22 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         }
 
         completions.push(CompletionItem {
-            label: data.name.clone(),
+            label: name,
             kind,
             target: CompletionTarget::Function(function),
         });
+    }
+
+    fn function_completion_name(&self, function: ResolvedFunctionRef) -> Option<String> {
+        match function {
+            ResolvedFunctionRef::Semantic(function) => {
+                let data = self.0.semantic_ir.function_data(function)?;
+                data.has_self_receiver().then(|| data.name.clone())
+            }
+            ResolvedFunctionRef::BodyLocal(function) => {
+                let data = self.0.body_ir.local_function_data(function)?;
+                data.has_self_receiver().then(|| data.name.clone())
+            }
+        }
     }
 }

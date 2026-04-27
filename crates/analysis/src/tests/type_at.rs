@@ -144,6 +144,120 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn returns_body_local_field_access_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_field_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct User {
+        local_id: GlobalId,
+    }
+
+    let user: User;
+    let _id: GlobalId = user.loc$type_field$al_id;
+}
+"#,
+        &[AnalysisQuery::ty("type at body-local field", "type_field")],
+        expect![[r#"
+            type at body-local field
+            - nominal struct analysis_body_local_field_type[lib]::crate::GlobalId
+        "#]],
+    );
+}
+
+#[test]
+fn returns_body_local_method_call_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_method_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct User;
+
+    impl User {
+        fn id(&self) -> GlobalId {
+            missing()
+        }
+
+        fn again(&self) -> Self {
+            missing()
+        }
+    }
+
+    let user: User;
+    let _id: GlobalId = user.i$type_id$d();
+    let _again: User = user.a$type_again$gain();
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at body-local method", "type_id"),
+            AnalysisQuery::ty("type at body-local Self method", "type_again"),
+        ],
+        expect![[r#"
+            type at body-local method
+            - nominal struct analysis_body_local_method_type[lib]::crate::GlobalId
+
+            type at body-local Self method
+            - local nominal struct fn analysis_body_local_method_type[lib]::crate::use_it::User
+        "#]],
+    );
+}
+
+#[test]
+fn returns_nested_body_local_impl_method_call_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_nested_body_local_method_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct User;
+
+    {
+        impl User {
+            fn id(&self) -> GlobalId {
+                missing()
+            }
+        }
+    }
+
+    let user: User;
+    let _id: GlobalId = user.i$type_id$d();
+}
+"#,
+        &[AnalysisQuery::ty(
+            "type at nested body-local method",
+            "type_id",
+        )],
+        expect![[r#"
+            type at nested body-local method
+            - nominal struct analysis_nested_body_local_method_type[lib]::crate::GlobalId
+        "#]],
+    );
+}
+
+#[test]
 fn returns_tuple_field_access_types() {
     check_analysis_queries(
         r#"

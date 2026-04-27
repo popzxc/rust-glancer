@@ -273,6 +273,134 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn completes_body_local_struct_fields_at_dot() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_field_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub fn use_it() {
+    struct User {
+        id: UserId,
+        profile: Profile,
+    }
+    struct Pair(UserId, Profile);
+    struct UserId;
+    struct Profile;
+
+    let user: User;
+    user.$0;
+
+    let pair: Pair;
+    pair.$tuple$;
+}
+"#,
+        &[
+            AnalysisQuery::complete("body-local field completions", "0"),
+            AnalysisQuery::complete("body-local tuple field completions", "tuple"),
+        ],
+        expect![[r#"
+            body-local field completions
+            - field id
+            - field profile
+
+            body-local tuple field completions
+            - field 0
+            - field 1
+        "#]],
+    );
+}
+
+#[test]
+fn completes_body_local_impl_methods_at_dot() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_impl_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct User {
+        id: GlobalId,
+    }
+
+    impl User {
+        fn id(&self) -> GlobalId {
+            missing()
+        }
+
+        fn associated() -> GlobalId {
+            missing()
+        }
+    }
+
+    let user: User;
+    user.$0;
+}
+"#,
+        &[AnalysisQuery::complete("body-local impl completions", "0")],
+        expect![[r#"
+            body-local impl completions
+            - field id
+            - inherent_method id
+        "#]],
+    );
+}
+
+#[test]
+fn completes_body_local_impl_methods_from_nested_blocks() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_nested_body_local_impl_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct User {
+        id: GlobalId,
+    }
+
+    {
+        impl User {
+            fn id(&self) -> GlobalId {
+                missing()
+            }
+        }
+    }
+
+    let user: User;
+    user.$0;
+}
+"#,
+        &[AnalysisQuery::complete(
+            "nested body-local impl completions",
+            "0",
+        )],
+        expect![[r#"
+            nested body-local impl completions
+            - field id
+            - inherent_method id
+        "#]],
+    );
+}
+
+#[test]
 fn completes_tuple_fields_at_dot() {
     check_analysis_queries(
         r#"

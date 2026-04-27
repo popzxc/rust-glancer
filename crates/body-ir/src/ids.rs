@@ -22,6 +22,28 @@ pub struct BodyItemRef {
     pub item: BodyItemId,
 }
 
+/// Stable identifier for one impl block declared inside a function body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BodyImplId(pub usize);
+
+/// Stable reference to one field declared on a body-local item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BodyFieldRef {
+    pub item: BodyItemRef,
+    pub index: usize,
+}
+
+/// Stable identifier for one function-like declaration inside a function body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BodyFunctionId(pub usize);
+
+/// Stable reference to one function-like declaration inside a function body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BodyFunctionRef {
+    pub body: BodyRef,
+    pub function: BodyFunctionId,
+}
+
 /// Stable identifier for one expression inside a body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExprId(pub usize);

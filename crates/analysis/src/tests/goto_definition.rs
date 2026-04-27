@@ -98,6 +98,70 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn resolves_body_local_field_accesses_to_field_declarations() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_field_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct User {
+        local_id: GlobalId,
+    }
+
+    let user: User;
+    let _id: GlobalId = user.loc$goto_field$al_id;
+}
+"#,
+        &[AnalysisQuery::goto("goto body-local field", "goto_field")],
+        expect![[r#"
+            goto body-local field
+            - field local_id @ 5:9-5:17
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_method_calls_to_method_declarations() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_method_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct User;
+
+    impl User {
+        fn id(&self) -> GlobalId {
+            missing()
+        }
+    }
+
+    let user: User;
+    let _id: GlobalId = user.i$goto_method$d();
+}
+"#,
+        &[AnalysisQuery::goto("goto body-local method", "goto_method")],
+        expect![[r#"
+            goto body-local method
+            - fn id @ 7:12-7:14
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_tuple_field_accesses_to_tuple_field_declarations() {
     check_analysis_queries(
         r#"

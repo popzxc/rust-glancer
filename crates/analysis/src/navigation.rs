@@ -1,4 +1,7 @@
-use rg_body_ir::{BodyData, BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution, ScopeId};
+use rg_body_ir::{
+    BodyData, BodyFieldRef, BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution,
+    ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
+};
 use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef, Path, TargetRef};
 use rg_parse::FileId;
 use rg_semantic_ir::{
@@ -83,7 +86,11 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
                 .collect(),
             BodyResolution::Field(fields) => fields
                 .iter()
-                .filter_map(|field| self.navigation_target_for_field(*field))
+                .filter_map(|field| self.navigation_target_for_resolved_field(*field))
+                .collect(),
+            BodyResolution::Method(functions) => functions
+                .iter()
+                .filter_map(|function| self.navigation_target_for_resolved_function(*function))
                 .collect(),
             BodyResolution::Unknown => Vec::new(),
         }
@@ -152,6 +159,31 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         })
     }
 
+    fn navigation_target_for_resolved_field(
+        &self,
+        field_ref: ResolvedFieldRef,
+    ) -> Option<NavigationTarget> {
+        match field_ref {
+            ResolvedFieldRef::Semantic(field) => self.navigation_target_for_field(field),
+            ResolvedFieldRef::BodyLocal(field) => self.navigation_target_for_local_field(field),
+        }
+    }
+
+    fn navigation_target_for_local_field(
+        &self,
+        field_ref: BodyFieldRef,
+    ) -> Option<NavigationTarget> {
+        let field_data = self.0.body_ir.local_field_data(field_ref)?;
+        let key = field_data.field.key.as_ref()?;
+
+        Some(NavigationTarget {
+            kind: NavigationTargetKind::Field,
+            name: key.declaration_label(),
+            file_id: field_data.item.source.file_id,
+            span: Some(field_data.field.span),
+        })
+    }
+
     fn navigation_target_for_function(
         &self,
         function_ref: FunctionRef,
@@ -164,6 +196,26 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
             file_id: function_data.source.file_id,
             span: Some(function_data.span),
         })
+    }
+
+    fn navigation_target_for_resolved_function(
+        &self,
+        function_ref: ResolvedFunctionRef,
+    ) -> Option<NavigationTarget> {
+        match function_ref {
+            ResolvedFunctionRef::Semantic(function) => {
+                self.navigation_target_for_function(function)
+            }
+            ResolvedFunctionRef::BodyLocal(function) => {
+                let data = self.0.body_ir.local_function_data(function)?;
+                Some(NavigationTarget {
+                    kind: NavigationTargetKind::Function,
+                    name: data.name.clone(),
+                    file_id: data.source.file_id,
+                    span: Some(data.name_source.span),
+                })
+            }
+        }
     }
 
     fn navigation_targets_for_type_path(

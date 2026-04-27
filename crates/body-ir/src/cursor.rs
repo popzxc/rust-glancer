@@ -13,6 +13,13 @@ use crate::{
     ExprId, ExprKind, ScopeId, StmtKind,
 };
 
+/// Receiver expression selected for a dot-completion query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DotReceiver {
+    pub body: BodyRef,
+    pub receiver: ExprId,
+}
+
 /// One body source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BodyCursorCandidate {
@@ -84,15 +91,20 @@ impl BodyIrDb {
     }
 
     /// Returns the inferred receiver type for a dot-completion site.
-    pub fn receiver_ty_at_dot(
+    /// Returns the receiver expression for a dot-completion site.
+    pub fn receiver_at_dot(
         &self,
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Option<&BodyTy> {
-        let (body_ref, receiver) = self.receiver_expr_at_dot(target, file_id, offset)?;
-        self.body_data(body_ref)?
-            .expr(receiver)
+    ) -> Option<DotReceiver> {
+        let (body, receiver) = self.receiver_expr_at_dot(target, file_id, offset)?;
+        Some(DotReceiver { body, receiver })
+    }
+
+    pub fn receiver_ty(&self, receiver: DotReceiver) -> Option<&BodyTy> {
+        self.body_data(receiver.body)?
+            .expr(receiver.receiver)
             .map(|expr| &expr.ty)
     }
 

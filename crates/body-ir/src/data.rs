@@ -1,10 +1,13 @@
 use rg_def_map::{DefId, DefMapDb, ModuleRef, PackageSlot, Path, TargetRef};
-use rg_item_tree::{FieldKey, TypeRef};
+use rg_item_tree::{FieldItem, FieldKey, FieldList, FunctionItem, ParamKind, TypeRef};
 use rg_parse::{FileId, Span, TargetId};
 use rg_semantic_ir::{FieldRef, FunctionId, FunctionRef, SemanticIrDb, TraitRef, TypeDefRef};
 
 use super::{
-    ids::{BindingId, BodyId, BodyItemId, BodyItemRef, BodyRef, ExprId, ScopeId, StmtId},
+    ids::{
+        BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
+        BodyItemRef, BodyRef, ExprId, ScopeId, StmtId,
+    },
     lower, resolution,
 };
 
@@ -40,6 +43,8 @@ impl BodyIrDb {
                 for body in target.bodies() {
                     stats.scope_count += body.scopes.len();
                     stats.local_item_count += body.local_items.len();
+                    stats.local_impl_count += body.local_impls.len();
+                    stats.local_function_count += body.local_functions.len();
                     stats.binding_count += body.bindings.len();
                     stats.statement_count += body.statements.len();
                     stats.expression_count += body.exprs.len();
@@ -103,6 +108,43 @@ impl BodyIrDb {
     ) -> Option<BodyTy> {
         resolution::ty_for_field(def_map, semantic_ir, field_ref)
     }
+
+    pub fn fields_for_local_type(&self, item_ref: BodyItemRef) -> Vec<BodyFieldRef> {
+        let Some(body) = self.body_data(item_ref.body) else {
+            return Vec::new();
+        };
+        let Some(item) = body.local_item(item_ref.item) else {
+            return Vec::new();
+        };
+
+        (0..item.fields.fields().len())
+            .map(|index| BodyFieldRef {
+                item: item_ref,
+                index,
+            })
+            .collect()
+    }
+
+    pub fn local_field_data(&self, field_ref: BodyFieldRef) -> Option<BodyFieldData<'_>> {
+        let body = self.body_data(field_ref.item.body)?;
+        let item = body.local_item(field_ref.item.item)?;
+        let field = item.field(field_ref.index)?;
+
+        Some(BodyFieldData { item, field })
+    }
+
+    pub fn inherent_functions_for_local_type(&self, item_ref: BodyItemRef) -> Vec<BodyFunctionRef> {
+        let Some(body) = self.body_data(item_ref.body) else {
+            return Vec::new();
+        };
+
+        body.inherent_functions_for_local_type(item_ref.body, item_ref)
+    }
+
+    pub fn local_function_data(&self, function_ref: BodyFunctionRef) -> Option<&BodyFunctionData> {
+        self.body_data(function_ref.body)?
+            .local_function(function_ref.function)
+    }
 }
 
 impl BodyIrDb {
@@ -118,6 +160,8 @@ pub struct BodyIrStats {
     pub body_count: usize,
     pub scope_count: usize,
     pub local_item_count: usize,
+    pub local_impl_count: usize,
+    pub local_function_count: usize,
     pub binding_count: usize,
     pub statement_count: usize,
     pub expression_count: usize,
@@ -208,6 +252,8 @@ pub struct BodyData {
     pub params: Vec<BindingId>,
     pub scopes: Vec<ScopeData>,
     pub local_items: Vec<BodyItemData>,
+    pub local_impls: Vec<BodyImplData>,
+    pub local_functions: Vec<BodyFunctionData>,
     pub bindings: Vec<BindingData>,
     pub statements: Vec<StmtData>,
     pub exprs: Vec<ExprData>,
@@ -225,6 +271,14 @@ impl BodyData {
 
     pub fn local_item(&self, item: BodyItemId) -> Option<&BodyItemData> {
         self.local_items.get(item.0)
+    }
+
+    pub fn local_impl(&self, impl_id: BodyImplId) -> Option<&BodyImplData> {
+        self.local_impls.get(impl_id.0)
+    }
+
+    pub fn local_function(&self, function: BodyFunctionId) -> Option<&BodyFunctionData> {
+        self.local_functions.get(function.0)
     }
 
     pub fn statement(&self, statement: StmtId) -> Option<&StmtData> {
@@ -255,10 +309,42 @@ impl BodyData {
             params,
             scopes: builder.scopes,
             local_items: builder.local_items,
+            local_impls: builder.local_impls,
+            local_functions: builder.local_functions,
             bindings: builder.bindings,
             statements: builder.statements,
             exprs: builder.exprs,
         }
+    }
+
+    pub(crate) fn local_impl_mut(&mut self, impl_id: BodyImplId) -> Option<&mut BodyImplData> {
+        self.local_impls.get_mut(impl_id.0)
+    }
+
+    pub(crate) fn inherent_functions_for_local_type(
+        &self,
+        body_ref: BodyRef,
+        item_ref: BodyItemRef,
+    ) -> Vec<BodyFunctionRef> {
+        if item_ref.body != body_ref {
+            return Vec::new();
+        }
+
+        let mut functions = Vec::new();
+        for impl_data in &self.local_impls {
+            if impl_data.self_item != Some(item_ref) || impl_data.trait_ref.is_some() {
+                continue;
+            }
+
+            for function in &impl_data.functions {
+                functions.push(BodyFunctionRef {
+                    body: body_ref,
+                    function: *function,
+                });
+            }
+        }
+
+        functions
     }
 }
 
@@ -267,6 +353,8 @@ impl BodyData {
 pub(super) struct BodyBuilder {
     pub(super) scopes: Vec<ScopeData>,
     pub(super) local_items: Vec<BodyItemData>,
+    pub(super) local_impls: Vec<BodyImplData>,
+    pub(super) local_functions: Vec<BodyFunctionData>,
     pub(super) bindings: Vec<BindingData>,
     pub(super) statements: Vec<StmtData>,
     pub(super) exprs: Vec<ExprData>,
@@ -278,6 +366,7 @@ impl BodyBuilder {
         self.scopes.push(ScopeData {
             parent,
             local_items: Vec::new(),
+            local_impls: Vec::new(),
             bindings: Vec::new(),
         });
         scope
@@ -293,6 +382,36 @@ impl BodyBuilder {
             .local_items
             .push(item);
         item
+    }
+
+    pub(super) fn alloc_local_impl(&mut self, data: BodyImplData) -> BodyImplId {
+        let impl_id = BodyImplId(self.local_impls.len());
+        let scope = data.scope;
+        self.local_impls.push(data);
+        self.scopes
+            .get_mut(scope.0)
+            .expect("local impl scope should exist while lowering body")
+            .local_impls
+            .push(impl_id);
+        impl_id
+    }
+
+    pub(super) fn alloc_local_function(&mut self, data: BodyFunctionData) -> BodyFunctionId {
+        let function = BodyFunctionId(self.local_functions.len());
+        self.local_functions.push(data);
+        function
+    }
+
+    pub(super) fn set_local_impl_functions(
+        &mut self,
+        impl_id: BodyImplId,
+        functions: Vec<BodyFunctionId>,
+    ) {
+        let impl_data = self
+            .local_impls
+            .get_mut(impl_id.0)
+            .expect("local impl should exist while assigning functions");
+        impl_data.functions = functions;
     }
 
     pub(super) fn alloc_binding(&mut self, data: BindingData) -> BindingId {
@@ -332,6 +451,7 @@ pub struct BodySource {
 pub struct ScopeData {
     pub parent: Option<ScopeId>,
     pub local_items: Vec<BodyItemId>,
+    pub local_impls: Vec<BodyImplId>,
     pub bindings: Vec<BindingId>,
 }
 
@@ -343,6 +463,77 @@ pub struct BodyItemData {
     pub scope: ScopeId,
     pub kind: BodyItemKind,
     pub name: String,
+    pub fields: FieldList,
+}
+
+impl BodyItemData {
+    pub fn field(&self, index: usize) -> Option<&FieldItem> {
+        self.fields.fields().get(index)
+    }
+
+    pub(crate) fn field_index(&self, key: &FieldKey) -> Option<usize> {
+        self.fields
+            .fields()
+            .iter()
+            .position(|field| field.key.as_ref() == Some(key))
+    }
+}
+
+/// Resolved access to one field declared on a body-local item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BodyFieldData<'a> {
+    pub item: &'a BodyItemData,
+    pub field: &'a FieldItem,
+}
+
+/// One impl block declared inside a function body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyImplData {
+    pub source: BodySource,
+    pub scope: ScopeId,
+    pub trait_ref: Option<TypeRef>,
+    pub self_ty: TypeRef,
+    pub self_item: Option<BodyItemRef>,
+    pub functions: Vec<BodyFunctionId>,
+}
+
+/// One function-like declaration inside a function body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyFunctionData {
+    pub source: BodySource,
+    pub name_source: BodySource,
+    pub owner: BodyFunctionOwner,
+    pub name: String,
+    pub declaration: FunctionItem,
+}
+
+impl BodyFunctionData {
+    pub fn has_self_receiver(&self) -> bool {
+        self.declaration
+            .params
+            .first()
+            .is_some_and(|param| matches!(param.kind, ParamKind::SelfParam))
+    }
+}
+
+/// Owner of a body-local function-like declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyFunctionOwner {
+    LocalImpl(BodyImplId),
+}
+
+/// Stable field identity across module-level Semantic IR and body-local declarations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResolvedFieldRef {
+    Semantic(FieldRef),
+    BodyLocal(BodyFieldRef),
+}
+
+/// Stable function identity across module-level Semantic IR and body-local declarations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResolvedFunctionRef {
+    Semantic(FunctionRef),
+    BodyLocal(BodyFunctionRef),
 }
 
 /// Body-local item category.
@@ -397,6 +588,9 @@ pub enum StmtKind {
     },
     Item {
         item: BodyItemId,
+    },
+    Impl {
+        impl_id: BodyImplId,
     },
     ItemIgnored,
 }
@@ -477,7 +671,8 @@ pub enum BodyResolution {
     Local(BindingId),
     LocalItem(BodyItemRef),
     Item(Vec<DefId>),
-    Field(Vec<FieldRef>),
+    Field(Vec<ResolvedFieldRef>),
+    Method(Vec<ResolvedFunctionRef>),
     #[default]
     Unknown,
 }
@@ -503,4 +698,27 @@ pub enum BodyTy {
     SelfTy(Vec<TypeDefRef>),
     #[default]
     Unknown,
+}
+
+impl BodyTy {
+    pub fn local_items(&self) -> &[BodyItemRef] {
+        match self {
+            Self::LocalNominal(items) => items,
+            Self::Unit
+            | Self::Never
+            | Self::Syntax(_)
+            | Self::Nominal(_)
+            | Self::SelfTy(_)
+            | Self::Unknown => &[],
+        }
+    }
+
+    pub fn type_defs(&self) -> &[TypeDefRef] {
+        match self {
+            Self::Nominal(types) | Self::SelfTy(types) => types,
+            Self::Unit | Self::Never | Self::Syntax(_) | Self::LocalNominal(_) | Self::Unknown => {
+                &[]
+            }
+        }
+    }
 }

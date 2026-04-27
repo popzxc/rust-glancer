@@ -8,10 +8,14 @@ mod resolution;
 mod tests;
 
 pub use self::{
-    cursor::BodyCursorCandidate,
+    cursor::{BodyCursorCandidate, DotReceiver},
     data::{
-        BindingData, BodyData, BodyIrDb, BodyItemKind, BodyResolution, BodyTy,
-        BodyTypePathResolution, ExprData, ExprKind, StmtKind,
+        BindingData, BodyData, BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData,
+        BodyIrDb, BodyItemKind, BodyResolution, BodyTy, BodyTypePathResolution, ExprData, ExprKind,
+        ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
     },
-    ids::{BindingId, BodyId, BodyItemId, BodyItemRef, BodyRef, ExprId, ScopeId},
+    ids::{
+        BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
+        BodyItemRef, BodyRef, ExprId, ScopeId,
+    },
 };

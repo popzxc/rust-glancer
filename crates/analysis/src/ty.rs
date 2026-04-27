@@ -104,12 +104,5 @@ pub(super) fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution
 }
 
 pub(super) fn type_defs_from_body_ty(ty: &BodyTy) -> Vec<TypeDefRef> {
-    match ty {
-        BodyTy::Nominal(types) | BodyTy::SelfTy(types) => types.clone(),
-        BodyTy::Unit
-        | BodyTy::Never
-        | BodyTy::Syntax(_)
-        | BodyTy::LocalNominal(_)
-        | BodyTy::Unknown => Vec::new(),
-    }
+    ty.type_defs().to_vec()
 }

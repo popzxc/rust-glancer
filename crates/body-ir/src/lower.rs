@@ -10,17 +10,17 @@ use ra_syntax::{
 };
 
 use rg_def_map::{ModuleRef, PackageSlot, Path, PathSegment, TargetRef};
-use rg_item_tree::{FieldKey, ItemTreeDb, ItemTreeRef, TypeRef};
+use rg_item_tree::{FieldKey, FieldList, FunctionItem, ImplItem, ItemTreeDb, ItemTreeRef, TypeRef};
 use rg_parse::{FileId, LineIndex, ParseDb, Span, TargetId};
 use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitRef};
 
 use super::{
     data::{
-        BindingData, BindingKind, BodyBuilder, BodyData, BodyIrDb, BodyItemData, BodyItemKind,
-        BodyResolution, BodySource, BodyTy, ExprData, ExprKind, LiteralKind, PackageBodies,
-        StmtData, StmtKind, TargetBodies,
+        BindingData, BindingKind, BodyBuilder, BodyData, BodyFunctionData, BodyFunctionOwner,
+        BodyImplData, BodyIrDb, BodyItemData, BodyItemKind, BodyResolution, BodySource, BodyTy,
+        ExprData, ExprKind, LiteralKind, PackageBodies, StmtData, StmtKind, TargetBodies,
     },
-    ids::{BindingId, BodyItemId, ExprId, ScopeId, StmtId},
+    ids::{BindingId, BodyFunctionId, BodyImplId, BodyItemId, ExprId, ScopeId, StmtId},
 };
 
 pub(super) fn build_db(
@@ -307,6 +307,10 @@ impl<'a> FunctionBodyLowering<'a> {
                 .lower_local_struct_item(item, scope)
                 .map(|item| StmtKind::Item { item })
                 .unwrap_or(StmtKind::ItemIgnored),
+            ast::Item::Impl(item) => self
+                .lower_local_impl_item(item, scope)
+                .map(|impl_id| StmtKind::Impl { impl_id })
+                .unwrap_or(StmtKind::ItemIgnored),
             _ => StmtKind::ItemIgnored,
         };
 
@@ -315,15 +319,56 @@ impl<'a> FunctionBodyLowering<'a> {
 
     fn lower_local_struct_item(&mut self, item: ast::Struct, scope: ScopeId) -> Option<BodyItemId> {
         let name = item.name()?;
-        // TODO: Lower body-local struct fields once local nominal types participate in member
-        // completion and field access. For now, the item itself is enough for shadowing, type
-        // identity, and navigation.
+        let fields = FieldList::from_ast(item.field_list(), self.line_index);
+
         Some(self.builder.alloc_local_item(BodyItemData {
             source: self.source(item.syntax()),
             name_source: self.source(name.syntax()),
             scope,
             kind: BodyItemKind::Struct,
             name: name.text().to_string(),
+            fields,
+        }))
+    }
+
+    fn lower_local_impl_item(&mut self, item: ast::Impl, scope: ScopeId) -> Option<BodyImplId> {
+        let impl_item = ImplItem::from_ast(&item, Vec::new(), self.line_index);
+        let impl_id = self.builder.alloc_local_impl(BodyImplData {
+            source: self.source(item.syntax()),
+            scope,
+            trait_ref: impl_item.trait_ref,
+            self_ty: impl_item.self_ty,
+            self_item: None,
+            functions: Vec::new(),
+        });
+
+        let functions = item
+            .assoc_item_list()
+            .into_iter()
+            .flat_map(|item_list| item_list.assoc_items())
+            .filter_map(|item| self.lower_local_assoc_function(item, impl_id))
+            .collect::<Vec<_>>();
+        self.builder.set_local_impl_functions(impl_id, functions);
+
+        Some(impl_id)
+    }
+
+    fn lower_local_assoc_function(
+        &mut self,
+        item: ast::AssocItem,
+        impl_id: BodyImplId,
+    ) -> Option<BodyFunctionId> {
+        let ast::AssocItem::Fn(function) = item else {
+            return None;
+        };
+        let name = function.name()?;
+
+        Some(self.builder.alloc_local_function(BodyFunctionData {
+            source: self.source(function.syntax()),
+            name_source: self.source(name.syntax()),
+            owner: BodyFunctionOwner::LocalImpl(impl_id),
+            name: name.text().to_string(),
+            declaration: FunctionItem::from_ast(&function, self.line_index),
         }))
     }
 

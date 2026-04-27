@@ -1,4 +1,7 @@
-use rg_body_ir::{BindingData, BindingId, BodyItemKind, BodyItemRef, BodyRef, ExprId, ScopeId};
+use rg_body_ir::{
+    BindingData, BindingId, BodyItemKind, BodyItemRef, BodyRef, ExprId, ResolvedFieldRef,
+    ResolvedFunctionRef, ScopeId,
+};
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{FieldRef, FunctionRef, TypePathContext};
@@ -141,8 +144,8 @@ pub struct CompletionItem {
 /// Stable analysis identity behind one completion row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionTarget {
-    Field(FieldRef),
-    Function(FunctionRef),
+    Field(ResolvedFieldRef),
+    Function(ResolvedFunctionRef),
 }
 
 /// Completion source category.

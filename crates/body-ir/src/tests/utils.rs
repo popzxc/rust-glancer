@@ -5,10 +5,13 @@ use expect_test::Expect;
 use crate::{
     BodyIrDb,
     data::{
-        BindingData, BodyData, BodyItemData, BodyResolution, BodySource, BodyTy, ExprData,
-        ExprKind, StmtKind,
+        BindingData, BodyData, BodyFunctionData, BodyImplData, BodyItemData, BodyResolution,
+        BodySource, BodyTy, ExprData, ExprKind, ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
     },
-    ids::{BindingId, BodyId, BodyItemId, BodyItemRef, ExprId, StmtId},
+    ids::{
+        BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
+        BodyItemRef, ExprId, StmtId,
+    },
 };
 use rg_def_map::{DefId, DefMapDb, LocalDefRef, ModuleRef, TargetRef};
 use rg_item_tree::ItemTreeDb;
@@ -186,7 +189,20 @@ impl TargetBodyIrSnapshot<'_> {
                         .join(", ")
                 )
             };
-            writeln!(dump, "- s{idx} parent {parent}: {bindings}{items}")
+            let impls = if scope.local_impls.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; impls {}",
+                    scope
+                        .local_impls
+                        .iter()
+                        .map(|impl_id| format!("m{}", impl_id.0))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            writeln!(dump, "- s{idx} parent {parent}: {bindings}{items}{impls}")
                 .expect("string writes should not fail");
         }
 
@@ -194,6 +210,13 @@ impl TargetBodyIrSnapshot<'_> {
             writeln!(dump, "items").expect("string writes should not fail");
             for (idx, item) in body.local_items.iter().enumerate() {
                 self.render_local_item(BodyItemId(idx), item, dump);
+            }
+        }
+
+        if !body.local_impls.is_empty() {
+            writeln!(dump, "impls").expect("string writes should not fail");
+            for (idx, impl_data) in body.local_impls.iter().enumerate() {
+                self.render_local_impl(body, BodyImplId(idx), impl_data, dump);
             }
         }
 
@@ -216,6 +239,62 @@ impl TargetBodyIrSnapshot<'_> {
             self.render_source(item.source),
         )
         .expect("string writes should not fail");
+    }
+
+    fn render_local_impl(
+        &self,
+        body: &BodyData,
+        id: BodyImplId,
+        impl_data: &BodyImplData,
+        dump: &mut String,
+    ) {
+        let self_item = impl_data
+            .self_item
+            .map(|item| self.render_body_item_ref(item))
+            .unwrap_or_else(|| "<unresolved>".to_string());
+        writeln!(
+            dump,
+            "- m{} impl {} => {} @ {}",
+            id.0,
+            impl_data.self_ty,
+            self_item,
+            self.render_source(impl_data.source),
+        )
+        .expect("string writes should not fail");
+
+        for function in &impl_data.functions {
+            let data = body
+                .local_function(*function)
+                .expect("body function id should exist while rendering local impl");
+            self.render_body_function(*function, data, dump);
+        }
+    }
+
+    fn render_body_function(
+        &self,
+        id: BodyFunctionId,
+        function: &BodyFunctionData,
+        dump: &mut String,
+    ) {
+        let params = function
+            .declaration
+            .params
+            .iter()
+            .map(|param| match &param.ty {
+                Some(ty) => format!("{}: {ty}", param.pat),
+                None => param.pat.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let ret_ty = function
+            .declaration
+            .ret_ty
+            .as_ref()
+            .map(|ty| format!(" -> {ty}"))
+            .unwrap_or_default();
+
+        writeln!(dump, "  - f{} fn {}({params}){ret_ty}", id.0, function.name)
+            .expect("string writes should not fail");
     }
 
     fn render_binding(
@@ -314,6 +393,17 @@ impl TargetBodyIrSnapshot<'_> {
                     indent(depth),
                     statement.0,
                     item.0,
+                    self.render_source(data.source),
+                )
+                .expect("string writes should not fail");
+            }
+            StmtKind::Impl { impl_id } => {
+                writeln!(
+                    dump,
+                    "{}stmt s{} impl m{} @ {}",
+                    indent(depth),
+                    statement.0,
+                    impl_id.0,
                     self.render_source(data.source),
                 )
                 .expect("string writes should not fail");
@@ -440,10 +530,18 @@ impl TargetBodyIrSnapshot<'_> {
             BodyResolution::Field(fields) => {
                 let mut fields = fields
                     .iter()
-                    .map(|field| self.render_field_ref(*field))
+                    .map(|field| self.render_resolved_field_ref(*field))
                     .collect::<Vec<_>>();
                 fields.sort();
                 format!(" -> {}", fields.join(" | "))
+            }
+            BodyResolution::Method(functions) => {
+                let mut functions = functions
+                    .iter()
+                    .map(|function| self.render_resolved_function_ref(*function))
+                    .collect::<Vec<_>>();
+                functions.sort();
+                format!(" -> {}", functions.join(" | "))
             }
             BodyResolution::Unknown => String::new(),
         }
@@ -652,6 +750,49 @@ impl TargetBodyIrSnapshot<'_> {
             "field {}::{name}",
             self.render_type_def_ref(field_ref.owner)
         )
+    }
+
+    fn render_resolved_field_ref(&self, field_ref: ResolvedFieldRef) -> String {
+        match field_ref {
+            ResolvedFieldRef::Semantic(field) => self.render_field_ref(field),
+            ResolvedFieldRef::BodyLocal(field) => self.render_body_field_ref(field),
+        }
+    }
+
+    fn render_body_field_ref(&self, field_ref: BodyFieldRef) -> String {
+        let data = self
+            .project
+            .body_ir_db()
+            .local_field_data(field_ref)
+            .expect("body field ref should exist while rendering body IR");
+        let name = data
+            .field
+            .key
+            .as_ref()
+            .map(|key| key.declaration_label())
+            .unwrap_or_else(|| "<missing>".to_string());
+
+        format!(
+            "field {}::{name}",
+            self.render_body_item_ref(field_ref.item)
+        )
+    }
+
+    fn render_resolved_function_ref(&self, function_ref: ResolvedFunctionRef) -> String {
+        match function_ref {
+            ResolvedFunctionRef::Semantic(function) => self.render_function_ref(function),
+            ResolvedFunctionRef::BodyLocal(function) => self.render_body_function_ref(function),
+        }
+    }
+
+    fn render_body_function_ref(&self, function_ref: BodyFunctionRef) -> String {
+        let data = self
+            .project
+            .body_ir_db()
+            .local_function_data(function_ref)
+            .expect("body function ref should exist while rendering body IR");
+
+        format!("fn {}", data.name)
     }
 
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {
