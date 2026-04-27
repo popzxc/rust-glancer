@@ -20,7 +20,10 @@ use crate::{
 };
 
 use super::{
-    method::{semantic_function_applies_to_receiver, semantic_impl_self_subst},
+    method::{
+        local_function_applies_to_receiver, local_impl_self_subst,
+        semantic_function_applies_to_receiver, semantic_impl_self_subst,
+    },
     push_unique,
     ty::{TypeSubst, subst_from_generics, type_ref_is_self},
     type_path::BodyTypePathResolver,
@@ -262,7 +265,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         // Method lookup is intentionally shallow: exact local item identity for body-local impls,
         // and nominal type plus lightweight impl-argument matching for semantic impls.
         for local_ty in receiver_ty.local_nominals() {
-            for function_ref in self.local_functions_for_type(local_ty.item) {
+            for function_ref in self.local_functions_for_type(local_ty) {
                 let Some(function_data) = self.body.local_function(function_ref.function) else {
                     continue;
                 };
@@ -324,13 +327,25 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         })
     }
 
-    fn local_functions_for_type(&self, item_ref: BodyItemRef) -> Vec<BodyFunctionRef> {
-        if item_ref.body != self.body_ref {
+    fn local_functions_for_type(&self, ty: &BodyLocalNominalTy) -> Vec<BodyFunctionRef> {
+        if ty.item.body != self.body_ref {
             return Vec::new();
         }
 
-        self.body
-            .inherent_functions_for_local_type(self.body_ref, item_ref)
+        let mut functions = self
+            .body
+            .inherent_functions_for_local_type(self.body_ref, ty.item);
+        functions.retain(|function| {
+            local_function_applies_to_receiver(
+                self.def_map,
+                self.semantic_ir,
+                self.body_ref,
+                self.body,
+                *function,
+                ty,
+            )
+        });
+        functions
     }
 
     fn semantic_functions_for_type(&self, ty: &BodyNominalTy) -> Vec<FunctionRef> {
@@ -375,7 +390,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
 
         match function_data.owner {
             BodyFunctionOwner::LocalImpl(impl_id) => {
-                self.ty_from_type_ref_for_local_impl(ret_ty, impl_id, receiver_ty)
+                self.ty_from_type_ref_for_local_impl(ret_ty, impl_id, function_ref, receiver_ty)
             }
         }
     }
@@ -416,6 +431,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         &self,
         ty: &TypeRef,
         impl_id: BodyImplId,
+        function_ref: BodyFunctionRef,
         receiver_ty: Option<&BodyLocalNominalTy>,
     ) -> BodyTy {
         let Some(impl_data) = self.body.local_impl(impl_id) else {
@@ -436,7 +452,13 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         }
 
         let subst = receiver_ty
-            .map(|ty| self.local_type_subst(ty))
+            .map(|ty| {
+                // Receiver type args and impl self args both contribute substitutions. For
+                // `impl<U> Wrapper<U>`, this maps `U` to the known receiver argument.
+                let mut subst = self.local_type_subst(ty);
+                subst.extend(local_impl_self_subst(self.body, function_ref, ty));
+                subst
+            })
             .unwrap_or_default();
         self.type_path_resolver()
             .ty_from_type_ref_in_scope_with_subst(ty, impl_data.scope, &subst)

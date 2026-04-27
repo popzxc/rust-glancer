@@ -143,3 +143,41 @@ pub fn use_it() {
         "#]],
     );
 }
+
+#[test]
+fn resolves_body_local_generic_impl_method_return_type_definitions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_goto_type_body_local_impl_generic"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    struct User;
+    struct Wrapper<T> {
+        value: T,
+    }
+
+    impl<U> Wrapper<U> {
+        fn get(&self) -> U {
+            missing()
+        }
+    }
+
+    let wrapper: Wrapper<User>;
+    let _value = wrapper.get($goto_type$);
+}
+"#,
+        &[AnalysisQuery::goto_type(
+            "goto type from body-local generic impl method",
+            "goto_type",
+        )],
+        expect![[r#"
+            goto type from body-local generic impl method
+            - struct User @ 2:5-2:17
+        "#]],
+    );
+}

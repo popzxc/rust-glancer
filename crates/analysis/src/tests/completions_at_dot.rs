@@ -443,6 +443,73 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_body_local_generic_impl_method_return_and_field_receivers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_generic_impl_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    struct Id;
+    struct Error;
+    struct User {
+        id: Id,
+    }
+
+    impl User {
+        fn label(&self) {}
+    }
+
+    struct Wrapper<T> {
+        value: T,
+    }
+
+    impl<U> Wrapper<U> {
+        fn get(&self) -> U {
+            missing()
+        }
+    }
+
+    impl Wrapper<User> {
+        fn user_only(&self) -> User {
+            missing()
+        }
+    }
+
+    let wrapper: Wrapper<User>;
+    wrapper.get().$method_return$;
+    wrapper.value.$field_receiver$;
+
+    let error: Wrapper<Error>;
+    error.$wrong_receiver$;
+}
+"#,
+        &[
+            AnalysisQuery::complete("generic method return completions", "method_return"),
+            AnalysisQuery::complete("generic field receiver completions", "field_receiver"),
+            AnalysisQuery::complete("wrong generic receiver completions", "wrong_receiver"),
+        ],
+        expect![[r#"
+            generic method return completions
+            - field id
+            - inherent_method label
+
+            generic field receiver completions
+            - field id
+            - inherent_method label
+
+            wrong generic receiver completions
+            - inherent_method get
+            - field value
+        "#]],
+    );
+}
+
+#[test]
 fn completes_tuple_fields_at_dot() {
     check_analysis_queries(
         r#"

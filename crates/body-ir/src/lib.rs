@@ -171,6 +171,22 @@ impl BodyIrDb {
         )
     }
 
+    pub fn local_function_applies_to_receiver(
+        &self,
+        def_map: &DefMapDb,
+        semantic_ir: &SemanticIrDb,
+        function_ref: BodyFunctionRef,
+        receiver_ty: &BodyLocalNominalTy,
+    ) -> bool {
+        resolution::local_function_applies_to_receiver(
+            self,
+            def_map,
+            semantic_ir,
+            function_ref,
+            receiver_ty,
+        )
+    }
+
     pub fn fields_for_local_type(&self, item_ref: BodyItemRef) -> Vec<BodyFieldRef> {
         let Some(body) = self.body_data(item_ref.body) else {
             return Vec::new();

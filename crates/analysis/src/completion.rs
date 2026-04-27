@@ -1,4 +1,4 @@
-use rg_body_ir::{BodyItemRef, BodyNominalTy, ResolvedFieldRef, ResolvedFunctionRef};
+use rg_body_ir::{BodyLocalNominalTy, BodyNominalTy, ResolvedFieldRef, ResolvedFunctionRef};
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
 
@@ -28,8 +28,8 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         };
 
         let mut completions = Vec::new();
-        for item in receiver_ty.local_items() {
-            self.push_local_type_completions(item, &mut completions);
+        for ty in receiver_ty.local_nominals() {
+            self.push_local_type_completions(ty, &mut completions);
         }
         for ty in receiver_ty.nominal_tys() {
             self.push_type_completions(ty, &mut completions);
@@ -75,14 +75,23 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
 
     fn push_local_type_completions(
         &self,
-        item: BodyItemRef,
+        ty: &BodyLocalNominalTy,
         completions: &mut Vec<CompletionItem>,
     ) {
-        for field in self.0.body_ir.fields_for_local_type(item) {
+        for field in self.0.body_ir.fields_for_local_type(ty.item) {
             self.push_field_completion(ResolvedFieldRef::BodyLocal(field), completions);
         }
 
-        for function in self.0.body_ir.inherent_functions_for_local_type(item) {
+        for function in self.0.body_ir.inherent_functions_for_local_type(ty.item) {
+            if !self.0.body_ir.local_function_applies_to_receiver(
+                self.0.def_map,
+                self.0.semantic_ir,
+                function,
+                ty,
+            ) {
+                continue;
+            }
+
             self.push_function_completion(
                 ResolvedFunctionRef::BodyLocal(function),
                 CompletionKind::InherentMethod,

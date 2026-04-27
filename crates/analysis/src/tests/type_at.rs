@@ -423,6 +423,44 @@ pub fn use_it() {
 }
 
 #[test]
+fn substitutes_body_local_impl_generics_in_method_returns() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_impl_generic_method_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    struct User;
+    struct Wrapper<T> {
+        value: T,
+    }
+
+    impl<U> Wrapper<U> {
+        fn get(&self) -> U {
+            missing()
+        }
+    }
+
+    let wrapper: Wrapper<User>;
+    let _value: User = wrapper.ge$type_get$t();
+}
+"#,
+        &[AnalysisQuery::ty(
+            "type at body-local generic impl method",
+            "type_get",
+        )],
+        expect![[r#"
+            type at body-local generic impl method
+            - local nominal struct fn analysis_body_local_impl_generic_method_type[lib]::crate::use_it::User
+        "#]],
+    );
+}
+
+#[test]
 fn returns_tuple_field_access_types() {
     check_analysis_queries(
         r#"

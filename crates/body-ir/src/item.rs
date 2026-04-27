@@ -44,6 +44,7 @@ pub struct BodyFieldData<'a> {
 pub struct BodyImplData {
     pub source: BodySource,
     pub scope: ScopeId,
+    pub generics: GenericParams,
     pub trait_ref: Option<TypeRef>,
     pub self_ty: TypeRef,
     pub self_item: Option<BodyItemRef>,

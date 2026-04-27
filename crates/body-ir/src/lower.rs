@@ -347,6 +347,7 @@ impl<'a> FunctionBodyLowering<'a> {
         let impl_id = self.builder.alloc_local_impl(BodyImplData {
             source: self.source(item.syntax()),
             scope,
+            generics: impl_item.generics,
             trait_ref: impl_item.trait_ref,
             self_ty: impl_item.self_ty,
             self_item: None,

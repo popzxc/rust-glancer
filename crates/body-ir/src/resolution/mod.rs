@@ -15,14 +15,17 @@ use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TypePathContext};
 use crate::{
     BodyIrDb,
     body::TargetBodiesStatus,
-    ids::{BodyId, BodyRef, ScopeId},
+    ids::{BodyFunctionRef, BodyId, BodyRef, ScopeId},
     resolved::BodyTypePathResolution,
-    ty::{BodyNominalTy, BodyTy},
+    ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
 use self::{
     body::BodyResolver,
-    method::semantic_function_applies_to_receiver as semantic_function_applies_to_receiver_impl,
+    method::{
+        local_function_applies_to_receiver as local_function_applies_to_receiver_impl,
+        semantic_function_applies_to_receiver as semantic_function_applies_to_receiver_impl,
+    },
     ty::{TypeSubst, ty_from_type_ref_in_context},
     type_path::BodyTypePathResolver,
 };
@@ -97,6 +100,26 @@ pub(super) fn semantic_function_applies_to_receiver(
     receiver_ty: &BodyNominalTy,
 ) -> bool {
     semantic_function_applies_to_receiver_impl(def_map, semantic_ir, function_ref, receiver_ty)
+}
+
+pub(super) fn local_function_applies_to_receiver(
+    db: &BodyIrDb,
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    function_ref: BodyFunctionRef,
+    receiver_ty: &BodyLocalNominalTy,
+) -> bool {
+    let Some(body) = db.body_data(function_ref.body) else {
+        return false;
+    };
+    local_function_applies_to_receiver_impl(
+        def_map,
+        semantic_ir,
+        function_ref.body,
+        body,
+        function_ref,
+        receiver_ty,
+    )
 }
 
 pub(super) fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
