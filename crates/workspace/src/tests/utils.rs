@@ -2,12 +2,23 @@ use std::{fmt::Write as _, path::Path};
 
 use expect_test::Expect;
 
-use crate::WorkspaceMetadata;
+use crate::{PackageOrigin, SysrootSources, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
 pub(super) fn check_workspace_metadata(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let actual = render_workspace_metadata(&WorkspaceMetadata::from_cargo(fixture.metadata()));
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) fn check_workspace_metadata_with_sysroot(fixture: &str, expect: Expect) {
+    let fixture = fixture_crate(fixture);
+    let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
+        .expect("fixture sysroot should be complete");
+    let workspace =
+        WorkspaceMetadata::from_cargo(fixture.metadata()).with_sysroot_sources(Some(sysroot));
+    let actual = render_workspace_metadata(&workspace);
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
@@ -32,10 +43,10 @@ fn render_workspace_metadata(workspace: &WorkspaceMetadata) -> String {
 }
 
 fn render_package(workspace: &WorkspaceMetadata, package: &crate::Package, dump: &mut String) {
-    let membership = if package.is_workspace_member {
-        "member"
-    } else {
-        "dependency"
+    let membership = match &package.origin {
+        PackageOrigin::Workspace => "member",
+        PackageOrigin::Dependency => "dependency",
+        PackageOrigin::Sysroot(_) => "sysroot",
     };
     writeln!(dump, "package {} [{membership}]", package.name)
         .expect("string writes should not fail");

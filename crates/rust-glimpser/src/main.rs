@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use rg_project::Project;
-use rg_workspace::WorkspaceMetadata;
+use rg_workspace::{SysrootSources, WorkspaceMetadata};
 
 /// Command-line interface for the `rust-glimpser` binary.
 #[derive(Debug, Parser)]
@@ -47,6 +47,8 @@ fn analyze(path: PathBuf) -> anyhow::Result<()> {
         .context("cargo metadata failed")?;
 
     let workspace = WorkspaceMetadata::from_cargo(metadata);
+    let sysroot = SysrootSources::discover(workspace.workspace_root());
+    let workspace = workspace.with_sysroot_sources(sysroot);
     let project = Project::build(workspace).context("while attempting to build project")?;
     print_project_summary(&project);
 

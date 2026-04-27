@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context as _;
 
 use crate::{FileId, ParsedFile, Target, TargetId, file::FileDb};
-use rg_workspace::{PackageId, TargetKind};
+use rg_workspace::{PackageId, PackageOrigin, TargetKind};
 
 /// Parsed package, including package-local files and target entrypoints.
 #[derive(Debug, Clone)]
@@ -14,6 +14,8 @@ pub struct Package {
     package_name: String,
     /// Whether this package belongs to the analyzed workspace.
     is_workspace_member: bool,
+    /// Where this package came from in the normalized workspace graph.
+    origin: PackageOrigin,
     /// All parsed files known to this package.
     files: FileDb,
     /// Parsed targets rooted in this package.
@@ -54,6 +56,11 @@ impl Package {
     /// Returns whether this package belongs to the analyzed workspace.
     pub fn is_workspace_member(&self) -> bool {
         self.is_workspace_member
+    }
+
+    /// Returns where this package came from in the normalized workspace graph.
+    pub fn origin(&self) -> &PackageOrigin {
+        &self.origin
     }
 
     /// Returns all parsed targets for this package.
@@ -105,6 +112,7 @@ impl Package {
             id: package.id.clone(),
             package_name: package.name.clone(),
             is_workspace_member: package.is_workspace_member,
+            origin: package.origin.clone(),
             files,
             targets: parsed_targets,
         })

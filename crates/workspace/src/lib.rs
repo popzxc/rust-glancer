@@ -3,8 +3,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod sysroot;
+
 #[cfg(test)]
 mod tests;
+
+pub use self::sysroot::{SysrootCrate, SysrootSources};
 
 /// Normalized workspace metadata used by the analysis pipeline.
 ///
@@ -37,10 +41,16 @@ impl WorkspaceMetadata {
             .into_iter()
             .map(|package| {
                 let package_id = PackageId::from_cargo(&package.id);
+                let is_workspace_member = workspace_members.contains(&package_id);
                 Package {
                     id: package_id.clone(),
                     name: package.name.to_string(),
-                    is_workspace_member: workspace_members.contains(&package_id),
+                    origin: if is_workspace_member {
+                        PackageOrigin::Workspace
+                    } else {
+                        PackageOrigin::Dependency
+                    },
+                    is_workspace_member,
                     manifest_path: package.manifest_path.as_std_path().to_path_buf(),
                     targets: package.targets.iter().map(Target::from_cargo).collect(),
                     dependencies: dependencies_by_package
@@ -62,6 +72,93 @@ impl WorkspaceMetadata {
             packages,
             package_by_id,
         }
+    }
+
+    /// Returns this workspace with sysroot crates modeled as ordinary packages.
+    pub fn with_sysroot_sources(mut self, sources: Option<SysrootSources>) -> Self {
+        if let Some(sources) = sources {
+            self.add_sysroot_sources(sources);
+        }
+        self
+    }
+
+    /// Adds `core`, `alloc`, and `std` from rust-src and injects them into normal packages.
+    pub fn add_sysroot_sources(&mut self, sources: SysrootSources) {
+        if self
+            .packages
+            .iter()
+            .any(|package| package.origin.is_sysroot())
+        {
+            return;
+        }
+
+        let mut sysroot_packages = SysrootCrate::ALL
+            .iter()
+            .copied()
+            .map(|krate| Self::sysroot_package(&sources, krate))
+            .collect::<Vec<_>>();
+
+        for package in &mut self.packages {
+            if package.origin.is_sysroot() {
+                continue;
+            }
+
+            for krate in SysrootCrate::ALL {
+                if package
+                    .dependencies
+                    .iter()
+                    .any(|dependency| dependency.name() == krate.name())
+                {
+                    continue;
+                }
+                package
+                    .dependencies
+                    .push(PackageDependency::for_all_targets(
+                        PackageId::sysroot(krate),
+                        krate.name(),
+                    ));
+            }
+        }
+
+        self.packages.append(&mut sysroot_packages);
+        self.rebuild_package_index();
+    }
+
+    fn sysroot_package(sources: &SysrootSources, krate: SysrootCrate) -> Package {
+        let dependencies = match krate {
+            SysrootCrate::Core => Vec::new(),
+            SysrootCrate::Alloc => vec![PackageDependency::normal(
+                PackageId::sysroot(SysrootCrate::Core),
+                "core",
+            )],
+            SysrootCrate::Std => vec![
+                PackageDependency::normal(PackageId::sysroot(SysrootCrate::Core), "core"),
+                PackageDependency::normal(PackageId::sysroot(SysrootCrate::Alloc), "alloc"),
+            ],
+        };
+
+        Package {
+            id: PackageId::sysroot(krate),
+            name: krate.name().to_string(),
+            origin: PackageOrigin::Sysroot(krate),
+            is_workspace_member: false,
+            manifest_path: sources.library_root().join(krate.name()).join("Cargo.toml"),
+            targets: vec![Target {
+                name: krate.name().to_string(),
+                kind: TargetKind::Lib,
+                src_path: sources.crate_root(krate),
+            }],
+            dependencies,
+        }
+    }
+
+    fn rebuild_package_index(&mut self) {
+        self.package_by_id = self
+            .packages
+            .iter()
+            .enumerate()
+            .map(|(idx, package)| (package.id.clone(), idx))
+            .collect();
     }
 
     fn lower_dependencies(
@@ -115,6 +212,24 @@ impl PackageId {
     fn from_cargo(id: &cargo_metadata::PackageId) -> Self {
         Self(id.to_string())
     }
+
+    fn sysroot(krate: SysrootCrate) -> Self {
+        Self(format!("sysroot:{}", krate.name()))
+    }
+}
+
+/// Where one normalized package came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackageOrigin {
+    Workspace,
+    Dependency,
+    Sysroot(SysrootCrate),
+}
+
+impl PackageOrigin {
+    pub fn is_sysroot(&self) -> bool {
+        matches!(self, Self::Sysroot(_))
+    }
 }
 
 /// Normalized package metadata relevant to later analysis phases.
@@ -122,6 +237,7 @@ impl PackageId {
 pub struct Package {
     pub id: PackageId,
     pub name: String,
+    pub origin: PackageOrigin,
     pub is_workspace_member: bool,
     pub manifest_path: PathBuf,
     pub targets: Vec<Target>,
@@ -180,6 +296,26 @@ impl PackageDependency {
             is_normal,
             is_build,
             is_dev,
+        }
+    }
+
+    fn normal(package: PackageId, name: impl Into<String>) -> Self {
+        Self {
+            package,
+            name: name.into(),
+            is_normal: true,
+            is_build: false,
+            is_dev: false,
+        }
+    }
+
+    fn for_all_targets(package: PackageId, name: impl Into<String>) -> Self {
+        Self {
+            package,
+            name: name.into(),
+            is_normal: true,
+            is_build: true,
+            is_dev: true,
         }
     }
 

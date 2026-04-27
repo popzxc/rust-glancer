@@ -138,6 +138,53 @@ pub struct Thing;
 }
 
 #[test]
+fn resolves_injected_sysroot_extern_roots() {
+    utils::check_project_path_resolution_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct App;
+
+//- /sysroot/library/core/src/lib.rs
+pub mod marker {
+    pub struct Core;
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub mod marker {
+    pub struct Alloc;
+}
+
+//- /sysroot/library/std/src/lib.rs
+pub mod marker {
+    pub struct Std;
+}
+"#,
+        &[
+            PathResolutionQuery::lib("app", "crate", "std::marker::Std"),
+            PathResolutionQuery::lib("app", "crate", "core::marker::Core"),
+            PathResolutionQuery::lib("app", "crate", "alloc::marker::Alloc"),
+            PathResolutionQuery::lib("std", "crate", "core::marker::Core"),
+            PathResolutionQuery::lib("std", "crate", "alloc::marker::Alloc"),
+            PathResolutionQuery::lib("alloc", "crate", "core::marker::Core"),
+        ],
+        expect![[r#"
+            app [lib] crate resolves std::marker::Std -> struct std[lib]::crate::marker::Std
+            app [lib] crate resolves core::marker::Core -> struct core[lib]::crate::marker::Core
+            app [lib] crate resolves alloc::marker::Alloc -> struct alloc[lib]::crate::marker::Alloc
+            std [lib] crate resolves core::marker::Core -> struct core[lib]::crate::marker::Core
+            std [lib] crate resolves alloc::marker::Alloc -> struct alloc[lib]::crate::marker::Alloc
+            alloc [lib] crate resolves core::marker::Core -> struct core[lib]::crate::marker::Core
+        "#]],
+    );
+}
+
+#[test]
 fn falls_back_to_extern_roots_when_wrong_namespace_bindings_match_first_segment() {
     utils::check_project_path_resolution(
         r#"

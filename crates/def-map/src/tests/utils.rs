@@ -6,7 +6,7 @@ use crate::{
 };
 use rg_item_tree::{ItemTreeDb, VisibilityLevel};
 use rg_parse::{FileId, Package, ParseDb, Target};
-use rg_workspace::{TargetKind, WorkspaceMetadata};
+use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
@@ -22,6 +22,17 @@ pub(super) fn check_project_path_resolution(
     expect: Expect,
 ) {
     let db = DefMapFixtureDb::build(fixture);
+    let actual = ProjectPathResolutionSnapshot::new(&db, queries).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) fn check_project_path_resolution_with_sysroot(
+    fixture: &str,
+    queries: &[PathResolutionQuery],
+    expect: Expect,
+) {
+    let db = DefMapFixtureDb::build_with_sysroot(fixture);
     let actual = ProjectPathResolutionSnapshot::new(&db, queries).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
@@ -71,6 +82,19 @@ impl DefMapFixtureDb {
     pub(super) fn build(fixture: &str) -> Self {
         let fixture = fixture_crate(fixture);
         let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+        Self::build_from_workspace(workspace)
+    }
+
+    pub(super) fn build_with_sysroot(fixture: &str) -> Self {
+        let fixture = fixture_crate(fixture);
+        let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
+            .expect("fixture sysroot should be complete");
+        let workspace =
+            WorkspaceMetadata::from_cargo(fixture.metadata()).with_sysroot_sources(Some(sysroot));
+        Self::build_from_workspace(workspace)
+    }
+
+    fn build_from_workspace(workspace: WorkspaceMetadata) -> Self {
         let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
         let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
         let def_map = DefMapDb::build(&workspace, &parse, &item_tree)

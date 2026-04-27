@@ -143,3 +143,68 @@ pub fn dev_helper() {}
         "#]],
     );
 }
+
+#[test]
+fn injects_sysroot_packages_as_normalized_dependencies() {
+    utils::check_workspace_metadata_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct App;
+
+//- /sysroot/library/core/src/lib.rs
+pub mod marker {
+    pub struct Core;
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub mod marker {
+    pub struct Alloc;
+}
+
+//- /sysroot/library/std/src/lib.rs
+pub mod marker {
+    pub struct Std;
+}
+"#,
+        expect![[r#"
+            workspace .
+
+            package alloc [sysroot]
+            manifest sysroot/library/alloc/Cargo.toml
+            targets
+            - alloc [lib] sysroot/library/alloc/src/lib.rs
+            dependencies
+            - core -> core
+
+            package app [member]
+            manifest Cargo.toml
+            targets
+            - app [lib] src/lib.rs
+            dependencies
+            - alloc -> alloc [normal, build, dev]
+            - core -> core [normal, build, dev]
+            - std -> std [normal, build, dev]
+
+            package core [sysroot]
+            manifest sysroot/library/core/Cargo.toml
+            targets
+            - core [lib] sysroot/library/core/src/lib.rs
+            dependencies
+            - <none>
+
+            package std [sysroot]
+            manifest sysroot/library/std/Cargo.toml
+            targets
+            - std [lib] sysroot/library/std/src/lib.rs
+            dependencies
+            - alloc -> alloc
+            - core -> core
+        "#]],
+    );
+}
