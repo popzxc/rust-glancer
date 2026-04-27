@@ -148,6 +148,8 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
+use Option as Maybe;
+
 pub struct App;
 
 pub mod local_shadow {
@@ -158,6 +160,10 @@ pub mod local_shadow {
 pub mod marker {
     pub struct Core;
     pub struct CorePrelude;
+}
+
+pub mod option {
+    pub enum Option {}
 }
 
 pub mod prelude {
@@ -182,6 +188,7 @@ pub mod prelude {
     pub mod rust_2024 {
         pub use crate::marker::StdPrelude;
         pub use core::marker::CorePrelude;
+        pub use core::option::Option;
         pub use alloc::marker::Vec;
     }
 }
@@ -193,6 +200,7 @@ pub mod prelude {
             PathResolutionQuery::lib("app", "crate", "StdPrelude"),
             PathResolutionQuery::lib("app", "crate", "CorePrelude"),
             PathResolutionQuery::lib("app", "crate", "Vec"),
+            PathResolutionQuery::lib("app", "crate", "Maybe"),
             PathResolutionQuery::lib("app", "crate::local_shadow", "Vec"),
             PathResolutionQuery::lib("app", "crate", "::StdPrelude"),
             PathResolutionQuery::lib("std", "crate", "core::marker::Core"),
@@ -206,6 +214,7 @@ pub mod prelude {
             app [lib] crate resolves StdPrelude -> struct std[lib]::crate::marker::StdPrelude
             app [lib] crate resolves CorePrelude -> struct core[lib]::crate::marker::CorePrelude
             app [lib] crate resolves Vec -> struct alloc[lib]::crate::marker::Vec
+            app [lib] crate resolves Maybe -> enum core[lib]::crate::option::Option
             app [lib] crate::local_shadow resolves Vec -> struct app[lib]::crate::local_shadow::Vec
             app [lib] crate resolves ::StdPrelude -> <none> (unresolved at segment #0)
             std [lib] crate resolves core::marker::Core -> struct core[lib]::crate::marker::Core

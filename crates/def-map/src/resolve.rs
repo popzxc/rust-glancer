@@ -39,9 +39,9 @@ pub fn build_db(
     let mut target_states = collect_target_states(parse.packages(), item_tree, &implicit_roots)
         .context("while attempting to collect target definitions and imports")?;
 
-    finalize_scopes(&mut target_states).context("while attempting to resolve target scopes")?;
     select_preludes(workspace, parse.packages(), &mut target_states)
         .context("while attempting to select target preludes")?;
+    finalize_scopes(&mut target_states).context("while attempting to resolve target scopes")?;
 
     let packages = target_states
         .into_iter()
@@ -155,29 +155,26 @@ fn build_implicit_roots(
     Ok(roots)
 }
 
-/// Selects the standard prelude module for each target after ordinary imports are known.
+/// Selects the standard prelude module for each target before ordinary imports are resolved.
 ///
 /// The prelude is not copied into every module scope. Instead, the frozen resolver treats it as a
 /// final fallback layer for unqualified names. That keeps the scopes honest while still making
 /// queries behave like editor users expect for names such as `Option` and `Vec`.
+///
+/// We resolve only the prelude module path here, not the prelude's contents. The module path is
+/// structural (`std::prelude::rust_20xx`), so directly declared base scopes are enough. Imports
+/// inside the prelude module are still handled by the normal fixed-point pass below.
 fn select_preludes(
     workspace: &WorkspaceMetadata,
     packages: &[Package],
     states: &mut [Vec<TargetState>],
 ) -> anyhow::Result<()> {
-    let final_scopes = states
+    let base_scopes = states
         .iter()
         .map(|package_states| {
             package_states
                 .iter()
-                .map(|state| {
-                    state
-                        .def_map
-                        .modules()
-                        .iter()
-                        .map(|module| module.scope.clone())
-                        .collect::<Vec<_>>()
-                })
+                .map(|state| state.base_scopes.clone())
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
@@ -204,7 +201,7 @@ fn select_preludes(
             };
             let Some(prelude_module) = resolve_path_to_modules(
                 states,
-                &final_scopes,
+                &base_scopes,
                 state.target,
                 root_module,
                 &prelude_path,
