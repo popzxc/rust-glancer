@@ -18,13 +18,35 @@ pub struct BodyIrDb {
 }
 
 impl BodyIrDb {
+    /// Builds Body IR using the default editor-oriented policy.
+    ///
+    /// By default we lower bodies only for workspace packages. Dependency signatures remain
+    /// available through Semantic IR, but dependency body internals are skipped to keep the eager
+    /// analysis cheaper.
     pub fn build(
         parse: &rg_parse::ParseDb,
         item_tree: &rg_item_tree::ItemTreeDb,
         def_map: &rg_def_map::DefMapDb,
         semantic_ir: &rg_semantic_ir::SemanticIrDb,
     ) -> anyhow::Result<Self> {
-        let mut db = lower::build_db(parse, item_tree, semantic_ir)?;
+        Self::build_with_policy(
+            parse,
+            item_tree,
+            def_map,
+            semantic_ir,
+            BodyIrBuildPolicy::default(),
+        )
+    }
+
+    /// Builds Body IR using an explicit package selection policy.
+    pub fn build_with_policy(
+        parse: &rg_parse::ParseDb,
+        item_tree: &rg_item_tree::ItemTreeDb,
+        def_map: &rg_def_map::DefMapDb,
+        semantic_ir: &rg_semantic_ir::SemanticIrDb,
+        policy: BodyIrBuildPolicy,
+    ) -> anyhow::Result<Self> {
+        let mut db = lower::build_db(parse, item_tree, semantic_ir, policy)?;
         resolution::resolve_bodies(&mut db, def_map, semantic_ir);
         Ok(db)
     }
@@ -39,6 +61,10 @@ impl BodyIrDb {
         for package in &self.packages {
             for target in package.targets() {
                 stats.target_count += 1;
+                match target.status() {
+                    TargetBodiesStatus::Built => stats.built_target_count += 1,
+                    TargetBodiesStatus::Skipped => stats.skipped_target_count += 1,
+                }
                 stats.body_count += target.bodies.len();
                 for body in target.bodies() {
                     stats.scope_count += body.scopes.len();
@@ -54,6 +80,48 @@ impl BodyIrDb {
 
         stats
     }
+}
+
+/// Controls which packages get function-body lowering during eager Body IR construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BodyIrBuildPolicy {
+    package_scope: BodyIrPackageScope,
+}
+
+impl BodyIrBuildPolicy {
+    /// Lowers only workspace packages.
+    pub fn workspace_packages() -> Self {
+        Self {
+            package_scope: BodyIrPackageScope::WorkspacePackages,
+        }
+    }
+
+    /// Lowers every parsed package, including dependencies and sysroot crates.
+    pub fn all_packages() -> Self {
+        Self {
+            package_scope: BodyIrPackageScope::AllPackages,
+        }
+    }
+
+    pub(super) fn should_lower_package(&self, package: &rg_parse::Package) -> bool {
+        match self.package_scope {
+            BodyIrPackageScope::WorkspacePackages => package.is_workspace_member(),
+            BodyIrPackageScope::AllPackages => true,
+        }
+    }
+}
+
+impl Default for BodyIrBuildPolicy {
+    fn default() -> Self {
+        Self::workspace_packages()
+    }
+}
+
+/// Package-set selector for eager body lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyIrPackageScope {
+    WorkspacePackages,
+    AllPackages,
 }
 
 #[allow(dead_code)]
@@ -157,6 +225,8 @@ impl BodyIrDb {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BodyIrStats {
     pub target_count: usize,
+    pub built_target_count: usize,
+    pub skipped_target_count: usize,
     pub body_count: usize,
     pub scope_count: usize,
     pub local_item_count: usize,
@@ -196,6 +266,7 @@ impl PackageBodies {
 /// Lowered bodies for one target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetBodies {
+    status: TargetBodiesStatus,
     function_bodies: Vec<Option<BodyId>>,
     bodies: Vec<BodyData>,
 }
@@ -203,9 +274,22 @@ pub struct TargetBodies {
 impl TargetBodies {
     pub(super) fn new(function_count: usize) -> Self {
         Self {
+            status: TargetBodiesStatus::Built,
             function_bodies: vec![None; function_count],
             bodies: Vec::new(),
         }
+    }
+
+    pub(super) fn skipped(function_count: usize) -> Self {
+        Self {
+            status: TargetBodiesStatus::Skipped,
+            function_bodies: vec![None; function_count],
+            bodies: Vec::new(),
+        }
+    }
+
+    pub fn status(&self) -> TargetBodiesStatus {
+        self.status
     }
 
     pub fn body_for_function(&self, function: FunctionId) -> Option<BodyId> {
@@ -219,6 +303,15 @@ impl TargetBodies {
     pub fn bodies(&self) -> &[BodyData] {
         &self.bodies
     }
+}
+
+/// Whether one target's bodies were eagerly lowered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+pub enum TargetBodiesStatus {
+    #[display("built")]
+    Built,
+    #[display("skipped")]
+    Skipped,
 }
 
 impl TargetBodies {

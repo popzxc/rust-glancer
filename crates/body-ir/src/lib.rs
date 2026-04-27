@@ -11,8 +11,8 @@ pub use self::{
     cursor::{BodyCursorCandidate, DotReceiver},
     data::{
         BindingData, BodyData, BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData,
-        BodyIrDb, BodyItemKind, BodyResolution, BodyTy, BodyTypePathResolution, ExprData, ExprKind,
-        ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
+        BodyIrBuildPolicy, BodyIrDb, BodyItemKind, BodyResolution, BodyTy, BodyTypePathResolution,
+        ExprData, ExprKind, ResolvedFieldRef, ResolvedFunctionRef, StmtKind, TargetBodiesStatus,
     },
     ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,

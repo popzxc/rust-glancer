@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 
 use rg_analysis::Analysis;
-use rg_body_ir::BodyIrDb;
+use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
 use rg_def_map::DefMapDb;
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
@@ -21,6 +21,14 @@ pub struct Project {
 impl Project {
     /// Builds every analysis phase for one metadata graph.
     pub fn build(workspace: WorkspaceMetadata) -> anyhow::Result<Self> {
+        Self::build_with_body_ir_policy(workspace, BodyIrBuildPolicy::default())
+    }
+
+    /// Builds every analysis phase using an explicit Body IR lowering policy.
+    pub fn build_with_body_ir_policy(
+        workspace: WorkspaceMetadata,
+        body_ir_policy: BodyIrBuildPolicy,
+    ) -> anyhow::Result<Self> {
         let mut parse = ParseDb::build(&workspace).context("while attempting to build parse db")?;
         let item_tree =
             ItemTreeDb::build(&mut parse).context("while attempting to build item tree db")?;
@@ -28,8 +36,9 @@ impl Project {
             .context("while attempting to build def map db")?;
         let semantic_ir = SemanticIrDb::build(&item_tree, &def_map)
             .context("while attempting to build semantic ir db")?;
-        let body_ir = BodyIrDb::build(&parse, &item_tree, &def_map, &semantic_ir)
-            .context("while attempting to build body ir db")?;
+        let body_ir =
+            BodyIrDb::build_with_policy(&parse, &item_tree, &def_map, &semantic_ir, body_ir_policy)
+                .context("while attempting to build body ir db")?;
 
         Ok(Self {
             parse,

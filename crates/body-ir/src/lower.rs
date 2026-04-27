@@ -17,8 +17,9 @@ use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitRef};
 use super::{
     data::{
         BindingData, BindingKind, BodyBuilder, BodyData, BodyFunctionData, BodyFunctionOwner,
-        BodyImplData, BodyIrDb, BodyItemData, BodyItemKind, BodyResolution, BodySource, BodyTy,
-        ExprData, ExprKind, LiteralKind, PackageBodies, StmtData, StmtKind, TargetBodies,
+        BodyImplData, BodyIrBuildPolicy, BodyIrDb, BodyItemData, BodyItemKind, BodyResolution,
+        BodySource, BodyTy, ExprData, ExprKind, LiteralKind, PackageBodies, StmtData, StmtKind,
+        TargetBodies,
     },
     ids::{BindingId, BodyFunctionId, BodyImplId, BodyItemId, ExprId, ScopeId, StmtId},
 };
@@ -27,6 +28,7 @@ pub(super) fn build_db(
     parse: &ParseDb,
     item_tree: &ItemTreeDb,
     semantic_ir: &SemanticIrDb,
+    policy: BodyIrBuildPolicy,
 ) -> anyhow::Result<BodyIrDb> {
     let mut packages = Vec::with_capacity(semantic_ir.packages().len());
 
@@ -45,6 +47,11 @@ pub(super) fn build_db(
                 target: TargetId(target_idx),
             };
             let function_count = semantic_ir.function_count(target_ref);
+            if !policy.should_lower_package(parse_package) {
+                targets.push(TargetBodies::skipped(function_count));
+                continue;
+            }
+
             targets.push(
                 TargetLowering {
                     parse_package,

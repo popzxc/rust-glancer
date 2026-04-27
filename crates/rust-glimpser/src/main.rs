@@ -81,7 +81,11 @@ fn print_project_summary(project: &Project) {
         semantic_ir_stats.function_count
     );
     println!(
-        "body IR: {} targets, {} bodies, {} expressions",
-        body_ir_stats.target_count, body_ir_stats.body_count, body_ir_stats.expression_count
+        "body IR: {} targets ({} built, {} skipped), {} bodies, {} expressions",
+        body_ir_stats.target_count,
+        body_ir_stats.built_target_count,
+        body_ir_stats.skipped_target_count,
+        body_ir_stats.body_count,
+        body_ir_stats.expression_count
     );
 }

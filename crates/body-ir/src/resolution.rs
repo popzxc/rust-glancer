@@ -13,7 +13,7 @@ use rg_semantic_ir::{
 use super::{
     data::{
         BindingKind, BodyData, BodyIrDb, BodyResolution, BodyTy, BodyTypePathResolution, ExprKind,
-        ResolvedFieldRef, ResolvedFunctionRef,
+        ResolvedFieldRef, ResolvedFunctionRef, TargetBodiesStatus,
     },
     ids::{
         BindingId, BodyFieldRef, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
@@ -24,6 +24,10 @@ use super::{
 pub(super) fn resolve_bodies(db: &mut BodyIrDb, def_map: &DefMapDb, semantic_ir: &SemanticIrDb) {
     for (package_idx, package) in db.packages_mut().iter_mut().enumerate() {
         for (target_idx, target) in package.targets_mut().iter_mut().enumerate() {
+            if matches!(target.status(), TargetBodiesStatus::Skipped) {
+                continue;
+            }
+
             let target_ref = TargetRef {
                 package: PackageSlot(package_idx),
                 target: TargetId(target_idx),

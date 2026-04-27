@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    BodyIrDb,
+    BodyIrBuildPolicy, BodyIrDb, TargetBodiesStatus,
     data::{
         BindingData, BodyData, BodyFunctionData, BodyImplData, BodyItemData, BodyResolution,
         BodySource, BodyTy, ExprData, ExprKind, ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
@@ -30,6 +30,17 @@ pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     expect.assert_eq(&actual);
 }
 
+pub(super) fn check_project_body_ir_with_policy(
+    fixture: &str,
+    policy: BodyIrBuildPolicy,
+    expect: Expect,
+) {
+    let db = BodyIrFixtureDb::build_with_policy(fixture, policy);
+    let actual = ProjectBodyIrSnapshot::new(&db).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
 struct BodyIrFixtureDb {
     parse: ParseDb,
     def_map: DefMapDb,
@@ -39,6 +50,10 @@ struct BodyIrFixtureDb {
 
 impl BodyIrFixtureDb {
     fn build(fixture: &str) -> Self {
+        Self::build_with_policy(fixture, BodyIrBuildPolicy::default())
+    }
+
+    fn build_with_policy(fixture: &str, policy: BodyIrBuildPolicy) -> Self {
         let fixture = fixture_crate(fixture);
         let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
         let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
@@ -47,8 +62,9 @@ impl BodyIrFixtureDb {
             .expect("fixture def map db should build");
         let semantic_ir =
             SemanticIrDb::build(&item_tree, &def_map).expect("fixture semantic ir db should build");
-        let body_ir = BodyIrDb::build(&parse, &item_tree, &def_map, &semantic_ir)
-            .expect("fixture body ir db should build");
+        let body_ir =
+            BodyIrDb::build_with_policy(&parse, &item_tree, &def_map, &semantic_ir, policy)
+                .expect("fixture body ir db should build");
 
         Self {
             parse,
@@ -125,6 +141,11 @@ impl TargetBodyIrSnapshot<'_> {
         let Some(target_bodies) = self.project.body_ir_db().target_bodies(self.target_ref) else {
             return dump;
         };
+
+        if matches!(target_bodies.status(), TargetBodiesStatus::Skipped) {
+            dump.push_str("\nskipped");
+            return dump;
+        }
 
         let mut bodies = target_bodies
             .bodies()
