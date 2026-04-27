@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    SemanticIrDb,
+    ItemStore, SemanticIrDb,
     ids::{FunctionRef, ImplRef, TraitRef, TypeDefId, TypeDefRef},
 };
 use rg_def_map::{DefMapDb, ModuleId, ModuleRef, Path, PathSegment, TargetRef};
@@ -12,10 +12,7 @@ use rg_parse::{Package, ParseDb, Target};
 use rg_workspace::{TargetKind, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
-use crate::{
-    data::ItemStore,
-    ids::{AssocItemId, ConstId, FunctionId, ImplId, ItemId, TypeAliasId},
-};
+use crate::ids::{AssocItemId, ConstId, FunctionId, ImplId, ItemId, TypeAliasId};
 
 pub(super) fn check_project_semantic_ir(fixture: &str, expect: Expect) {
     let db = SemanticIrFixtureDb::build(fixture);

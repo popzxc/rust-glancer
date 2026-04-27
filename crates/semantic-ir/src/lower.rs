@@ -8,10 +8,8 @@ use rg_item_tree::{
 use rg_parse::{FileId, TargetId};
 
 use super::{
-    data::{
-        ConstData, EnumData, FunctionData, ImplData, PackageIr, SemanticIrDb, StaticData,
-        StructData, TargetIr, TraitData, TypeAliasData, UnionData,
-    },
+    ConstData, EnumData, FunctionData, ImplData, PackageIr, SemanticIrDb, StaticData, StructData,
+    TargetIr, TraitData, TypeAliasData, UnionData,
     ids::{
         AssocItemId, ConstId, FunctionId, ImplId, ItemId, ItemOwner, StaticId, TraitId, TypeAliasId,
     },

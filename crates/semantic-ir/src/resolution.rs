@@ -8,7 +8,7 @@ use rg_def_map::{DefId, DefMapDb, ModuleRef, Path};
 use rg_item_tree::TypeRef;
 
 use super::{
-    data::SemanticIrDb,
+    SemanticIrDb,
     ids::{ImplRef, TraitRef, TypeDefRef},
 };
 
