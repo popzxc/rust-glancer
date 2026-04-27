@@ -67,7 +67,7 @@ impl Package {
     }
 
     /// Parses package targets and their root files.
-    pub fn build(package: &rg_workspace::Package) -> anyhow::Result<Self> {
+    pub(super) fn build(package: &rg_workspace::Package) -> anyhow::Result<Self> {
         // Outside of the workspace being analyzed, we only keep the library target.
         let targets = if package.is_workspace_member {
             package.targets.clone()

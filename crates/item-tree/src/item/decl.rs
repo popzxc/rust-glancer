@@ -5,7 +5,7 @@ use ra_syntax::{
     ast::{self, HasGenericParams, HasName, HasTypeBounds, HasVisibility},
 };
 
-use rg_parse::span::{LineIndex, Span};
+use rg_parse::{LineIndex, Span};
 
 use super::{ItemTreeId, Mutability, TypeBound, TypeRef, VisibilityLevel, normalized_syntax};
 

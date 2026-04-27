@@ -8,7 +8,7 @@ use rg_def_map::{Path, TargetRef};
 use rg_item_tree::{
     FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypeRef, WherePredicate,
 };
-use rg_parse::{FileId, span::Span};
+use rg_parse::{FileId, Span};
 
 use crate::{FieldRef, FunctionRef, ItemOwner, SemanticIrDb, TypeDefRef, TypePathContext};
 

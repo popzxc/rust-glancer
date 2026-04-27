@@ -1,7 +1,7 @@
 use std::fmt;
 
 use rg_item_tree::{ImportAlias, ItemTreeRef, UseImportKind, UsePath, VisibilityLevel};
-use rg_parse::span::Span;
+use rg_parse::Span;
 
 use super::{ModuleId, Path, PathSegment, path::last_segment_name};
 

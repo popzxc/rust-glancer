@@ -1,6 +1,6 @@
 use rg_def_map::{DefId, DefMapDb, ModuleRef, PackageSlot, Path, TargetRef};
 use rg_item_tree::{FieldKey, TypeRef};
-use rg_parse::{FileId, TargetId, span::Span};
+use rg_parse::{FileId, Span, TargetId};
 use rg_semantic_ir::{FieldRef, FunctionId, FunctionRef, SemanticIrDb, TraitRef, TypeDefRef};
 
 use super::{

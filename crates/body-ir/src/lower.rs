@@ -11,10 +11,7 @@ use ra_syntax::{
 
 use rg_def_map::{ModuleRef, PackageSlot, Path, PathSegment, TargetRef};
 use rg_item_tree::{FieldKey, ItemTreeDb, ItemTreeRef, TypeRef};
-use rg_parse::{
-    FileId, ParseDb, TargetId,
-    span::{LineIndex, Span},
-};
+use rg_parse::{FileId, LineIndex, ParseDb, Span, TargetId};
 use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitRef};
 
 use super::{

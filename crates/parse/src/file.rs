@@ -69,7 +69,7 @@ impl<'a> ParsedFile<'a> {
 /// `FileDb` deduplicates parsing across targets, so shared modules are parsed once
 /// and reused during multiple target traversals.
 #[derive(Default, Debug, Clone)]
-pub struct FileDb {
+pub(super) struct FileDb {
     parsed_files: Vec<ParsedFileData>,
     file_ids_by_path: HashMap<PathBuf, FileId>,
 }

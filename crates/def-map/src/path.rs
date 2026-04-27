@@ -153,7 +153,7 @@ mod tests {
     use rg_item_tree::{
         TypePath, TypePathSegment, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind,
     };
-    use rg_parse::span::{LineColumnSpan, Position, Span, TextSpan};
+    use rg_parse::{LineColumnSpan, Position, Span, TextSpan};
 
     use super::{Path, PathSegment};
 

@@ -6,7 +6,7 @@
 
 use rg_def_map::{Path, TargetRef};
 use rg_item_tree::{GenericArg, TypeBound, TypePath, TypeRef};
-use rg_parse::{FileId, span::Span};
+use rg_parse::{FileId, Span};
 
 use crate::{
     BindingId, BodyData, BodyId, BodyIrDb, BodyItemId, BodyItemRef, BodyRef, BodyTy, ExprData,

@@ -1,15 +1,12 @@
 use ra_syntax::TextRange;
 
-use rg_parse::{
-    FileId,
-    span::{LineIndex, Span},
-};
+use rg_parse::{FileId, LineIndex, Span};
 
 pub use self::{
     decl::{
         ConstItem, EnumItem, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,
-        GenericParams, ImplItem, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
-        UnionItem, WherePredicate,
+        GenericParams, ImplItem, ParamItem, ParamKind, StaticItem, StructItem, TraitItem,
+        TypeAliasItem, UnionItem, WherePredicate,
     },
     import::{
         ExternCrateItem, ImportAlias, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
@@ -17,7 +14,7 @@ pub use self::{
     },
     kind::{ItemKind, ItemTag},
     module::{ModuleItem, ModuleSource},
-    type_ref::{GenericArg, Mutability, TypeBound, TypePath, TypeRef},
+    type_ref::{GenericArg, Mutability, TypeBound, TypePath, TypePathSegment, TypeRef},
     visibility::VisibilityLevel,
 };
 
@@ -27,9 +24,6 @@ mod kind;
 mod module;
 mod type_ref;
 mod visibility;
-
-pub use self::decl::ParamItem;
-pub use self::type_ref::TypePathSegment;
 
 /// Stable file-local identifier for one lowered item-tree node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -79,7 +73,7 @@ impl ItemNode {
     }
 }
 
-pub fn normalized_syntax(node: &impl ra_syntax::AstNode) -> String {
+pub(super) fn normalized_syntax(node: &impl ra_syntax::AstNode) -> String {
     node.syntax()
         .text()
         .to_string()

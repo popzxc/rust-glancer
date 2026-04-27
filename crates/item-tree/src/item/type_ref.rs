@@ -5,7 +5,7 @@ use ra_syntax::{
     ast::{self, HasGenericArgs},
 };
 
-use rg_parse::span::{LineIndex, Span};
+use rg_parse::{LineIndex, Span};
 
 use super::normalized_syntax;
 

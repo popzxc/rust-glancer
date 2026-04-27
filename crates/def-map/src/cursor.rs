@@ -3,7 +3,7 @@
 //! DefMap owns module-scope source facts such as local definition names and import path spans.
 //! Analysis can therefore ask for cursor candidates without reaching back into item-tree storage.
 
-use rg_parse::{FileId, span::Span};
+use rg_parse::{FileId, Span};
 
 use crate::{DefId, DefMapDb, ModuleRef, Path, TargetRef};
 

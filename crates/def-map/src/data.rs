@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use rg_item_tree::{ItemTag, ItemTreeRef, VisibilityLevel};
-use rg_parse::{file::FileId, span::Span};
+use rg_parse::{FileId, Span};
 
 use super::{DefId, ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef};
 

@@ -5,7 +5,7 @@ use rg_item_tree::{
     ConstItem, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem, GenericParams,
     ItemTreeRef, Mutability, ParamKind, TypeAliasItem, TypeBound, TypeRef, VisibilityLevel,
 };
-use rg_parse::{FileId, TargetId, span::Span};
+use rg_parse::{FileId, Span, TargetId};
 
 use super::{
     ids::{

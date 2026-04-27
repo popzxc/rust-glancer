@@ -1,6 +1,6 @@
 use rg_body_ir::{BindingData, BindingId, BodyItemKind, BodyItemRef, BodyRef, ExprId, ScopeId};
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path};
-use rg_parse::{FileId, span::Span};
+use rg_parse::{FileId, Span};
 use rg_semantic_ir::{FieldRef, FunctionRef, TypePathContext};
 
 pub(super) struct SymbolCandidate {

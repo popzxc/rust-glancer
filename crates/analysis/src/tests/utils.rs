@@ -6,7 +6,7 @@ use crate::{Analysis, CompletionItem, NavigationTarget, SymbolAt};
 use rg_body_ir::{BodyIrDb, BodyItemRef, BodyTy, ExprData, ExprKind};
 use rg_def_map::{DefMapDb, ModuleRef, PackageSlot, TargetRef};
 use rg_item_tree::ItemTreeDb;
-use rg_parse::{FileId, ParseDb, span::Span};
+use rg_parse::{FileId, ParseDb, Span};
 use rg_semantic_ir::{FunctionRef, ItemOwner, SemanticIrDb, TraitRef, TypeDefId, TypeDefRef};
 use rg_workspace::{TargetKind, WorkspaceMetadata};
 use test_fixture::{FixtureMarkers, fixture_crate_with_markers};

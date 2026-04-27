@@ -15,7 +15,7 @@ use ra_syntax::{
     ast::{self, HasModuleItem, HasName, HasVisibility},
 };
 
-use rg_parse::{FileId, Package as ParsePackage, span::LineIndex};
+use rg_parse::{FileId, LineIndex, Package as ParsePackage};
 
 use super::{
     ConstItem, EnumItem, ExternCrateItem, FileTree, FunctionItem, ImplItem, ItemKind, ItemNode,

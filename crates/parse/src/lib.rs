@@ -2,18 +2,20 @@ use std::{fmt, path::PathBuf};
 
 use anyhow::Context as _;
 
-pub mod error;
-pub mod file;
-pub mod package;
-pub mod span;
-pub mod target;
+mod error;
+mod file;
+mod package;
+mod span;
+mod target;
 
 #[cfg(test)]
 mod tests;
 
-pub use self::file::{FileId, ParsedFile};
 pub use self::{
+    error::ParseError,
+    file::{FileId, ParsedFile},
     package::Package,
+    span::{LineColumnSpan, LineIndex, Position, Span, TextSpan},
     target::{Target, TargetId},
 };
 

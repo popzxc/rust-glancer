@@ -5,7 +5,7 @@ use ra_syntax::{
     ast::{self, HasName},
 };
 
-use rg_parse::span::{LineIndex, Span};
+use rg_parse::{LineIndex, Span};
 
 /// Syntactic `extern crate` facts attached to `ItemKind::ExternCrate`.
 #[derive(Debug, Clone, PartialEq, Eq)]
