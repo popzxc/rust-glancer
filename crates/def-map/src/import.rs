@@ -2,6 +2,7 @@ use std::fmt;
 
 use rg_item_tree::{ImportAlias, ItemTreeRef, UseImportKind, UsePath, VisibilityLevel};
 use rg_parse::Span;
+use rg_workspace::RustEdition;
 
 use super::{ModuleId, Path, PathSegment, path::last_segment_name};
 
@@ -92,6 +93,17 @@ impl ImportPath {
         Self {
             absolute: path.absolute,
             segments: path.segments,
+        }
+    }
+
+    pub(super) fn standard_prelude(edition: RustEdition) -> Self {
+        Self {
+            absolute: true,
+            segments: vec![
+                PathSegment::Name("std".to_string()),
+                PathSegment::Name("prelude".to_string()),
+                PathSegment::Name(edition.prelude_module().to_string()),
+            ],
         }
     }
 

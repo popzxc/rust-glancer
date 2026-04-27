@@ -101,6 +101,7 @@ pub fn dev_helper() {}
 
             package app [member]
             manifest crates/app/Cargo.toml
+            edition 2024
             targets
             - app [lib] crates/app/src/lib.rs
             - app [bin] crates/app/src/main.rs
@@ -115,6 +116,7 @@ pub fn dev_helper() {}
 
             package build_helper [member]
             manifest vendor/build_helper/Cargo.toml
+            edition 2024
             targets
             - build_helper [lib] vendor/build_helper/src/lib.rs
             dependencies
@@ -122,6 +124,7 @@ pub fn dev_helper() {}
 
             package dep [member]
             manifest crates/dep/Cargo.toml
+            edition 2024
             targets
             - dep [lib] crates/dep/src/lib.rs
             dependencies
@@ -129,6 +132,7 @@ pub fn dev_helper() {}
 
             package dev_helper [member]
             manifest vendor/dev_helper/Cargo.toml
+            edition 2024
             targets
             - dev_helper [lib] vendor/dev_helper/src/lib.rs
             dependencies
@@ -136,6 +140,7 @@ pub fn dev_helper() {}
 
             package helper [member]
             manifest vendor/helper/Cargo.toml
+            edition 2024
             targets
             - helper [lib] vendor/helper/src/lib.rs
             dependencies
@@ -177,6 +182,7 @@ pub mod marker {
 
             package alloc [sysroot]
             manifest sysroot/library/alloc/Cargo.toml
+            edition 2024
             targets
             - alloc [lib] sysroot/library/alloc/src/lib.rs
             dependencies
@@ -184,6 +190,7 @@ pub mod marker {
 
             package app [member]
             manifest Cargo.toml
+            edition 2024
             targets
             - app [lib] src/lib.rs
             dependencies
@@ -193,6 +200,7 @@ pub mod marker {
 
             package core [sysroot]
             manifest sysroot/library/core/Cargo.toml
+            edition 2024
             targets
             - core [lib] sysroot/library/core/src/lib.rs
             dependencies
@@ -200,6 +208,7 @@ pub mod marker {
 
             package std [sysroot]
             manifest sysroot/library/std/Cargo.toml
+            edition 2024
             targets
             - std [lib] sysroot/library/std/src/lib.rs
             dependencies

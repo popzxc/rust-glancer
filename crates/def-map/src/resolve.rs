@@ -14,8 +14,8 @@ use rg_parse::{self, Package};
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
-    DefMapDb, ImportData, ImportId, ModuleId, ModuleRef, ModuleScope, PackageSlot, ScopeBinding,
-    TargetRef,
+    DefMapDb, ImportData, ImportId, ImportPath, ModuleId, ModuleRef, ModuleScope, PackageSlot,
+    ScopeBinding, TargetRef,
     collect::{TargetState, collect_target_states},
     path_resolution::{
         namespace_for_def, resolve_path_to_defs, resolve_path_to_modules,
@@ -40,6 +40,8 @@ pub fn build_db(
         .context("while attempting to collect target definitions and imports")?;
 
     finalize_scopes(&mut target_states).context("while attempting to resolve target scopes")?;
+    select_preludes(workspace, parse.packages(), &mut target_states)
+        .context("while attempting to select target preludes")?;
 
     let packages = target_states
         .into_iter()
@@ -51,6 +53,7 @@ pub fn build_db(
                     // frozen path queries. Keep them as an extern prelude rather than pretending
                     // they are child modules of the crate root.
                     state.def_map.set_extern_prelude(state.implicit_roots);
+                    state.def_map.set_prelude(state.prelude);
                     state.def_map
                 })
                 .collect::<Vec<_>>(),
@@ -150,6 +153,78 @@ fn build_implicit_roots(
     }
 
     Ok(roots)
+}
+
+/// Selects the standard prelude module for each target after ordinary imports are known.
+///
+/// The prelude is not copied into every module scope. Instead, the frozen resolver treats it as a
+/// final fallback layer for unqualified names. That keeps the scopes honest while still making
+/// queries behave like editor users expect for names such as `Option` and `Vec`.
+fn select_preludes(
+    workspace: &WorkspaceMetadata,
+    packages: &[Package],
+    states: &mut [Vec<TargetState>],
+) -> anyhow::Result<()> {
+    let final_scopes = states
+        .iter()
+        .map(|package_states| {
+            package_states
+                .iter()
+                .map(|state| {
+                    state
+                        .def_map
+                        .modules()
+                        .iter()
+                        .map(|module| module.scope.clone())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut selected_preludes = states
+        .iter()
+        .map(|package_states| vec![None; package_states.len()])
+        .collect::<Vec<_>>();
+
+    for (package_slot, package_states) in states.iter().enumerate() {
+        let package = packages
+            .get(package_slot)
+            .expect("parse package should exist for every target state package");
+        let workspace_package = workspace.package(package.id()).with_context(|| {
+            format!(
+                "while attempting to fetch workspace metadata for package {}",
+                package.id()
+            )
+        })?;
+        let prelude_path = ImportPath::standard_prelude(workspace_package.edition);
+
+        for (target_slot, state) in package_states.iter().enumerate() {
+            let Some(root_module) = state.def_map.root_module() else {
+                continue;
+            };
+            let Some(prelude_module) = resolve_path_to_modules(
+                states,
+                &final_scopes,
+                state.target,
+                root_module,
+                &prelude_path,
+            )
+            .into_iter()
+            .next() else {
+                continue;
+            };
+
+            selected_preludes[package_slot][target_slot] = Some(prelude_module);
+        }
+    }
+
+    for (package_slot, package_states) in states.iter_mut().enumerate() {
+        for (target_slot, state) in package_states.iter_mut().enumerate() {
+            state.prelude = selected_preludes[package_slot][target_slot];
+        }
+    }
+
+    Ok(())
 }
 
 /// Resolves imports until every target scope stops changing.

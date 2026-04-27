@@ -36,6 +36,7 @@ pub(super) struct TargetState {
     pub(super) def_map: DefMap,
     pub(super) base_scopes: Vec<ModuleScope>,
     pub(super) implicit_roots: HashMap<String, ModuleRef>,
+    pub(super) prelude: Option<ModuleRef>,
 }
 
 /// Collects unresolved target states for every package/target pair.
@@ -146,6 +147,7 @@ impl<'db> TargetScopeCollector<'db> {
             def_map: self.def_map,
             base_scopes: self.base_scopes,
             implicit_roots: self.implicit_roots.clone(),
+            prelude: None,
         })
     }
 

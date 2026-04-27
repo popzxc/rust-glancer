@@ -28,6 +28,8 @@ pub struct ResolvePathResult {
 trait PathResolutionEnv {
     fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef>;
 
+    fn prelude_module(&self, target: TargetRef) -> Option<ModuleRef>;
+
     fn root_module(&self, target: TargetRef) -> Option<ModuleRef>;
 
     fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData>;
@@ -71,6 +73,10 @@ impl PathResolutionEnv for BuildResolutionEnv<'_> {
         self.target_state(target)?.implicit_roots.get(name).copied()
     }
 
+    fn prelude_module(&self, target: TargetRef) -> Option<ModuleRef> {
+        self.target_state(target)?.prelude
+    }
+
     fn root_module(&self, target: TargetRef) -> Option<ModuleRef> {
         Some(ModuleRef {
             target,
@@ -106,6 +112,10 @@ impl<'a> FrozenResolutionEnv<'a> {
 impl PathResolutionEnv for FrozenResolutionEnv<'_> {
     fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef> {
         self.db.def_map(target)?.extern_prelude().get(name).copied()
+    }
+
+    fn prelude_module(&self, target: TargetRef) -> Option<ModuleRef> {
+        self.db.def_map(target)?.prelude()
     }
 
     fn root_module(&self, target: TargetRef) -> Option<ModuleRef> {
@@ -311,8 +321,8 @@ fn resolve_path_with_env(
 
 /// Resolves the first path segment, which decides the starting search space.
 ///
-/// Relative names first try the current module scope and then fall back to extern roots. Absolute
-/// names skip local scope entirely and can only start from extern roots.
+/// Relative names first try the current module scope, then extern roots, then the standard
+/// prelude. Absolute names skip local scope and prelude fallback entirely.
 fn resolve_first_segment(
     env: &impl PathResolutionEnv,
     importing_module: ModuleRef,
@@ -358,9 +368,21 @@ fn resolve_first_segment(
                 return local_defs;
             }
 
-            env.extern_root(importing_module.target, name)
-                .map(|module_ref| vec![DefId::Module(module_ref)])
-                .unwrap_or_default()
+            if let Some(module_ref) = env.extern_root(importing_module.target, name) {
+                return vec![DefId::Module(module_ref)];
+            }
+
+            let Some(prelude_module) = env.prelude_module(importing_module.target) else {
+                return Vec::new();
+            };
+
+            resolve_name_in_module(
+                env,
+                importing_module,
+                prelude_module,
+                name,
+                NameResolutionFilter::for_path_prefix(path_prefix),
+            )
         }
     }
 }

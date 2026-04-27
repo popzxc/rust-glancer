@@ -8,12 +8,28 @@ use rg_def_map::{DefMapDb, ModuleRef, PackageSlot, TargetRef};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::{FileId, ParseDb, Span};
 use rg_semantic_ir::{FunctionRef, ItemOwner, SemanticIrDb, TraitRef, TypeDefId, TypeDefRef};
-use rg_workspace::{TargetKind, WorkspaceMetadata};
+use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::{FixtureMarkers, fixture_crate_with_markers};
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
     let db = AnalysisFixtureDb::build(WorkspaceMetadata::from_cargo(fixture.metadata()));
+    let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
+    let actual = format!("{}\n", renderer.render().trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) fn check_analysis_queries_with_sysroot(
+    fixture: &str,
+    queries: &[AnalysisQuery],
+    expect: Expect,
+) {
+    let (fixture, markers) = fixture_crate_with_markers(fixture);
+    let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
+        .expect("fixture sysroot should be complete");
+    let workspace =
+        WorkspaceMetadata::from_cargo(fixture.metadata()).with_sysroot_sources(Some(sysroot));
+    let db = AnalysisFixtureDb::build(workspace);
     let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
     expect.assert_eq(&actual);

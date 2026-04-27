@@ -11,6 +11,8 @@ pub struct DefMap {
     root_module: Option<ModuleId>,
     // Currently means “implicit roots visible to this target,” including sibling lib roots
     extern_prelude: HashMap<String, ModuleRef>,
+    // Standard prelude module selected for this target, if sysroot sources are available.
+    prelude: Option<ModuleRef>,
     pub modules: Vec<ModuleData>,
     pub local_defs: Vec<LocalDefData>,
     pub local_impls: Vec<LocalImplData>,
@@ -26,6 +28,11 @@ impl DefMap {
     /// Returns the external root names visible from this target.
     pub fn extern_prelude(&self) -> &HashMap<String, ModuleRef> {
         &self.extern_prelude
+    }
+
+    /// Returns the standard prelude module visible from this target, if it was discovered.
+    pub fn prelude(&self) -> Option<ModuleRef> {
+        self.prelude
     }
 
     /// Returns all modules in stable module-id order.
@@ -76,6 +83,10 @@ impl DefMap {
 
     pub(super) fn set_extern_prelude(&mut self, extern_prelude: HashMap<String, ModuleRef>) {
         self.extern_prelude = extern_prelude;
+    }
+
+    pub(super) fn set_prelude(&mut self, prelude: Option<ModuleRef>) {
+        self.prelude = prelude;
     }
 }
 

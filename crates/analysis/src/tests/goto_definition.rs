@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{AnalysisQuery, check_analysis_queries, check_analysis_queries_with_sysroot};
 
 #[test]
 fn resolves_body_references_to_definition_targets() {
@@ -296,6 +296,47 @@ fn main() {
 
             goto bin root to dependency item
             - struct Thing @ 1:1-1:18
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_standard_prelude_signature_paths() {
+    check_analysis_queries_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_prelude_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(_: Std$goto_prelude$Prelude) {}
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod marker {
+    pub struct StdPrelude;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::marker::StdPrelude;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto prelude type", "goto_prelude")
+                .in_lib("analysis_prelude_goto"),
+        ],
+        expect![[r#"
+            goto prelude type
+            - struct StdPrelude @ 2:5-2:27
         "#]],
     );
 }

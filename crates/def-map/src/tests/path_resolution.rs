@@ -150,25 +150,51 @@ edition = "2024"
 //- /src/lib.rs
 pub struct App;
 
+pub mod local_shadow {
+    pub struct Vec;
+}
+
 //- /sysroot/library/core/src/lib.rs
 pub mod marker {
     pub struct Core;
+    pub struct CorePrelude;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::marker::CorePrelude;
+    }
 }
 
 //- /sysroot/library/alloc/src/lib.rs
 pub mod marker {
     pub struct Alloc;
+    pub struct Vec;
 }
 
 //- /sysroot/library/std/src/lib.rs
 pub mod marker {
     pub struct Std;
+    pub struct StdPrelude;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::marker::StdPrelude;
+        pub use core::marker::CorePrelude;
+        pub use alloc::marker::Vec;
+    }
 }
 "#,
         &[
             PathResolutionQuery::lib("app", "crate", "std::marker::Std"),
             PathResolutionQuery::lib("app", "crate", "core::marker::Core"),
             PathResolutionQuery::lib("app", "crate", "alloc::marker::Alloc"),
+            PathResolutionQuery::lib("app", "crate", "StdPrelude"),
+            PathResolutionQuery::lib("app", "crate", "CorePrelude"),
+            PathResolutionQuery::lib("app", "crate", "Vec"),
+            PathResolutionQuery::lib("app", "crate::local_shadow", "Vec"),
+            PathResolutionQuery::lib("app", "crate", "::StdPrelude"),
             PathResolutionQuery::lib("std", "crate", "core::marker::Core"),
             PathResolutionQuery::lib("std", "crate", "alloc::marker::Alloc"),
             PathResolutionQuery::lib("alloc", "crate", "core::marker::Core"),
@@ -177,9 +203,60 @@ pub mod marker {
             app [lib] crate resolves std::marker::Std -> struct std[lib]::crate::marker::Std
             app [lib] crate resolves core::marker::Core -> struct core[lib]::crate::marker::Core
             app [lib] crate resolves alloc::marker::Alloc -> struct alloc[lib]::crate::marker::Alloc
+            app [lib] crate resolves StdPrelude -> struct std[lib]::crate::marker::StdPrelude
+            app [lib] crate resolves CorePrelude -> struct core[lib]::crate::marker::CorePrelude
+            app [lib] crate resolves Vec -> struct alloc[lib]::crate::marker::Vec
+            app [lib] crate::local_shadow resolves Vec -> struct app[lib]::crate::local_shadow::Vec
+            app [lib] crate resolves ::StdPrelude -> <none> (unresolved at segment #0)
             std [lib] crate resolves core::marker::Core -> struct core[lib]::crate::marker::Core
             std [lib] crate resolves alloc::marker::Alloc -> struct alloc[lib]::crate::marker::Alloc
             alloc [lib] crate resolves core::marker::Core -> struct core[lib]::crate::marker::Core
+        "#]],
+    );
+}
+
+#[test]
+fn selects_standard_prelude_from_package_edition() {
+    utils::check_project_path_resolution_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+//- /src/lib.rs
+pub struct App;
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod marker {
+    pub struct LegacyPrelude;
+    pub struct NewPrelude;
+}
+
+pub mod prelude {
+    pub mod rust_2021 {
+        pub use crate::marker::LegacyPrelude;
+    }
+
+    pub mod rust_2024 {
+        pub use crate::marker::NewPrelude;
+    }
+}
+"#,
+        &[
+            PathResolutionQuery::lib("app", "crate", "LegacyPrelude"),
+            PathResolutionQuery::lib("app", "crate", "NewPrelude"),
+        ],
+        expect![[r#"
+            app [lib] crate resolves LegacyPrelude -> struct std[lib]::crate::marker::LegacyPrelude
+            app [lib] crate resolves NewPrelude -> <none> (unresolved at segment #0)
         "#]],
     );
 }
