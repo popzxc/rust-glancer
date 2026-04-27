@@ -1,5 +1,5 @@
 use rg_body_ir::{
-    BodyData, BodyFieldRef, BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution,
+    BodyData, BodyFieldRef, BodyItemRef, BodyRef, BodyResolution, BodyTy, BodyTypePathResolution,
     ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef, Path, TargetRef};
@@ -13,87 +13,11 @@ use super::{
     data::{NavigationTarget, NavigationTargetKind, SymbolAt},
 };
 
-pub(super) struct SymbolResolver<'a, 'db>(&'a Analysis<'db>);
+pub(super) struct NavigationTargetResolver<'a, 'db>(&'a Analysis<'db>);
 
-impl<'a, 'db> SymbolResolver<'a, 'db> {
+impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
     pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
-    }
-
-    pub(super) fn resolve_symbol(&self, symbol: SymbolAt) -> Vec<NavigationTarget> {
-        match symbol {
-            SymbolAt::Binding { body, binding } => self
-                .body_data(body)
-                .and_then(|body_data| body_data.binding(binding))
-                .map(|binding_data| vec![NavigationTarget::from_binding(binding_data)])
-                .unwrap_or_default(),
-            SymbolAt::BodyPath {
-                body, scope, path, ..
-            } => self.navigation_targets_for_body_type_path(body, scope, &path),
-            SymbolAt::Def { def, .. } => self.navigation_target_for_def(def).into_iter().collect(),
-            SymbolAt::Expr { body, expr } => self
-                .body_data(body)
-                .and_then(|body_data| {
-                    body_data.expr(expr).map(|expr_data| {
-                        self.navigation_targets_for_resolution(body_data, &expr_data.resolution)
-                    })
-                })
-                .unwrap_or_default(),
-            SymbolAt::Field { field, .. } => self
-                .navigation_target_for_field(field)
-                .into_iter()
-                .collect(),
-            SymbolAt::Function { function, .. } => self
-                .navigation_target_for_function(function)
-                .into_iter()
-                .collect(),
-            SymbolAt::LocalItem { item, .. } => self
-                .navigation_target_for_body_item(item)
-                .into_iter()
-                .collect(),
-            SymbolAt::TypePath { context, path, .. } => {
-                self.navigation_targets_for_type_path(context, &path)
-            }
-            SymbolAt::UsePath { module, path, .. } => {
-                self.navigation_targets_for_use_path(module, &path)
-            }
-            SymbolAt::Body { .. } => Vec::new(),
-        }
-    }
-
-    fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
-        self.0.body_ir.body_data(body_ref)
-    }
-
-    fn navigation_targets_for_resolution(
-        &self,
-        body: &BodyData,
-        resolution: &BodyResolution,
-    ) -> Vec<NavigationTarget> {
-        match resolution {
-            BodyResolution::Local(binding) => body
-                .binding(*binding)
-                .map(NavigationTarget::from_binding)
-                .into_iter()
-                .collect(),
-            BodyResolution::LocalItem(item) => self
-                .navigation_target_for_body_item(*item)
-                .into_iter()
-                .collect(),
-            BodyResolution::Item(defs) => defs
-                .iter()
-                .filter_map(|def| self.navigation_target_for_def(*def))
-                .collect(),
-            BodyResolution::Field(fields) => fields
-                .iter()
-                .filter_map(|field| self.navigation_target_for_resolved_field(*field))
-                .collect(),
-            BodyResolution::Method(functions) => functions
-                .iter()
-                .filter_map(|function| self.navigation_target_for_resolved_function(*function))
-                .collect(),
-            BodyResolution::Unknown => Vec::new(),
-        }
     }
 
     fn navigation_target_for_def(&self, def: DefId) -> Option<NavigationTarget> {
@@ -218,6 +142,135 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         }
     }
 
+    fn navigation_target_for_trait(&self, trait_ref: TraitRef) -> Option<NavigationTarget> {
+        let local_def = self.0.semantic_ir.trait_data(trait_ref)?.local_def;
+
+        self.navigation_target_for_local_def(local_def)
+    }
+
+    fn navigation_target_for_type_def(&self, ty: TypeDefRef) -> Option<NavigationTarget> {
+        let local_def = self.0.semantic_ir.local_def_for_type_def(ty)?;
+
+        self.navigation_target_for_local_def(local_def)
+    }
+
+    fn navigation_targets_for_body_ty(&self, ty: &BodyTy) -> Vec<NavigationTarget> {
+        match ty {
+            BodyTy::LocalNominal(items) => items
+                .iter()
+                .filter_map(|item| self.navigation_target_for_body_item(*item))
+                .collect(),
+            BodyTy::Nominal(types) | BodyTy::SelfTy(types) => types
+                .iter()
+                .filter_map(|ty| self.navigation_target_for_type_def(*ty))
+                .collect(),
+            BodyTy::Unit | BodyTy::Never | BodyTy::Syntax(_) | BodyTy::Unknown => Vec::new(),
+        }
+    }
+
+    fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
+        self.0.body_ir.body_data(body_ref)
+    }
+}
+
+pub(super) struct SymbolResolver<'a, 'db>(&'a Analysis<'db>);
+
+impl<'a, 'db> SymbolResolver<'a, 'db> {
+    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
+        Self(analysis)
+    }
+
+    pub(super) fn resolve_symbol(&self, symbol: SymbolAt) -> Vec<NavigationTarget> {
+        match symbol {
+            SymbolAt::Binding { body, binding } => self
+                .body_data(body)
+                .and_then(|body_data| body_data.binding(binding))
+                .map(|binding_data| vec![NavigationTarget::from_binding(binding_data)])
+                .unwrap_or_default(),
+            SymbolAt::BodyPath {
+                body, scope, path, ..
+            } => self.navigation_targets_for_body_type_path(body, scope, &path),
+            SymbolAt::Def { def, .. } => self
+                .targets()
+                .navigation_target_for_def(def)
+                .into_iter()
+                .collect(),
+            SymbolAt::Expr { body, expr } => self
+                .body_data(body)
+                .and_then(|body_data| {
+                    body_data.expr(expr).map(|expr_data| {
+                        self.navigation_targets_for_resolution(body_data, &expr_data.resolution)
+                    })
+                })
+                .unwrap_or_default(),
+            SymbolAt::Field { field, .. } => self
+                .targets()
+                .navigation_target_for_field(field)
+                .into_iter()
+                .collect(),
+            SymbolAt::Function { function, .. } => self
+                .targets()
+                .navigation_target_for_function(function)
+                .into_iter()
+                .collect(),
+            SymbolAt::LocalItem { item, .. } => self
+                .targets()
+                .navigation_target_for_body_item(item)
+                .into_iter()
+                .collect(),
+            SymbolAt::TypePath { context, path, .. } => {
+                self.navigation_targets_for_type_path(context, &path)
+            }
+            SymbolAt::UsePath { module, path, .. } => {
+                self.navigation_targets_for_use_path(module, &path)
+            }
+            SymbolAt::Body { .. } => Vec::new(),
+        }
+    }
+
+    fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
+        self.0.body_ir.body_data(body_ref)
+    }
+
+    fn targets(&self) -> NavigationTargetResolver<'_, 'db> {
+        NavigationTargetResolver::new(self.0)
+    }
+
+    fn navigation_targets_for_resolution(
+        &self,
+        body: &BodyData,
+        resolution: &BodyResolution,
+    ) -> Vec<NavigationTarget> {
+        match resolution {
+            BodyResolution::Local(binding) => body
+                .binding(*binding)
+                .map(NavigationTarget::from_binding)
+                .into_iter()
+                .collect(),
+            BodyResolution::LocalItem(item) => self
+                .targets()
+                .navigation_target_for_body_item(*item)
+                .into_iter()
+                .collect(),
+            BodyResolution::Item(defs) => defs
+                .iter()
+                .filter_map(|def| self.targets().navigation_target_for_def(*def))
+                .collect(),
+            BodyResolution::Field(fields) => fields
+                .iter()
+                .filter_map(|field| self.targets().navigation_target_for_resolved_field(*field))
+                .collect(),
+            BodyResolution::Method(functions) => functions
+                .iter()
+                .filter_map(|function| {
+                    self.targets()
+                        .navigation_target_for_resolved_function(*function)
+                })
+                .collect(),
+            BodyResolution::Unknown => Vec::new(),
+        }
+    }
+
     fn navigation_targets_for_type_path(
         &self,
         context: TypePathContext,
@@ -241,7 +294,7 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
             .resolve_path(module, path)
             .resolved
             .into_iter()
-            .filter_map(|def| self.navigation_target_for_def(def))
+            .filter_map(|def| self.targets().navigation_target_for_def(def))
             .collect()
     }
 
@@ -270,11 +323,11 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
             SemanticTypePathResolution::SelfType(types)
             | SemanticTypePathResolution::TypeDefs(types) => types
                 .into_iter()
-                .filter_map(|ty| self.navigation_target_for_type_def(ty))
+                .filter_map(|ty| self.targets().navigation_target_for_type_def(ty))
                 .collect(),
             SemanticTypePathResolution::Traits(traits) => traits
                 .into_iter()
-                .filter_map(|trait_ref| self.navigation_target_for_trait(trait_ref))
+                .filter_map(|trait_ref| self.targets().navigation_target_for_trait(trait_ref))
                 .collect(),
             SemanticTypePathResolution::Unknown => Vec::new(),
         }
@@ -286,33 +339,22 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
     ) -> Vec<NavigationTarget> {
         match resolution {
             BodyTypePathResolution::BodyLocal(item) => self
+                .targets()
                 .navigation_target_for_body_item(item)
                 .into_iter()
                 .collect(),
             BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
                 types
                     .into_iter()
-                    .filter_map(|ty| self.navigation_target_for_type_def(ty))
+                    .filter_map(|ty| self.targets().navigation_target_for_type_def(ty))
                     .collect()
             }
             BodyTypePathResolution::Traits(traits) => traits
                 .into_iter()
-                .filter_map(|trait_ref| self.navigation_target_for_trait(trait_ref))
+                .filter_map(|trait_ref| self.targets().navigation_target_for_trait(trait_ref))
                 .collect(),
             BodyTypePathResolution::Unknown => Vec::new(),
         }
-    }
-
-    fn navigation_target_for_trait(&self, trait_ref: TraitRef) -> Option<NavigationTarget> {
-        let local_def = self.0.semantic_ir.trait_data(trait_ref)?.local_def;
-
-        self.navigation_target_for_local_def(local_def)
-    }
-
-    fn navigation_target_for_type_def(&self, ty: TypeDefRef) -> Option<NavigationTarget> {
-        let local_def = self.0.semantic_ir.local_def_for_type_def(ty)?;
-
-        self.navigation_target_for_local_def(local_def)
     }
 }
 
@@ -334,5 +376,26 @@ impl<'a, 'db> GotoResolver<'a, 'db> {
         };
 
         SymbolResolver::new(self.0).resolve_symbol(symbol)
+    }
+}
+
+pub(super) struct TypeDefinitionResolver<'a, 'db>(&'a Analysis<'db>);
+
+impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
+    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
+        Self(analysis)
+    }
+
+    pub(super) fn goto_type_definition(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> Vec<NavigationTarget> {
+        let Some(ty) = super::ty::TypeResolver::new(self.0).type_at(target, file_id, offset) else {
+            return Vec::new();
+        };
+
+        NavigationTargetResolver::new(self.0).navigation_targets_for_body_ty(&ty)
     }
 }

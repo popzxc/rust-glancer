@@ -39,6 +39,10 @@ impl AnalysisQuery {
         Self::new(title, marker, AnalysisQueryKind::GotoDefinition)
     }
 
+    pub(super) fn goto_type(title: &'static str, marker: &'static str) -> Self {
+        Self::new(title, marker, AnalysisQueryKind::GotoTypeDefinition)
+    }
+
     pub(super) fn ty(title: &'static str, marker: &'static str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::TypeAt)
     }
@@ -106,6 +110,7 @@ enum AnalysisQueryKind {
     SymbolAt,
     ResolveSymbol,
     GotoDefinition,
+    GotoTypeDefinition,
     TypeAt,
     CompletionsAtDot,
 }
@@ -190,6 +195,14 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             AnalysisQueryKind::GotoDefinition => {
                 self.render_targets(
                     self.db.analysis().goto_definition(target, file_id, offset),
+                    &mut dump,
+                );
+            }
+            AnalysisQueryKind::GotoTypeDefinition => {
+                self.render_targets(
+                    self.db
+                        .analysis()
+                        .goto_type_definition(target, file_id, offset),
                     &mut dump,
                 );
             }

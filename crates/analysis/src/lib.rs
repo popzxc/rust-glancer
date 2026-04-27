@@ -61,6 +61,16 @@ impl<'a> Analysis<'a> {
         navigation::GotoResolver::new(self).goto_definition(target, file_id, offset)
     }
 
+    /// Returns best-effort type definitions for the symbol under a source offset.
+    pub fn goto_type_definition(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> Vec<NavigationTarget> {
+        navigation::TypeDefinitionResolver::new(self).goto_type_definition(target, file_id, offset)
+    }
+
     /// Returns the best-effort Body IR type under a source offset.
     pub fn type_at(&self, target: TargetRef, file_id: FileId, offset: u32) -> Option<BodyTy> {
         ty::TypeResolver::new(self).type_at(target, file_id, offset)
