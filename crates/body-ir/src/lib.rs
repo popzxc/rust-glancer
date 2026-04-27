@@ -10,9 +10,10 @@ mod tests;
 pub use self::{
     cursor::{BodyCursorCandidate, DotReceiver},
     data::{
-        BindingData, BodyData, BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData,
-        BodyIrBuildPolicy, BodyIrDb, BodyItemKind, BodyResolution, BodyTy, BodyTypePathResolution,
-        ExprData, ExprKind, ResolvedFieldRef, ResolvedFunctionRef, StmtKind, TargetBodiesStatus,
+        BindingData, BodyData, BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyGenericArg,
+        BodyImplData, BodyIrBuildPolicy, BodyIrDb, BodyItemKind, BodyLocalNominalTy, BodyNominalTy,
+        BodyResolution, BodyTy, BodyTypePathResolution, ExprData, ExprKind, ResolvedFieldRef,
+        ResolvedFunctionRef, StmtKind, TargetBodiesStatus,
     },
     ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,

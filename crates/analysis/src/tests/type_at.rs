@@ -144,6 +144,141 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn propagates_basic_generic_arguments_through_fields_and_methods() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_generic_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Error;
+
+pub struct Option<T> {
+    pub value: T,
+}
+
+pub struct Vec<T> {
+    pub first: T,
+}
+
+pub struct Result<T, E> {
+    pub ok: T,
+    pub err: E,
+}
+
+pub struct Wrapper<T> {
+    pub value: T,
+}
+
+impl<U> Wrapper<U> {
+    pub fn get(&self) -> U {
+        missing()
+    }
+}
+
+pub fn use_it() {
+    let wrapped: Wrapper<Result<Vec<Option<User>>, Error>>;
+    let _result = wrapped.va$type_result$lue;
+    let _vec = wrapped.value.o$type_vec$k;
+    let _option = wrapped.value.ok.f$type_option$irst;
+    let _user = wrapped.value.ok.first.va$type_user$lue;
+    let _method = wrapped.ge$type_method$t();
+}
+"#,
+        &[
+            AnalysisQuery::ty("generic result field", "type_result"),
+            AnalysisQuery::ty("generic vec field", "type_vec"),
+            AnalysisQuery::ty("generic option field", "type_option"),
+            AnalysisQuery::ty("generic user field", "type_user"),
+            AnalysisQuery::ty("generic method return", "type_method"),
+        ],
+        expect![[r#"
+            generic result field
+            - nominal struct analysis_generic_type_at[lib]::crate::Result<nominal struct analysis_generic_type_at[lib]::crate::Vec<nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>>, nominal struct analysis_generic_type_at[lib]::crate::Error>
+
+            generic vec field
+            - nominal struct analysis_generic_type_at[lib]::crate::Vec<nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>>
+
+            generic option field
+            - nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>
+
+            generic user field
+            - nominal struct analysis_generic_type_at[lib]::crate::User
+
+            generic method return
+            - nominal struct analysis_generic_type_at[lib]::crate::Result<nominal struct analysis_generic_type_at[lib]::crate::Vec<nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>>, nominal struct analysis_generic_type_at[lib]::crate::Error>
+        "#]],
+    );
+}
+
+#[test]
+fn does_not_treat_concrete_impl_self_args_as_type_params() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_concrete_impl_args"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Error;
+
+pub struct Wrapper<T> {
+    value: T,
+}
+
+impl<T> Wrapper<T> {
+    pub fn generic(&self) -> T {
+        missing()
+    }
+}
+
+impl Wrapper<User> {
+    pub fn user_only(&self) -> User {
+        missing()
+    }
+}
+
+pub fn use_it(user: Wrapper<User>, error: Wrapper<Error>) {
+    let _user = user.user$type_user_method$_only();
+    let _error = error.gen$type_generic_method$eric();
+    let _missing = error.user$type_wrong_method$_only();
+}
+"#,
+        &[
+            AnalysisQuery::ty(
+                "concrete impl method on matching receiver",
+                "type_user_method",
+            ),
+            AnalysisQuery::ty(
+                "generic impl method on concrete receiver",
+                "type_generic_method",
+            ),
+            AnalysisQuery::ty(
+                "concrete impl method on wrong receiver",
+                "type_wrong_method",
+            ),
+        ],
+        expect![[r#"
+            concrete impl method on matching receiver
+            - nominal struct analysis_concrete_impl_args[lib]::crate::User
+
+            generic impl method on concrete receiver
+            - nominal struct analysis_concrete_impl_args[lib]::crate::Error
+
+            concrete impl method on wrong receiver
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn returns_body_local_field_access_types() {
     check_analysis_queries(
         r#"
@@ -169,6 +304,36 @@ pub fn use_it() {
         expect![[r#"
             type at body-local field
             - nominal struct analysis_body_local_field_type[lib]::crate::GlobalId
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_basic_generic_arguments_for_body_local_fields() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_generic_field_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub fn use_it() {
+    struct Slot<T> {
+        value: T,
+    }
+
+    let slot: Slot<User>;
+    let _user = slot.va$type_field$lue;
+}
+"#,
+        &[AnalysisQuery::ty("body-local generic field", "type_field")],
+        expect![[r#"
+            body-local generic field
+            - nominal struct analysis_body_local_generic_field_type[lib]::crate::User
         "#]],
     );
 }

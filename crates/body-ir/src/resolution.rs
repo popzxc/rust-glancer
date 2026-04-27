@@ -4,16 +4,18 @@
 //! local-vs-item path resolution and simple types that are already present in signatures.
 
 use rg_def_map::{DefId, DefMapDb, ModuleRef, PackageSlot, Path, TargetRef};
-use rg_item_tree::{FieldKey, TypeRef};
+use rg_item_tree::{FieldKey, GenericArg, GenericParams, TypeRef};
 use rg_parse::TargetId;
 use rg_semantic_ir::{
-    FieldRef, FunctionRef, SemanticIrDb, SemanticTypePathResolution, TypeDefRef, TypePathContext,
+    FieldRef, FunctionRef, ImplRef, ItemOwner, SemanticIrDb, SemanticTypePathResolution,
+    TypeDefRef, TypePathContext,
 };
 
 use super::{
     data::{
-        BindingKind, BodyData, BodyIrDb, BodyResolution, BodyTy, BodyTypePathResolution, ExprKind,
-        ResolvedFieldRef, ResolvedFunctionRef, TargetBodiesStatus,
+        BindingKind, BodyData, BodyGenericArg, BodyIrDb, BodyLocalNominalTy, BodyNominalTy,
+        BodyResolution, BodyTy, BodyTypePathResolution, ExprKind, ResolvedFieldRef,
+        ResolvedFunctionRef, TargetBodiesStatus,
     },
     ids::{
         BindingId, BodyFieldRef, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
@@ -82,7 +84,34 @@ pub(super) fn ty_for_field(
         &field_data.field.ty,
         TypePathContext::module(field_data.owner_module),
         BodyTy::Unknown,
+        &TypeSubst::new(),
     ))
+}
+
+pub(super) fn semantic_function_applies_to_receiver(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    function_ref: FunctionRef,
+    receiver_ty: &BodyNominalTy,
+) -> bool {
+    let Some(function_data) = semantic_ir.function_data(function_ref) else {
+        return false;
+    };
+    let ItemOwner::Impl(impl_id) = function_data.owner else {
+        return true;
+    };
+    let impl_ref = ImplRef {
+        target: function_ref.target,
+        id: impl_id,
+    };
+    let Some(impl_data) = semantic_ir.impl_data(impl_ref) else {
+        return false;
+    };
+    if !impl_data.resolved_self_tys.contains(&receiver_ty.def) {
+        return false;
+    }
+
+    impl_self_args_match_receiver(def_map, semantic_ir, impl_ref, impl_data, receiver_ty)
 }
 
 struct BodyResolver<'db, 'body> {
@@ -134,7 +163,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
                 .type_path_resolver()
                 .self_tys_for_function(self.body.owner);
             if !self_tys.is_empty() {
-                return BodyTy::SelfTy(self_tys);
+                return BodyTy::SelfTy(self_tys.into_iter().map(BodyNominalTy::bare).collect());
             }
         }
 
@@ -207,11 +236,14 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             BodyTypePathResolution::BodyLocal(item_ref) => {
                 return (
                     BodyResolution::LocalItem(item_ref),
-                    BodyTy::LocalNominal(vec![item_ref]),
+                    BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
                 );
             }
             BodyTypePathResolution::SelfType(types) => {
-                return (BodyResolution::Unknown, BodyTy::SelfTy(types));
+                return (
+                    BodyResolution::Unknown,
+                    BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect()),
+                );
             }
             BodyTypePathResolution::TypeDefs(_)
             | BodyTypePathResolution::Traits(_)
@@ -235,8 +267,8 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         let mut fields = Vec::new();
         let mut field_tys = Vec::new();
 
-        for item_ref in self.body.exprs[base.0].ty.local_items() {
-            let Some(field_ref) = self.local_field_for_type(*item_ref, field) else {
+        for local_ty in self.body.exprs[base.0].ty.local_nominals() {
+            let Some(field_ref) = self.local_field_for_type(local_ty.item, field) else {
                 continue;
             };
             push_unique(&mut fields, ResolvedFieldRef::BodyLocal(field_ref));
@@ -247,14 +279,15 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             let Some(field_data) = item.field(field_ref.index) else {
                 continue;
             };
+            let subst = self.local_type_subst(local_ty);
             let field_ty = self
                 .type_path_resolver()
-                .ty_from_type_ref_in_scope(&field_data.ty, item.scope);
+                .ty_from_type_ref_in_scope_with_subst(&field_data.ty, item.scope, &subst);
             push_unique(&mut field_tys, field_ty);
         }
 
-        for ty in self.body.exprs[base.0].ty.type_defs() {
-            let Some(field_ref) = self.semantic_ir.field_for_type(*ty, field) else {
+        for nominal_ty in self.body.exprs[base.0].ty.nominal_tys() {
+            let Some(field_ref) = self.semantic_ir.field_for_type(nominal_ty.def, field) else {
                 continue;
             };
             push_unique(&mut fields, ResolvedFieldRef::Semantic(field_ref));
@@ -262,10 +295,14 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             let Some(field_data) = self.semantic_ir.field_data(field_ref) else {
                 continue;
             };
-            let field_ty = self.type_path_resolver().ty_from_type_ref_in_context(
-                &field_data.field.ty,
-                TypePathContext::module(field_data.owner_module),
-            );
+            let subst = self.semantic_type_subst(nominal_ty);
+            let field_ty = self
+                .type_path_resolver()
+                .ty_from_type_ref_in_context_with_subst(
+                    &field_data.field.ty,
+                    TypePathContext::module(field_data.owner_module),
+                    &subst,
+                );
             push_unique(&mut field_tys, field_ty);
         }
 
@@ -298,8 +335,8 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         let mut return_tys = Vec::new();
         let receiver_ty = &self.body.exprs[receiver.0].ty;
 
-        for item_ref in receiver_ty.local_items() {
-            for function_ref in self.local_functions_for_type(*item_ref) {
+        for local_ty in receiver_ty.local_nominals() {
+            for function_ref in self.local_functions_for_type(local_ty.item) {
                 let Some(function_data) = self.body.local_function(function_ref.function) else {
                     continue;
                 };
@@ -308,12 +345,15 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
                 }
 
                 push_unique(&mut functions, ResolvedFunctionRef::BodyLocal(function_ref));
-                push_unique(&mut return_tys, self.local_function_return_ty(function_ref));
+                push_unique(
+                    &mut return_tys,
+                    self.local_function_return_ty(function_ref, Some(local_ty)),
+                );
             }
         }
 
-        for ty in receiver_ty.type_defs() {
-            for function_ref in self.semantic_functions_for_type(*ty) {
+        for nominal_ty in receiver_ty.nominal_tys() {
+            for function_ref in self.semantic_functions_for_type(nominal_ty) {
                 let Some(function_data) = self.semantic_ir.function_data(function_ref) else {
                     continue;
                 };
@@ -324,7 +364,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
                 push_unique(&mut functions, ResolvedFunctionRef::Semantic(function_ref));
                 push_unique(
                     &mut return_tys,
-                    self.semantic_function_return_ty(function_ref),
+                    self.semantic_function_return_ty(function_ref, Some(nominal_ty)),
                 );
             }
         }
@@ -367,15 +407,84 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             .inherent_functions_for_local_type(self.body_ref, item_ref)
     }
 
-    fn semantic_functions_for_type(&self, ty: TypeDefRef) -> Vec<FunctionRef> {
-        let mut functions = self.semantic_ir.inherent_functions_for_type(ty);
-        for function in self.semantic_ir.trait_functions_for_type(ty) {
+    fn semantic_functions_for_type(&self, ty: &BodyNominalTy) -> Vec<FunctionRef> {
+        let mut functions = self.semantic_ir.inherent_functions_for_type(ty.def);
+        functions.retain(|function| {
+            semantic_function_applies_to_receiver(self.def_map, self.semantic_ir, *function, ty)
+        });
+
+        for function in self.semantic_ir.trait_functions_for_type(ty.def) {
             push_unique(&mut functions, function);
         }
         functions
     }
 
-    fn local_function_return_ty(&self, function_ref: BodyFunctionRef) -> BodyTy {
+    fn local_type_subst(&self, ty: &BodyLocalNominalTy) -> TypeSubst {
+        let Some(item) = self.body.local_item(ty.item.item) else {
+            return TypeSubst::new();
+        };
+
+        subst_from_generics(&item.generics, &ty.args)
+    }
+
+    fn semantic_type_subst(&self, ty: &BodyNominalTy) -> TypeSubst {
+        let Some(generics) = self.semantic_ir.generic_params_for_type_def(ty.def) else {
+            return TypeSubst::new();
+        };
+
+        subst_from_generics(generics, &ty.args)
+    }
+
+    fn semantic_impl_self_subst(
+        &self,
+        function_ref: FunctionRef,
+        receiver_ty: &BodyNominalTy,
+    ) -> TypeSubst {
+        let Some(function_data) = self.semantic_ir.function_data(function_ref) else {
+            return TypeSubst::new();
+        };
+        let ItemOwner::Impl(impl_id) = function_data.owner else {
+            return TypeSubst::new();
+        };
+        let Some(impl_data) = self.semantic_ir.impl_data(ImplRef {
+            target: function_ref.target,
+            id: impl_id,
+        }) else {
+            return TypeSubst::new();
+        };
+        let TypeRef::Path(self_ty) = &impl_data.self_ty else {
+            return TypeSubst::new();
+        };
+        let Some(segment) = self_ty.segments.last() else {
+            return TypeSubst::new();
+        };
+
+        let impl_type_params = impl_type_param_names(&impl_data.generics);
+        let receiver_type_args = receiver_ty
+            .args
+            .iter()
+            .filter_map(body_generic_arg_ty)
+            .collect::<Vec<_>>();
+
+        segment
+            .args
+            .iter()
+            .filter_map(generic_arg_type_ref)
+            .zip(receiver_type_args)
+            .filter_map(|(impl_arg, receiver_arg)| {
+                let name = type_param_name_from_type_ref(impl_arg)?;
+                impl_type_params
+                    .contains(&name.as_str())
+                    .then_some((name, receiver_arg))
+            })
+            .collect()
+    }
+
+    fn local_function_return_ty(
+        &self,
+        function_ref: BodyFunctionRef,
+        receiver_ty: Option<&BodyLocalNominalTy>,
+    ) -> BodyTy {
         let Some(function_data) = self.body.local_function(function_ref.function) else {
             return BodyTy::Unknown;
         };
@@ -385,12 +494,16 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
 
         match function_data.owner {
             super::data::BodyFunctionOwner::LocalImpl(impl_id) => {
-                self.ty_from_type_ref_for_local_impl(ret_ty, impl_id)
+                self.ty_from_type_ref_for_local_impl(ret_ty, impl_id, receiver_ty)
             }
         }
     }
 
-    fn semantic_function_return_ty(&self, function_ref: FunctionRef) -> BodyTy {
+    fn semantic_function_return_ty(
+        &self,
+        function_ref: FunctionRef,
+        receiver_ty: Option<&BodyNominalTy>,
+    ) -> BodyTy {
         let Some(function_data) = self.semantic_ir.function_data(function_ref) else {
             return BodyTy::Unknown;
         };
@@ -398,11 +511,30 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             return BodyTy::Unit;
         };
 
+        if receiver_ty.is_some() && type_ref_is_self(ret_ty) {
+            return receiver_ty
+                .cloned()
+                .map(|ty| BodyTy::Nominal(vec![ty]))
+                .unwrap_or(BodyTy::Unknown);
+        }
+
+        let subst = receiver_ty
+            .map(|ty| {
+                let mut subst = self.semantic_type_subst(ty);
+                subst.extend(self.semantic_impl_self_subst(function_ref, ty));
+                subst
+            })
+            .unwrap_or_default();
         self.type_path_resolver()
-            .ty_from_type_ref_for_function(ret_ty, function_ref)
+            .ty_from_type_ref_for_function_with_subst(ret_ty, function_ref, &subst)
     }
 
-    fn ty_from_type_ref_for_local_impl(&self, ty: &TypeRef, impl_id: BodyImplId) -> BodyTy {
+    fn ty_from_type_ref_for_local_impl(
+        &self,
+        ty: &TypeRef,
+        impl_id: BodyImplId,
+        receiver_ty: Option<&BodyLocalNominalTy>,
+    ) -> BodyTy {
         let Some(impl_data) = self.body.local_impl(impl_id) else {
             return BodyTy::Unknown;
         };
@@ -410,15 +542,21 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         if let TypeRef::Path(type_path) = ty {
             let path = Path::from_type_path(type_path);
             if path.is_self_type() {
+                if let Some(receiver_ty) = receiver_ty {
+                    return BodyTy::LocalNominal(vec![receiver_ty.clone()]);
+                }
                 return impl_data
                     .self_item
-                    .map(|item| BodyTy::LocalNominal(vec![item]))
+                    .map(|item| BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)]))
                     .unwrap_or(BodyTy::Unknown);
             }
         }
 
+        let subst = receiver_ty
+            .map(|ty| self.local_type_subst(ty))
+            .unwrap_or_default();
         self.type_path_resolver()
-            .ty_from_type_ref_in_scope(ty, impl_data.scope)
+            .ty_from_type_ref_in_scope_with_subst(ty, impl_data.scope, &subst)
     }
 
     fn resolve_local_name(
@@ -450,16 +588,11 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         };
         let callee_data = &self.body.exprs[callee.0];
 
-        if let BodyTy::Nominal(types) = &callee_data.ty {
-            return BodyTy::Nominal(types.clone());
-        }
-
-        if let BodyTy::SelfTy(types) = &callee_data.ty {
-            return BodyTy::SelfTy(types.clone());
-        }
-
-        if let BodyTy::LocalNominal(items) = &callee_data.ty {
-            return BodyTy::LocalNominal(items.clone());
+        if matches!(
+            callee_data.ty,
+            BodyTy::Nominal(_) | BodyTy::SelfTy(_) | BodyTy::LocalNominal(_)
+        ) {
+            return callee_data.ty.clone();
         }
 
         let BodyResolution::Item(defs) = &callee_data.resolution else {
@@ -507,7 +640,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         if type_defs.is_empty() {
             BodyTy::Unknown
         } else {
-            BodyTy::Nominal(type_defs)
+            BodyTy::Nominal(type_defs.into_iter().map(BodyNominalTy::bare).collect())
         }
     }
 
@@ -525,6 +658,8 @@ struct BodyTypePathResolver<'db, 'body> {
     body_ref: BodyRef,
     body: &'body BodyData,
 }
+
+type TypeSubst = Vec<(String, BodyTy)>;
 
 impl BodyTypePathResolver<'_, '_> {
     fn resolve_in_scope(&self, scope: ScopeId, path: &Path) -> BodyTypePathResolution {
@@ -548,17 +683,33 @@ impl BodyTypePathResolver<'_, '_> {
     }
 
     fn ty_from_type_ref_in_scope(&self, ty: &TypeRef, scope: ScopeId) -> BodyTy {
+        self.ty_from_type_ref_in_scope_with_subst(ty, scope, &TypeSubst::new())
+    }
+
+    fn ty_from_type_ref_in_scope_with_subst(
+        &self,
+        ty: &TypeRef,
+        scope: ScopeId,
+        subst: &TypeSubst,
+    ) -> BodyTy {
         match ty {
             TypeRef::Path(type_path) => {
                 let path = Path::from_type_path(type_path);
-                self.ty_from_body_resolution(
+                if let Some(ty) = substitute_type_param(&path, subst) {
+                    return ty;
+                }
+
+                let args = self.generic_args_from_type_path_in_scope(type_path, scope, subst);
+                self.ty_from_body_resolution_with_args(
                     self.resolve_in_scope(scope, &path),
                     BodyTy::Syntax(ty.clone()),
+                    args,
                 )
             }
             _ => self.ty_from_type_ref_in_context(
                 ty,
                 self.context_for_function(self.body.owner, self.body.owner_module),
+                subst,
             ),
         }
     }
@@ -582,19 +733,44 @@ impl BodyTypePathResolver<'_, '_> {
     }
 
     fn ty_from_type_ref_for_function(&self, ty: &TypeRef, function: FunctionRef) -> BodyTy {
-        self.ty_from_type_ref_in_context(
+        self.ty_from_type_ref_for_function_with_subst(ty, function, &TypeSubst::new())
+    }
+
+    fn ty_from_type_ref_for_function_with_subst(
+        &self,
+        ty: &TypeRef,
+        function: FunctionRef,
+        subst: &TypeSubst,
+    ) -> BodyTy {
+        self.ty_from_type_ref_in_context_with_subst(
             ty,
             self.context_for_function(function, self.body.owner_module),
+            subst,
         )
     }
 
-    fn ty_from_type_ref_in_context(&self, ty: &TypeRef, context: TypePathContext) -> BodyTy {
+    fn ty_from_type_ref_in_context(
+        &self,
+        ty: &TypeRef,
+        context: TypePathContext,
+        subst: &TypeSubst,
+    ) -> BodyTy {
+        self.ty_from_type_ref_in_context_with_subst(ty, context, subst)
+    }
+
+    fn ty_from_type_ref_in_context_with_subst(
+        &self,
+        ty: &TypeRef,
+        context: TypePathContext,
+        subst: &TypeSubst,
+    ) -> BodyTy {
         ty_from_type_ref_in_context(
             self.def_map,
             self.semantic_ir,
             ty,
             context,
             BodyTy::Syntax(ty.clone()),
+            subst,
         )
     }
 
@@ -636,12 +812,61 @@ impl BodyTypePathResolver<'_, '_> {
         }
     }
 
-    fn ty_from_body_resolution(
+    fn ty_from_body_resolution_with_args(
         &self,
         resolution: BodyTypePathResolution,
         fallback: BodyTy,
+        args: Vec<BodyGenericArg>,
     ) -> BodyTy {
-        ty_from_body_resolution(resolution, fallback)
+        ty_from_body_resolution(resolution, fallback, args)
+    }
+
+    fn generic_args_from_type_path_in_scope(
+        &self,
+        type_path: &rg_item_tree::TypePath,
+        scope: ScopeId,
+        subst: &TypeSubst,
+    ) -> Vec<BodyGenericArg> {
+        type_path
+            .segments
+            .last()
+            .map(|segment| {
+                self.generic_args_from_item_tree_args_in_scope(&segment.args, scope, subst)
+            })
+            .unwrap_or_default()
+    }
+
+    fn generic_args_from_item_tree_args_in_scope(
+        &self,
+        args: &[GenericArg],
+        scope: ScopeId,
+        subst: &TypeSubst,
+    ) -> Vec<BodyGenericArg> {
+        args.iter()
+            .map(|arg| self.generic_arg_from_item_tree_arg_in_scope(arg, scope, subst))
+            .collect()
+    }
+
+    fn generic_arg_from_item_tree_arg_in_scope(
+        &self,
+        arg: &GenericArg,
+        scope: ScopeId,
+        subst: &TypeSubst,
+    ) -> BodyGenericArg {
+        match arg {
+            GenericArg::Type(ty) => BodyGenericArg::Type(Box::new(
+                self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst),
+            )),
+            GenericArg::Lifetime(lifetime) => BodyGenericArg::Lifetime(lifetime.clone()),
+            GenericArg::Const(value) => BodyGenericArg::Const(value.clone()),
+            GenericArg::AssocType { name, ty } => BodyGenericArg::AssocType {
+                name: name.clone(),
+                ty: ty.as_ref().map(|ty| {
+                    Box::new(self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst))
+                }),
+            },
+            GenericArg::Unsupported(text) => BodyGenericArg::Unsupported(text.clone()),
+        }
     }
 }
 
@@ -665,15 +890,28 @@ fn ty_from_type_ref_in_context(
     ty: &TypeRef,
     context: TypePathContext,
     unresolved_path_fallback: BodyTy,
+    subst: &TypeSubst,
 ) -> BodyTy {
     match ty {
         TypeRef::Unit => BodyTy::Unit,
         TypeRef::Never => BodyTy::Never,
         TypeRef::Path(type_path) => {
             let path = Path::from_type_path(type_path);
+            if let Some(ty) = substitute_type_param(&path, subst) {
+                return ty;
+            }
+
+            let args = generic_args_from_type_path_in_context(
+                def_map,
+                semantic_ir,
+                type_path,
+                context,
+                subst,
+            );
             ty_from_body_resolution(
                 resolve_type_path_in_context(def_map, semantic_ir, context, &path),
                 unresolved_path_fallback,
+                args,
             )
         }
         TypeRef::Unknown(_) | TypeRef::Infer => BodyTy::Unknown,
@@ -682,13 +920,228 @@ fn ty_from_type_ref_in_context(
     }
 }
 
-fn ty_from_body_resolution(resolution: BodyTypePathResolution, fallback: BodyTy) -> BodyTy {
+fn ty_from_body_resolution(
+    resolution: BodyTypePathResolution,
+    fallback: BodyTy,
+    args: Vec<BodyGenericArg>,
+) -> BodyTy {
     match resolution {
-        BodyTypePathResolution::BodyLocal(item) => BodyTy::LocalNominal(vec![item]),
-        BodyTypePathResolution::SelfType(types) => BodyTy::SelfTy(types),
-        BodyTypePathResolution::TypeDefs(types) => BodyTy::Nominal(types),
+        BodyTypePathResolution::BodyLocal(item) => {
+            BodyTy::LocalNominal(vec![BodyLocalNominalTy { item, args }])
+        }
+        BodyTypePathResolution::SelfType(types) => BodyTy::SelfTy(
+            types
+                .into_iter()
+                .map(|def| BodyNominalTy {
+                    def,
+                    args: args.clone(),
+                })
+                .collect(),
+        ),
+        BodyTypePathResolution::TypeDefs(types) => BodyTy::Nominal(
+            types
+                .into_iter()
+                .map(|def| BodyNominalTy {
+                    def,
+                    args: args.clone(),
+                })
+                .collect(),
+        ),
         BodyTypePathResolution::Traits(_) => fallback,
         BodyTypePathResolution::Unknown => fallback,
+    }
+}
+
+fn impl_self_args_match_receiver(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    impl_ref: ImplRef,
+    impl_data: &rg_semantic_ir::ImplData,
+    receiver_ty: &BodyNominalTy,
+) -> bool {
+    let TypeRef::Path(self_ty) = &impl_data.self_ty else {
+        return true;
+    };
+    let Some(segment) = self_ty.segments.last() else {
+        return true;
+    };
+
+    let impl_type_args = segment
+        .args
+        .iter()
+        .filter_map(generic_arg_type_ref)
+        .collect::<Vec<_>>();
+    if impl_type_args.is_empty() {
+        return true;
+    }
+
+    let receiver_type_args = receiver_ty
+        .args
+        .iter()
+        .filter_map(body_generic_arg_ty)
+        .collect::<Vec<_>>();
+    if impl_type_args.len() != receiver_type_args.len() {
+        return false;
+    }
+
+    let impl_type_params = impl_type_param_names(&impl_data.generics);
+    for (impl_arg, receiver_arg) in impl_type_args.into_iter().zip(receiver_type_args) {
+        if type_param_name_from_type_ref(impl_arg)
+            .as_deref()
+            .is_some_and(|name| impl_type_params.contains(&name))
+        {
+            continue;
+        }
+
+        let context = TypePathContext {
+            module: impl_data.owner,
+            impl_ref: Some(impl_ref),
+        };
+        let impl_arg_ty = ty_from_type_ref_in_context(
+            def_map,
+            semantic_ir,
+            impl_arg,
+            context,
+            BodyTy::Syntax(impl_arg.clone()),
+            &TypeSubst::new(),
+        );
+        if impl_arg_ty != receiver_arg {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn subst_from_generics(generics: &GenericParams, args: &[BodyGenericArg]) -> TypeSubst {
+    let type_args = args.iter().filter_map(body_generic_arg_ty);
+
+    generics
+        .types
+        .iter()
+        .zip(type_args)
+        .map(|(param, ty)| (param.name.clone(), ty))
+        .collect()
+}
+
+fn body_generic_arg_ty(arg: &BodyGenericArg) -> Option<BodyTy> {
+    match arg {
+        BodyGenericArg::Type(ty) => Some((**ty).clone()),
+        BodyGenericArg::Lifetime(_)
+        | BodyGenericArg::Const(_)
+        | BodyGenericArg::AssocType { .. }
+        | BodyGenericArg::Unsupported(_) => None,
+    }
+}
+
+fn impl_type_param_names(generics: &GenericParams) -> Vec<&str> {
+    generics
+        .types
+        .iter()
+        .map(|param| param.name.as_str())
+        .collect()
+}
+
+fn generic_arg_type_ref(arg: &GenericArg) -> Option<&TypeRef> {
+    match arg {
+        GenericArg::Type(ty) => Some(ty),
+        GenericArg::Lifetime(_)
+        | GenericArg::Const(_)
+        | GenericArg::AssocType { .. }
+        | GenericArg::Unsupported(_) => None,
+    }
+}
+
+fn type_param_name_from_type_ref(ty: &TypeRef) -> Option<String> {
+    let TypeRef::Path(path) = ty else {
+        return None;
+    };
+
+    Path::from_type_path(path)
+        .single_name()
+        .map(ToString::to_string)
+}
+
+fn substitute_type_param(path: &Path, subst: &TypeSubst) -> Option<BodyTy> {
+    let name = path.single_name()?;
+    subst
+        .iter()
+        .rev()
+        .find_map(|(param, ty)| (param == name).then(|| ty.clone()))
+}
+
+fn type_ref_is_self(ty: &TypeRef) -> bool {
+    Path::from_type_ref(ty).is_some_and(|path| path.is_self_type())
+}
+
+fn generic_args_from_type_path_in_context(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    type_path: &rg_item_tree::TypePath,
+    context: TypePathContext,
+    subst: &TypeSubst,
+) -> Vec<BodyGenericArg> {
+    type_path
+        .segments
+        .last()
+        .map(|segment| {
+            generic_args_from_item_tree_args_in_context(
+                def_map,
+                semantic_ir,
+                &segment.args,
+                context,
+                subst,
+            )
+        })
+        .unwrap_or_default()
+}
+
+fn generic_args_from_item_tree_args_in_context(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    args: &[GenericArg],
+    context: TypePathContext,
+    subst: &TypeSubst,
+) -> Vec<BodyGenericArg> {
+    args.iter()
+        .map(|arg| {
+            generic_arg_from_item_tree_arg_in_context(def_map, semantic_ir, arg, context, subst)
+        })
+        .collect()
+}
+
+fn generic_arg_from_item_tree_arg_in_context(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    arg: &GenericArg,
+    context: TypePathContext,
+    subst: &TypeSubst,
+) -> BodyGenericArg {
+    match arg {
+        GenericArg::Type(ty) => BodyGenericArg::Type(Box::new(ty_from_type_ref_in_context(
+            def_map,
+            semantic_ir,
+            ty,
+            context,
+            BodyTy::Syntax(ty.clone()),
+            subst,
+        ))),
+        GenericArg::Lifetime(lifetime) => BodyGenericArg::Lifetime(lifetime.clone()),
+        GenericArg::Const(value) => BodyGenericArg::Const(value.clone()),
+        GenericArg::AssocType { name, ty } => BodyGenericArg::AssocType {
+            name: name.clone(),
+            ty: ty.as_ref().map(|ty| {
+                Box::new(ty_from_type_ref_in_context(
+                    def_map,
+                    semantic_ir,
+                    ty,
+                    context,
+                    BodyTy::Syntax(ty.clone()),
+                    subst,
+                ))
+            }),
+        },
+        GenericArg::Unsupported(text) => BodyGenericArg::Unsupported(text.clone()),
     }
 }
 

@@ -158,11 +158,11 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         match ty {
             BodyTy::LocalNominal(items) => items
                 .iter()
-                .filter_map(|item| self.navigation_target_for_body_item(*item))
+                .filter_map(|ty| self.navigation_target_for_body_item(ty.item))
                 .collect(),
             BodyTy::Nominal(types) | BodyTy::SelfTy(types) => types
                 .iter()
-                .filter_map(|ty| self.navigation_target_for_type_def(*ty))
+                .filter_map(|ty| self.navigation_target_for_type_def(ty.def))
                 .collect(),
             BodyTy::Unit | BodyTy::Never | BodyTy::Syntax(_) | BodyTy::Unknown => Vec::new(),
         }

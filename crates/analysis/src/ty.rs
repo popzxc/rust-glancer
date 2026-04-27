@@ -1,4 +1,6 @@
-use rg_body_ir::{BodyRef, BodyTy, BodyTypePathResolution, ScopeId};
+use rg_body_ir::{
+    BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyTy, BodyTypePathResolution, ScopeId,
+};
 use rg_def_map::{DefId, Path};
 use rg_semantic_ir::{FieldRef, SemanticTypePathResolution, TypeDefRef, TypePathContext};
 
@@ -35,7 +37,9 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
             } => Some(self.ty_for_body_type_path(body, scope, &path)),
             SymbolAt::Def { def, .. } => self.ty_for_def(def),
             SymbolAt::Field { field, .. } => self.ty_for_field(field),
-            SymbolAt::LocalItem { item, .. } => Some(BodyTy::LocalNominal(vec![item])),
+            SymbolAt::LocalItem { item, .. } => {
+                Some(BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)]))
+            }
             SymbolAt::TypePath { context, path, .. } => Some(self.ty_for_type_path(context, &path)),
             SymbolAt::UsePath { .. } | SymbolAt::Function { .. } => None,
             SymbolAt::Body { .. } => None,
@@ -72,7 +76,7 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         self.0
             .semantic_ir
             .type_def_for_local_def(local_def)
-            .map(|ty| BodyTy::Nominal(vec![ty]))
+            .map(|ty| BodyTy::Nominal(vec![BodyNominalTy::bare(ty)]))
     }
 
     fn ty_for_field(&self, field: FieldRef) -> Option<BodyTy> {
@@ -86,8 +90,12 @@ pub(super) fn semantic_type_path_resolution_to_ty(
     resolution: SemanticTypePathResolution,
 ) -> BodyTy {
     match resolution {
-        SemanticTypePathResolution::SelfType(types) => BodyTy::SelfTy(types),
-        SemanticTypePathResolution::TypeDefs(types) => BodyTy::Nominal(types),
+        SemanticTypePathResolution::SelfType(types) => {
+            BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect())
+        }
+        SemanticTypePathResolution::TypeDefs(types) => {
+            BodyTy::Nominal(types.into_iter().map(BodyNominalTy::bare).collect())
+        }
         SemanticTypePathResolution::Traits(_) => BodyTy::Unknown,
         SemanticTypePathResolution::Unknown => BodyTy::Unknown,
     }
@@ -95,14 +103,20 @@ pub(super) fn semantic_type_path_resolution_to_ty(
 
 pub(super) fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution) -> BodyTy {
     match resolution {
-        BodyTypePathResolution::BodyLocal(item) => BodyTy::LocalNominal(vec![item]),
-        BodyTypePathResolution::SelfType(types) => BodyTy::SelfTy(types),
-        BodyTypePathResolution::TypeDefs(types) => BodyTy::Nominal(types),
+        BodyTypePathResolution::BodyLocal(item) => {
+            BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)])
+        }
+        BodyTypePathResolution::SelfType(types) => {
+            BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect())
+        }
+        BodyTypePathResolution::TypeDefs(types) => {
+            BodyTy::Nominal(types.into_iter().map(BodyNominalTy::bare).collect())
+        }
         BodyTypePathResolution::Traits(_) => BodyTy::Unknown,
         BodyTypePathResolution::Unknown => BodyTy::Unknown,
     }
 }
 
 pub(super) fn type_defs_from_body_ty(ty: &BodyTy) -> Vec<TypeDefRef> {
-    ty.type_defs().to_vec()
+    ty.type_defs()
 }

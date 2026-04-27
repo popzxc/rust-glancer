@@ -439,6 +439,18 @@ impl SemanticIrDb {
         }
     }
 
+    pub fn generic_params_for_type_def(
+        &self,
+        ty: TypeDefRef,
+    ) -> Option<&rg_item_tree::GenericParams> {
+        let target_ir = self.target_ir(ty.target)?;
+        match ty.id {
+            TypeDefId::Struct(id) => Some(&target_ir.items().struct_data(id)?.generics),
+            TypeDefId::Enum(id) => Some(&target_ir.items().enum_data(id)?.generics),
+            TypeDefId::Union(id) => Some(&target_ir.items().union_data(id)?.generics),
+        }
+    }
+
     pub fn impl_data(&self, impl_ref: ImplRef) -> Option<&ImplData> {
         self.target_ir(impl_ref.target)?
             .items()

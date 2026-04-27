@@ -1,12 +1,10 @@
-use rg_body_ir::{BodyItemRef, ResolvedFieldRef, ResolvedFunctionRef};
+use rg_body_ir::{BodyItemRef, BodyNominalTy, ResolvedFieldRef, ResolvedFunctionRef};
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
-use rg_semantic_ir::TypeDefRef;
 
 use super::{
     Analysis,
     data::{CompletionItem, CompletionKind, CompletionTarget},
-    ty::type_defs_from_body_ty,
 };
 
 pub(super) struct CompletionResolver<'a, 'db>(&'a Analysis<'db>);
@@ -31,9 +29,9 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
 
         let mut completions = Vec::new();
         for item in receiver_ty.local_items() {
-            self.push_local_type_completions(*item, &mut completions);
+            self.push_local_type_completions(item, &mut completions);
         }
-        for ty in type_defs_from_body_ty(receiver_ty) {
+        for ty in receiver_ty.nominal_tys() {
             self.push_type_completions(ty, &mut completions);
         }
         completions.sort_by(|left, right| {
@@ -44,12 +42,21 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         completions
     }
 
-    fn push_type_completions(&self, ty: TypeDefRef, completions: &mut Vec<CompletionItem>) {
-        for field in self.0.semantic_ir.fields_for_type(ty) {
+    fn push_type_completions(&self, ty: &BodyNominalTy, completions: &mut Vec<CompletionItem>) {
+        for field in self.0.semantic_ir.fields_for_type(ty.def) {
             self.push_field_completion(ResolvedFieldRef::Semantic(field), completions);
         }
 
-        for function in self.0.semantic_ir.inherent_functions_for_type(ty) {
+        for function in self.0.semantic_ir.inherent_functions_for_type(ty.def) {
+            if !self.0.body_ir.semantic_function_applies_to_receiver(
+                self.0.def_map,
+                self.0.semantic_ir,
+                function,
+                ty,
+            ) {
+                continue;
+            }
+
             self.push_function_completion(
                 ResolvedFunctionRef::Semantic(function),
                 CompletionKind::InherentMethod,
@@ -57,7 +64,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
             );
         }
 
-        for function in self.0.semantic_ir.trait_functions_for_type(ty) {
+        for function in self.0.semantic_ir.trait_functions_for_type(ty.def) {
             self.push_function_completion(
                 ResolvedFunctionRef::Semantic(function),
                 CompletionKind::TraitMethod,

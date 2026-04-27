@@ -211,6 +211,48 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn does_not_complete_concrete_impl_methods_for_wrong_generic_args() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_concrete_impl_completion"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Error;
+
+pub struct Wrapper<T> {
+    value: T,
+}
+
+impl<T> Wrapper<T> {
+    pub fn generic(&self) {}
+}
+
+impl Wrapper<User> {
+    pub fn user_only(&self) {}
+}
+
+pub fn use_it(error: Wrapper<Error>) {
+    error.$0;
+}
+"#,
+        &[AnalysisQuery::complete(
+            "wrong generic arg completions",
+            "0",
+        )],
+        expect![[r#"
+            wrong generic arg completions
+            - inherent_method generic
+            - field value
+        "#]],
+    );
+}
+
+#[test]
 fn completes_methods_after_field_receiver() {
     check_analysis_queries(
         r#"

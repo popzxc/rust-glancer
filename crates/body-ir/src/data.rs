@@ -1,5 +1,7 @@
 use rg_def_map::{DefId, DefMapDb, ModuleRef, PackageSlot, Path, TargetRef};
-use rg_item_tree::{FieldItem, FieldKey, FieldList, FunctionItem, ParamKind, TypeRef};
+use rg_item_tree::{
+    FieldItem, FieldKey, FieldList, FunctionItem, GenericParams, ParamKind, TypeRef,
+};
 use rg_parse::{FileId, Span, TargetId};
 use rg_semantic_ir::{FieldRef, FunctionId, FunctionRef, SemanticIrDb, TraitRef, TypeDefRef};
 
@@ -175,6 +177,21 @@ impl BodyIrDb {
         field_ref: FieldRef,
     ) -> Option<BodyTy> {
         resolution::ty_for_field(def_map, semantic_ir, field_ref)
+    }
+
+    pub fn semantic_function_applies_to_receiver(
+        &self,
+        def_map: &DefMapDb,
+        semantic_ir: &SemanticIrDb,
+        function_ref: FunctionRef,
+        receiver_ty: &BodyNominalTy,
+    ) -> bool {
+        resolution::semantic_function_applies_to_receiver(
+            def_map,
+            semantic_ir,
+            function_ref,
+            receiver_ty,
+        )
     }
 
     pub fn fields_for_local_type(&self, item_ref: BodyItemRef) -> Vec<BodyFieldRef> {
@@ -556,6 +573,7 @@ pub struct BodyItemData {
     pub scope: ScopeId,
     pub kind: BodyItemKind,
     pub name: String,
+    pub generics: GenericParams,
     pub fields: FieldList,
 }
 
@@ -786,17 +804,62 @@ pub enum BodyTy {
     Unit,
     Never,
     Syntax(TypeRef),
-    LocalNominal(Vec<BodyItemRef>),
-    Nominal(Vec<TypeDefRef>),
-    SelfTy(Vec<TypeDefRef>),
+    LocalNominal(Vec<BodyLocalNominalTy>),
+    Nominal(Vec<BodyNominalTy>),
+    SelfTy(Vec<BodyNominalTy>),
     #[default]
     Unknown,
 }
 
+/// Body-local nominal type together with the generic arguments visible at use site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyLocalNominalTy {
+    pub item: BodyItemRef,
+    pub args: Vec<BodyGenericArg>,
+}
+
+impl BodyLocalNominalTy {
+    pub fn bare(item: BodyItemRef) -> Self {
+        Self {
+            item,
+            args: Vec::new(),
+        }
+    }
+}
+
+/// Module-level nominal type together with the generic arguments visible at use site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyNominalTy {
+    pub def: TypeDefRef,
+    pub args: Vec<BodyGenericArg>,
+}
+
+impl BodyNominalTy {
+    pub fn bare(def: TypeDefRef) -> Self {
+        Self {
+            def,
+            args: Vec::new(),
+        }
+    }
+}
+
+/// Generic argument as understood by the intentionally small Body IR type model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BodyGenericArg {
+    Type(Box<BodyTy>),
+    Lifetime(String),
+    Const(String),
+    AssocType {
+        name: String,
+        ty: Option<Box<BodyTy>>,
+    },
+    Unsupported(String),
+}
+
 impl BodyTy {
-    pub fn local_items(&self) -> &[BodyItemRef] {
+    pub fn local_nominals(&self) -> &[BodyLocalNominalTy] {
         match self {
-            Self::LocalNominal(items) => items,
+            Self::LocalNominal(types) => types,
             Self::Unit
             | Self::Never
             | Self::Syntax(_)
@@ -806,12 +869,20 @@ impl BodyTy {
         }
     }
 
-    pub fn type_defs(&self) -> &[TypeDefRef] {
+    pub fn nominal_tys(&self) -> &[BodyNominalTy] {
         match self {
             Self::Nominal(types) | Self::SelfTy(types) => types,
             Self::Unit | Self::Never | Self::Syntax(_) | Self::LocalNominal(_) | Self::Unknown => {
                 &[]
             }
         }
+    }
+
+    pub fn local_items(&self) -> Vec<BodyItemRef> {
+        self.local_nominals().iter().map(|ty| ty.item).collect()
+    }
+
+    pub fn type_defs(&self) -> Vec<TypeDefRef> {
+        self.nominal_tys().iter().map(|ty| ty.def).collect()
     }
 }

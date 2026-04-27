@@ -5,8 +5,9 @@ use expect_test::Expect;
 use crate::{
     BodyIrBuildPolicy, BodyIrDb, TargetBodiesStatus,
     data::{
-        BindingData, BodyData, BodyFunctionData, BodyImplData, BodyItemData, BodyResolution,
-        BodySource, BodyTy, ExprData, ExprKind, ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
+        BindingData, BodyData, BodyFunctionData, BodyGenericArg, BodyImplData, BodyItemData,
+        BodyLocalNominalTy, BodyNominalTy, BodyResolution, BodySource, BodyTy, ExprData, ExprKind,
+        ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
     },
     ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
@@ -576,7 +577,7 @@ impl TargetBodyIrSnapshot<'_> {
             BodyTy::LocalNominal(items) => {
                 let mut items = items
                     .iter()
-                    .map(|item| self.render_body_item_ref(*item))
+                    .map(|ty| self.render_body_local_nominal_ty(ty))
                     .collect::<Vec<_>>();
                 items.sort();
                 format!("local nominal {}", items.join(" | "))
@@ -584,7 +585,7 @@ impl TargetBodyIrSnapshot<'_> {
             BodyTy::Nominal(types) => {
                 let mut types = types
                     .iter()
-                    .map(|ty| self.render_type_def_ref(*ty))
+                    .map(|ty| self.render_body_nominal_ty(ty))
                     .collect::<Vec<_>>();
                 types.sort();
                 format!("nominal {}", types.join(" | "))
@@ -592,12 +593,55 @@ impl TargetBodyIrSnapshot<'_> {
             BodyTy::SelfTy(types) => {
                 let mut types = types
                     .iter()
-                    .map(|ty| self.render_type_def_ref(*ty))
+                    .map(|ty| self.render_body_nominal_ty(ty))
                     .collect::<Vec<_>>();
                 types.sort();
                 format!("Self {}", types.join(" | "))
             }
             BodyTy::Unknown => "<unknown>".to_string(),
+        }
+    }
+
+    fn render_body_local_nominal_ty(&self, ty: &BodyLocalNominalTy) -> String {
+        format!(
+            "{}{}",
+            self.render_body_item_ref(ty.item),
+            self.render_generic_args(&ty.args)
+        )
+    }
+
+    fn render_body_nominal_ty(&self, ty: &BodyNominalTy) -> String {
+        format!(
+            "{}{}",
+            self.render_type_def_ref(ty.def),
+            self.render_generic_args(&ty.args)
+        )
+    }
+
+    fn render_generic_args(&self, args: &[BodyGenericArg]) -> String {
+        if args.is_empty() {
+            return String::new();
+        }
+
+        format!(
+            "<{}>",
+            args.iter()
+                .map(|arg| self.render_generic_arg(arg))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    fn render_generic_arg(&self, arg: &BodyGenericArg) -> String {
+        match arg {
+            BodyGenericArg::Type(ty) => self.render_ty(ty),
+            BodyGenericArg::Lifetime(lifetime) => lifetime.clone(),
+            BodyGenericArg::Const(value) => value.clone(),
+            BodyGenericArg::AssocType { name, ty } => match ty {
+                Some(ty) => format!("{name} = {}", self.render_ty(ty)),
+                None => name.clone(),
+            },
+            BodyGenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
         }
     }
 
