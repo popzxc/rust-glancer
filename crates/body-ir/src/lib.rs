@@ -1,22 +1,251 @@
+mod body;
 mod cursor;
-mod data;
+mod expr;
 mod ids;
+mod item;
 mod lower;
 mod resolution;
+mod resolved;
+mod stmt;
+mod ty;
 
 #[cfg(test)]
 mod tests;
 
+use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
+use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb};
+
 pub use self::{
-    cursor::{BodyCursorCandidate, DotReceiver},
-    data::{
-        BindingData, BodyData, BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyGenericArg,
-        BodyImplData, BodyIrBuildPolicy, BodyIrDb, BodyItemKind, BodyLocalNominalTy, BodyNominalTy,
-        BodyResolution, BodyTy, BodyTypePathResolution, ExprData, ExprKind, ResolvedFieldRef,
-        ResolvedFunctionRef, StmtKind, TargetBodiesStatus,
+    body::{
+        BodyData, BodyIrStats, BodySource, PackageBodies, ScopeData, TargetBodies,
+        TargetBodiesStatus,
     },
+    cursor::{BodyCursorCandidate, DotReceiver},
+    expr::{ExprData, ExprKind, LiteralKind},
     ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
         BodyItemRef, BodyRef, ExprId, ScopeId,
     },
+    item::{
+        BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData,
+        BodyItemKind,
+    },
+    resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
+    stmt::{BindingData, BindingKind, StmtData, StmtKind},
+    ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
+
+/// Body-level IR for all analyzed packages and targets.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BodyIrDb {
+    packages: Vec<PackageBodies>,
+}
+
+impl BodyIrDb {
+    /// Builds Body IR using the default editor-oriented policy.
+    ///
+    /// By default we lower bodies only for workspace packages. Dependency signatures remain
+    /// available through Semantic IR, but dependency body internals are skipped to keep the eager
+    /// analysis cheaper.
+    pub fn build(
+        parse: &rg_parse::ParseDb,
+        item_tree: &rg_item_tree::ItemTreeDb,
+        def_map: &rg_def_map::DefMapDb,
+        semantic_ir: &rg_semantic_ir::SemanticIrDb,
+    ) -> anyhow::Result<Self> {
+        Self::build_with_policy(
+            parse,
+            item_tree,
+            def_map,
+            semantic_ir,
+            BodyIrBuildPolicy::default(),
+        )
+    }
+
+    /// Builds Body IR using an explicit package selection policy.
+    pub fn build_with_policy(
+        parse: &rg_parse::ParseDb,
+        item_tree: &rg_item_tree::ItemTreeDb,
+        def_map: &rg_def_map::DefMapDb,
+        semantic_ir: &rg_semantic_ir::SemanticIrDb,
+        policy: BodyIrBuildPolicy,
+    ) -> anyhow::Result<Self> {
+        let mut db = lower::build_db(parse, item_tree, semantic_ir, policy)?;
+        resolution::resolve_bodies(&mut db, def_map, semantic_ir);
+        Ok(db)
+    }
+
+    pub(crate) fn new(packages: Vec<PackageBodies>) -> Self {
+        Self { packages }
+    }
+
+    pub fn stats(&self) -> BodyIrStats {
+        let mut stats = BodyIrStats::default();
+
+        for package in &self.packages {
+            for target in package.targets() {
+                stats.target_count += 1;
+                match target.status() {
+                    TargetBodiesStatus::Built => stats.built_target_count += 1,
+                    TargetBodiesStatus::Skipped => stats.skipped_target_count += 1,
+                }
+                stats.body_count += target.bodies().len();
+                for body in target.bodies() {
+                    stats.scope_count += body.scopes.len();
+                    stats.local_item_count += body.local_items.len();
+                    stats.local_impl_count += body.local_impls.len();
+                    stats.local_function_count += body.local_functions.len();
+                    stats.binding_count += body.bindings.len();
+                    stats.statement_count += body.statements.len();
+                    stats.expression_count += body.exprs.len();
+                }
+            }
+        }
+
+        stats
+    }
+
+    /// Returns all package-level body IR sets.
+    pub fn packages(&self) -> &[PackageBodies] {
+        &self.packages
+    }
+
+    /// Returns one package by package slot.
+    pub fn package(&self, package: PackageSlot) -> Option<&PackageBodies> {
+        self.packages.get(package.0)
+    }
+
+    /// Returns one target body IR by project-wide target reference.
+    pub fn target_bodies(&self, target: TargetRef) -> Option<&TargetBodies> {
+        self.package(target.package)?.target(target.target)
+    }
+
+    /// Returns the body associated with a semantic function, if that function has a body.
+    pub fn body_for_function(&self, function: FunctionRef) -> Option<BodyRef> {
+        let body = self
+            .target_bodies(function.target)?
+            .body_for_function(function.id)?;
+        Some(BodyRef {
+            target: function.target,
+            body,
+        })
+    }
+
+    /// Returns one body by project-wide body reference.
+    pub fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
+        self.target_bodies(body_ref.target)?.body(body_ref.body)
+    }
+
+    pub fn resolve_type_path_in_scope(
+        &self,
+        def_map: &DefMapDb,
+        semantic_ir: &SemanticIrDb,
+        body_ref: BodyRef,
+        scope: ScopeId,
+        path: &Path,
+    ) -> BodyTypePathResolution {
+        resolution::resolve_type_path_in_scope(self, def_map, semantic_ir, body_ref, scope, path)
+    }
+
+    pub fn ty_for_field(
+        &self,
+        def_map: &DefMapDb,
+        semantic_ir: &SemanticIrDb,
+        field_ref: FieldRef,
+    ) -> Option<BodyTy> {
+        resolution::ty_for_field(def_map, semantic_ir, field_ref)
+    }
+
+    pub fn semantic_function_applies_to_receiver(
+        &self,
+        def_map: &DefMapDb,
+        semantic_ir: &SemanticIrDb,
+        function_ref: FunctionRef,
+        receiver_ty: &BodyNominalTy,
+    ) -> bool {
+        resolution::semantic_function_applies_to_receiver(
+            def_map,
+            semantic_ir,
+            function_ref,
+            receiver_ty,
+        )
+    }
+
+    pub fn fields_for_local_type(&self, item_ref: BodyItemRef) -> Vec<BodyFieldRef> {
+        let Some(body) = self.body_data(item_ref.body) else {
+            return Vec::new();
+        };
+        let Some(item) = body.local_item(item_ref.item) else {
+            return Vec::new();
+        };
+
+        (0..item.fields.fields().len())
+            .map(|index| BodyFieldRef {
+                item: item_ref,
+                index,
+            })
+            .collect()
+    }
+
+    pub fn local_field_data(&self, field_ref: BodyFieldRef) -> Option<BodyFieldData<'_>> {
+        let body = self.body_data(field_ref.item.body)?;
+        let item = body.local_item(field_ref.item.item)?;
+        let field = item.field(field_ref.index)?;
+
+        Some(BodyFieldData { item, field })
+    }
+
+    pub fn inherent_functions_for_local_type(&self, item_ref: BodyItemRef) -> Vec<BodyFunctionRef> {
+        let Some(body) = self.body_data(item_ref.body) else {
+            return Vec::new();
+        };
+
+        body.inherent_functions_for_local_type(item_ref.body, item_ref)
+    }
+
+    pub fn local_function_data(&self, function_ref: BodyFunctionRef) -> Option<&BodyFunctionData> {
+        self.body_data(function_ref.body)?
+            .local_function(function_ref.function)
+    }
+
+    pub(crate) fn packages_mut(&mut self) -> &mut [PackageBodies] {
+        &mut self.packages
+    }
+}
+
+/// Package-set selector for eager body lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum BodyIrPackageScope {
+    #[default]
+    WorkspacePackages,
+    AllPackages,
+}
+
+/// Controls which packages get function-body lowering during eager Body IR construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BodyIrBuildPolicy {
+    package_scope: BodyIrPackageScope,
+}
+
+impl BodyIrBuildPolicy {
+    /// Lowers only workspace packages.
+    pub fn workspace_packages() -> Self {
+        Self {
+            package_scope: BodyIrPackageScope::WorkspacePackages,
+        }
+    }
+
+    /// Lowers every parsed package, including dependencies and sysroot crates.
+    pub fn all_packages() -> Self {
+        Self {
+            package_scope: BodyIrPackageScope::AllPackages,
+        }
+    }
+
+    pub(crate) fn should_lower_package(&self, package: &rg_parse::Package) -> bool {
+        match self.package_scope {
+            BodyIrPackageScope::WorkspacePackages => package.is_workspace_member(),
+            BodyIrPackageScope::AllPackages => true,
+        }
+    }
+}

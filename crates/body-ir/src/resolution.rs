@@ -12,15 +12,17 @@ use rg_semantic_ir::{
 };
 
 use super::{
-    data::{
-        BindingKind, BodyData, BodyGenericArg, BodyIrDb, BodyLocalNominalTy, BodyNominalTy,
-        BodyResolution, BodyTy, BodyTypePathResolution, ExprKind, ResolvedFieldRef,
-        ResolvedFunctionRef, TargetBodiesStatus,
-    },
+    BodyIrDb,
+    body::{BodyData, TargetBodiesStatus},
+    expr::ExprKind,
     ids::{
         BindingId, BodyFieldRef, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
         BodyRef, ExprId, ScopeId,
     },
+    item::BodyFunctionOwner,
+    resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
+    stmt::BindingKind,
+    ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
 pub(super) fn resolve_bodies(db: &mut BodyIrDb, def_map: &DefMapDb, semantic_ir: &SemanticIrDb) {
@@ -493,7 +495,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         };
 
         match function_data.owner {
-            super::data::BodyFunctionOwner::LocalImpl(impl_id) => {
+            BodyFunctionOwner::LocalImpl(impl_id) => {
                 self.ty_from_type_ref_for_local_impl(ret_ty, impl_id, receiver_ty)
             }
         }

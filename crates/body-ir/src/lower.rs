@@ -17,13 +17,14 @@ use rg_parse::{FileId, LineIndex, ParseDb, Span, TargetId};
 use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitRef};
 
 use super::{
-    data::{
-        BindingData, BindingKind, BodyBuilder, BodyData, BodyFunctionData, BodyFunctionOwner,
-        BodyImplData, BodyIrBuildPolicy, BodyIrDb, BodyItemData, BodyItemKind, BodyResolution,
-        BodySource, BodyTy, ExprData, ExprKind, LiteralKind, PackageBodies, StmtData, StmtKind,
-        TargetBodies,
-    },
+    BodyIrBuildPolicy, BodyIrDb,
+    body::{BodyBuilder, BodyData, BodySource, PackageBodies, TargetBodies},
+    expr::{ExprData, ExprKind, LiteralKind},
     ids::{BindingId, BodyFunctionId, BodyImplId, BodyItemId, ExprId, ScopeId, StmtId},
+    item::{BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData, BodyItemKind},
+    resolved::BodyResolution,
+    stmt::{BindingData, BindingKind, StmtData, StmtKind},
+    ty::BodyTy,
 };
 
 pub(super) fn build_db(

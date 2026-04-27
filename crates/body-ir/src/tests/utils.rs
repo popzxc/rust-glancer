@@ -3,12 +3,9 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    BodyIrBuildPolicy, BodyIrDb, TargetBodiesStatus,
-    data::{
-        BindingData, BodyData, BodyFunctionData, BodyGenericArg, BodyImplData, BodyItemData,
-        BodyLocalNominalTy, BodyNominalTy, BodyResolution, BodySource, BodyTy, ExprData, ExprKind,
-        ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
-    },
+    BindingData, BodyData, BodyFunctionData, BodyGenericArg, BodyImplData, BodyIrBuildPolicy,
+    BodyIrDb, BodyItemData, BodyLocalNominalTy, BodyNominalTy, BodyResolution, BodySource, BodyTy,
+    ExprData, ExprKind, ResolvedFieldRef, ResolvedFunctionRef, StmtKind, TargetBodiesStatus,
     ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
         BodyItemRef, ExprId, StmtId,
