@@ -18,8 +18,8 @@ pub use self::{
     cursor::SemanticCursorCandidate,
     ids::{
         AssocItemId, ConstId, ConstRef, EnumId, FieldRef, FunctionId, FunctionRef, ImplId, ImplRef,
-        ItemId, ItemOwner, StaticId, StaticRef, StructId, TraitId, TraitImplRef, TraitRef,
-        TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
+        ItemId, ItemOwner, StaticId, StaticRef, StructId, TraitApplicability, TraitId,
+        TraitImplRef, TraitRef, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
     },
     items::{
         ConstData, EnumData, FieldData, FunctionData, ImplData, ItemStore, StaticData, StructData,
@@ -612,6 +612,27 @@ impl SemanticIrDb {
         traits
     }
 
+    pub fn trait_functions(&self, trait_ref: TraitRef) -> Vec<FunctionRef> {
+        let mut functions = Vec::new();
+        let Some(data) = self.trait_data(trait_ref) else {
+            return functions;
+        };
+
+        for item in &data.items {
+            if let AssocItemId::Function(id) = item {
+                push_unique(
+                    &mut functions,
+                    FunctionRef {
+                        target: trait_ref.target,
+                        id: *id,
+                    },
+                );
+            }
+        }
+
+        functions
+    }
+
     pub fn inherent_functions_for_type(&self, ty: TypeDefRef) -> Vec<FunctionRef> {
         let mut functions = Vec::new();
 
@@ -640,20 +661,8 @@ impl SemanticIrDb {
         let mut functions = Vec::new();
 
         for trait_ref in self.traits_for_type(ty) {
-            let Some(data) = self.trait_data(trait_ref) else {
-                continue;
-            };
-
-            for item in &data.items {
-                if let AssocItemId::Function(id) = item {
-                    push_unique(
-                        &mut functions,
-                        FunctionRef {
-                            target: trait_ref.target,
-                            id: *id,
-                        },
-                    );
-                }
+            for function in self.trait_functions(trait_ref) {
+                push_unique(&mut functions, function);
             }
         }
 

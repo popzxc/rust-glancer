@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use expect_test::Expect;
 
-use crate::{Analysis, CompletionItem, NavigationTarget, SymbolAt};
+use crate::{Analysis, CompletionApplicability, CompletionItem, NavigationTarget, SymbolAt};
 use rg_body_ir::{
     BodyGenericArg, BodyIrDb, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyTy, ExprData,
     ExprKind,
@@ -475,7 +475,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn render_completions(&self, mut completions: Vec<CompletionItem>, dump: &mut String) {
-        completions.sort_by_key(|completion| (completion.label.clone(), completion.kind));
+        completions.sort_by_key(|completion| {
+            (
+                completion.label.clone(),
+                completion.kind,
+                completion.applicability,
+            )
+        });
 
         if completions.is_empty() {
             writeln!(dump, "\n- <none>").expect("string writes should not fail");
@@ -484,8 +490,17 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
         writeln!(dump).expect("string writes should not fail");
         for completion in completions {
-            writeln!(dump, "- {} {}", completion.kind, completion.label)
+            if completion.applicability == CompletionApplicability::Known {
+                writeln!(dump, "- {} {}", completion.kind, completion.label)
+                    .expect("string writes should not fail");
+            } else {
+                writeln!(
+                    dump,
+                    "- {} {} ({})",
+                    completion.kind, completion.label, completion.applicability
+                )
                 .expect("string writes should not fail");
+            }
         }
     }
 

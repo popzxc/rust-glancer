@@ -236,6 +236,14 @@ impl Wrapper<User> {
     pub fn user_only(&self) {}
 }
 
+pub trait UserOnlyTrait {
+    fn trait_user_only(&self);
+}
+
+impl UserOnlyTrait for Wrapper<User> {
+    fn trait_user_only(&self) {}
+}
+
 pub fn use_it(error: Wrapper<Error>) {
     error.$0;
 }
@@ -247,6 +255,58 @@ pub fn use_it(error: Wrapper<Error>) {
         expect![[r#"
             wrong generic arg completions
             - inherent_method generic
+            - field value
+        "#]],
+    );
+}
+
+#[test]
+fn marks_generic_trait_method_completions_as_maybe() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_generic_trait_completion"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Wrapper<T> {
+    value: T,
+}
+
+pub trait GenericNamed {
+    fn generic_trait_name(&self);
+}
+
+impl<T> GenericNamed for Wrapper<T> {
+    fn generic_trait_name(&self) {}
+}
+
+pub trait BoundNamed {
+    fn bounded_trait_name(&self);
+}
+
+pub trait Required {}
+
+impl<T> BoundNamed for Wrapper<T>
+where
+    T: Required,
+{
+    fn bounded_trait_name(&self) {}
+}
+
+pub fn use_it(wrapper: Wrapper<User>) {
+    wrapper.$0;
+}
+"#,
+        &[AnalysisQuery::complete("generic trait completions", "0")],
+        expect![[r#"
+            generic trait completions
+            - trait_method bounded_trait_name (maybe)
+            - trait_method generic_trait_name (maybe)
             - field value
         "#]],
     );

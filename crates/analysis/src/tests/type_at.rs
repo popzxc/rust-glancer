@@ -279,6 +279,114 @@ pub fn use_it(user: Wrapper<User>, error: Wrapper<Error>) {
 }
 
 #[test]
+fn uses_naive_trait_applicability_for_method_return_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_trait_applicability_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct User;
+pub struct Error;
+
+pub struct Wrapper<T> {
+    value: T,
+}
+
+pub trait BuildUser {
+    fn build_user(&self) -> User;
+}
+
+impl<T> BuildUser for Wrapper<T> {
+    fn build_user(&self) -> User {
+        missing()
+    }
+}
+
+pub trait UserOnlyBuild {
+    fn user_only(&self) -> User;
+}
+
+impl UserOnlyBuild for Wrapper<User> {
+    fn user_only(&self) -> User {
+        missing()
+    }
+}
+
+pub fn use_it(generic: Wrapper<Error>, concrete: Wrapper<Error>) {
+    let maybe_user = generic.build_user();
+    let _from_maybe = maybe_$type_maybe$user;
+
+    let wrong = concrete.user_only();
+    let _from_wrong = wro$type_wrong$ng;
+}
+"#,
+        &[
+            AnalysisQuery::ty("maybe trait method return", "type_maybe"),
+            AnalysisQuery::ty("concrete trait impl mismatch", "type_wrong"),
+        ],
+        expect![[r#"
+            maybe trait method return
+            - nominal struct analysis_trait_applicability_type_at[lib]::crate::User
+
+            concrete trait impl mismatch
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn returns_direct_trait_method_call_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_direct_trait_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct User;
+pub struct UserId;
+
+pub trait Identify {
+    fn id(&self) -> UserId;
+}
+
+impl Identify for User {
+    fn id(&self) -> UserId {
+        missing()
+    }
+}
+
+pub fn use_it(user: User) {
+    let id = user.id();
+    let _again = i$type_direct_trait$d;
+}
+"#,
+        &[AnalysisQuery::ty(
+            "direct trait method return",
+            "type_direct_trait",
+        )],
+        expect![[r#"
+            direct trait method return
+            - nominal struct analysis_direct_trait_type_at[lib]::crate::UserId
+        "#]],
+    );
+}
+
+#[test]
 fn returns_body_local_field_access_types() {
     check_analysis_queries(
         r#"

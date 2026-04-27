@@ -1,10 +1,11 @@
 use rg_body_ir::{BodyLocalNominalTy, BodyNominalTy, ResolvedFieldRef, ResolvedFunctionRef};
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
+use rg_semantic_ir::TraitApplicability;
 
 use super::{
     Analysis,
-    data::{CompletionItem, CompletionKind, CompletionTarget},
+    data::{CompletionApplicability, CompletionItem, CompletionKind, CompletionTarget},
 };
 
 pub(super) struct CompletionResolver<'a, 'db>(&'a Analysis<'db>);
@@ -38,6 +39,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
             left.label
                 .cmp(&right.label)
                 .then(left.kind.cmp(&right.kind))
+                .then(left.applicability.cmp(&right.applicability))
         });
         completions
     }
@@ -60,14 +62,20 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
             self.push_function_completion(
                 ResolvedFunctionRef::Semantic(function),
                 CompletionKind::InherentMethod,
+                CompletionApplicability::Known,
                 completions,
             );
         }
 
-        for function in self.0.semantic_ir.trait_functions_for_type(ty.def) {
+        for (function, applicability) in self
+            .0
+            .body_ir
+            .semantic_trait_function_candidates_for_receiver(self.0.def_map, self.0.semantic_ir, ty)
+        {
             self.push_function_completion(
                 ResolvedFunctionRef::Semantic(function),
                 CompletionKind::TraitMethod,
+                CompletionApplicability::from(applicability),
                 completions,
             );
         }
@@ -95,6 +103,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
             self.push_function_completion(
                 ResolvedFunctionRef::BodyLocal(function),
                 CompletionKind::InherentMethod,
+                CompletionApplicability::Known,
                 completions,
             );
         }
@@ -120,6 +129,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
             label,
             kind: CompletionKind::Field,
             target,
+            applicability: CompletionApplicability::Known,
         });
     }
 
@@ -148,6 +158,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         &self,
         function: ResolvedFunctionRef,
         kind: CompletionKind,
+        applicability: CompletionApplicability,
         completions: &mut Vec<CompletionItem>,
     ) {
         let Some(name) = self.function_completion_name(function) else {
@@ -164,6 +175,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
             label: name,
             kind,
             target: CompletionTarget::Function(function),
+            applicability,
         });
     }
 
@@ -177,6 +189,15 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
                 let data = self.0.body_ir.local_function_data(function)?;
                 data.has_self_receiver().then(|| data.name.clone())
             }
+        }
+    }
+}
+
+impl From<TraitApplicability> for CompletionApplicability {
+    fn from(applicability: TraitApplicability) -> Self {
+        match applicability {
+            TraitApplicability::Yes => Self::Known,
+            TraitApplicability::Maybe | TraitApplicability::No => Self::Maybe,
         }
     }
 }

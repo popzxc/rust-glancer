@@ -70,6 +70,54 @@ impl TypeRef {
         Self::Unknown(text.into())
     }
 
+    /// Returns true when this type syntax contains explicit generic arguments anywhere inside it.
+    pub fn has_generic_args(&self) -> bool {
+        match self {
+            Self::Path(path) => path.segments.iter().any(|segment| !segment.args.is_empty()),
+            Self::Tuple(types) => types.iter().any(Self::has_generic_args),
+            Self::Reference { inner, .. }
+            | Self::RawPointer { inner, .. }
+            | Self::Slice(inner)
+            | Self::Array { inner, .. } => inner.has_generic_args(),
+            Self::FnPointer { params, ret } => {
+                params.iter().any(Self::has_generic_args) || ret.has_generic_args()
+            }
+            Self::ImplTrait(bounds) | Self::DynTrait(bounds) => {
+                bounds.iter().any(TypeBound::has_generic_args)
+            }
+            Self::Unknown(_) | Self::Never | Self::Unit | Self::Infer => false,
+        }
+    }
+
+    /// Returns true when this type syntax mentions one of the provided type parameter names.
+    pub fn mentions_type_param(&self, params: &[&str]) -> bool {
+        match self {
+            Self::Path(path) => path.segments.iter().any(|segment| {
+                params.contains(&segment.name.as_str())
+                    || segment
+                        .args
+                        .iter()
+                        .any(|arg| arg.mentions_type_param(params))
+            }),
+            Self::Tuple(types) => types.iter().any(|ty| ty.mentions_type_param(params)),
+            Self::Reference { inner, .. }
+            | Self::RawPointer { inner, .. }
+            | Self::Slice(inner)
+            | Self::Array { inner, .. } => inner.mentions_type_param(params),
+            Self::FnPointer {
+                params: fn_params,
+                ret,
+            } => {
+                fn_params.iter().any(|ty| ty.mentions_type_param(params))
+                    || ret.mentions_type_param(params)
+            }
+            Self::ImplTrait(bounds) | Self::DynTrait(bounds) => {
+                bounds.iter().any(|bound| bound.mentions_type_param(params))
+            }
+            Self::Unknown(_) | Self::Never | Self::Unit | Self::Infer => false,
+        }
+    }
+
     pub fn from_ast(ty: ast::Type, line_index: &LineIndex) -> Self {
         match ty {
             ast::Type::ArrayType(ty) => Self::Array {
@@ -365,6 +413,17 @@ impl GenericArg {
                 .unwrap_or_else(|| Self::Unsupported(normalized_syntax(&arg))),
         }
     }
+
+    /// Returns true when this generic argument mentions one of the provided type parameter names.
+    pub fn mentions_type_param(&self, params: &[&str]) -> bool {
+        match self {
+            Self::Type(ty) => ty.mentions_type_param(params),
+            Self::AssocType { ty, .. } => {
+                ty.as_ref().is_some_and(|ty| ty.mentions_type_param(params))
+            }
+            Self::Lifetime(_) | Self::Const(_) | Self::Unsupported(_) => false,
+        }
+    }
 }
 
 impl fmt::Display for GenericArg {
@@ -411,6 +470,22 @@ impl TypeBound {
         }
 
         Self::Unsupported(normalized_syntax(&bound))
+    }
+
+    /// Returns true when this bound contains explicit generic arguments anywhere inside it.
+    pub fn has_generic_args(&self) -> bool {
+        match self {
+            Self::Trait(ty) => ty.has_generic_args(),
+            Self::Lifetime(_) | Self::Unsupported(_) => false,
+        }
+    }
+
+    /// Returns true when this bound mentions one of the provided type parameter names.
+    pub fn mentions_type_param(&self, params: &[&str]) -> bool {
+        match self {
+            Self::Trait(ty) => ty.mentions_type_param(params),
+            Self::Lifetime(_) | Self::Unsupported(_) => false,
+        }
     }
 }
 

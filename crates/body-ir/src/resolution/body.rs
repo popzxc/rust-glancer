@@ -23,6 +23,7 @@ use super::{
     method::{
         local_function_applies_to_receiver, local_impl_self_subst,
         semantic_function_applies_to_receiver, semantic_impl_self_subst,
+        semantic_trait_function_candidates_for_receiver,
     },
     pat::PatternTypePropagator,
     push_unique,
@@ -390,7 +391,9 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             semantic_function_applies_to_receiver(self.def_map, self.semantic_ir, *function, ty)
         });
 
-        for function in self.semantic_ir.trait_functions_for_type(ty.def) {
+        for (function, _) in
+            semantic_trait_function_candidates_for_receiver(self.def_map, self.semantic_ir, ty)
+        {
             push_unique(&mut functions, function);
         }
         functions

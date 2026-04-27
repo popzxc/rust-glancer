@@ -11,7 +11,7 @@ mod type_path;
 
 use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
 use rg_parse::TargetId;
-use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TypePathContext};
+use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TraitApplicability, TypePathContext};
 
 use crate::{
     BodyIrDb,
@@ -26,6 +26,7 @@ use self::{
     method::{
         local_function_applies_to_receiver as local_function_applies_to_receiver_impl,
         semantic_function_applies_to_receiver as semantic_function_applies_to_receiver_impl,
+        semantic_trait_function_candidates_for_receiver as semantic_trait_function_candidates_for_receiver_impl,
     },
     ty::{TypeSubst, ty_from_type_ref_in_context},
     type_path::BodyTypePathResolver,
@@ -101,6 +102,14 @@ pub(super) fn semantic_function_applies_to_receiver(
     receiver_ty: &BodyNominalTy,
 ) -> bool {
     semantic_function_applies_to_receiver_impl(def_map, semantic_ir, function_ref, receiver_ty)
+}
+
+pub(super) fn semantic_trait_function_candidates_for_receiver(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    receiver_ty: &BodyNominalTy,
+) -> Vec<(FunctionRef, TraitApplicability)> {
+    semantic_trait_function_candidates_for_receiver_impl(def_map, semantic_ir, receiver_ty)
 }
 
 pub(super) fn local_function_applies_to_receiver(

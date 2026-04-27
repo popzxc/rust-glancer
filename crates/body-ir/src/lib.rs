@@ -14,7 +14,7 @@ mod ty;
 mod tests;
 
 use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
-use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb};
+use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TraitApplicability};
 
 pub use self::{
     body::{
@@ -169,6 +169,19 @@ impl BodyIrDb {
             def_map,
             semantic_ir,
             function_ref,
+            receiver_ty,
+        )
+    }
+
+    pub fn semantic_trait_function_candidates_for_receiver(
+        &self,
+        def_map: &DefMapDb,
+        semantic_ir: &SemanticIrDb,
+        receiver_ty: &BodyNominalTy,
+    ) -> Vec<(FunctionRef, TraitApplicability)> {
+        resolution::semantic_trait_function_candidates_for_receiver(
+            def_map,
+            semantic_ir,
             receiver_ty,
         )
     }

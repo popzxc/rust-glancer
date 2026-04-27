@@ -139,6 +139,7 @@ pub struct CompletionItem {
     pub label: String,
     pub kind: CompletionKind,
     pub target: CompletionTarget,
+    pub applicability: CompletionApplicability,
 }
 
 /// Stable analysis identity behind one completion row.
@@ -157,4 +158,13 @@ pub enum CompletionKind {
     InherentMethod,
     #[display("trait_method")]
     TraitMethod,
+}
+
+/// Confidence attached to a completion candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
+pub enum CompletionApplicability {
+    #[display("known")]
+    Known,
+    #[display("maybe")]
+    Maybe,
 }

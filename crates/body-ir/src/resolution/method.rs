@@ -5,7 +5,10 @@
 
 use rg_def_map::DefMapDb;
 use rg_item_tree::{GenericParams, TypeRef};
-use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TypePathContext};
+use rg_semantic_ir::{
+    FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitApplicability, TraitImplRef,
+    TypePathContext,
+};
 
 use crate::{
     body::BodyData,
@@ -97,6 +100,28 @@ pub(super) fn semantic_impl_self_subst(
         .collect()
 }
 
+pub(super) fn semantic_trait_function_candidates_for_receiver(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    receiver_ty: &BodyNominalTy,
+) -> Vec<(FunctionRef, TraitApplicability)> {
+    let mut functions = Vec::new();
+
+    for trait_impl in semantic_ir.trait_impls_for_type(receiver_ty.def) {
+        let applicability =
+            semantic_trait_impl_applicability(def_map, semantic_ir, trait_impl, receiver_ty);
+        if !applicability.is_applicable() {
+            continue;
+        }
+
+        for function in semantic_ir.trait_functions(trait_impl.trait_ref) {
+            push_function_candidate(&mut functions, function, applicability);
+        }
+    }
+
+    functions
+}
+
 pub(super) fn local_function_applies_to_receiver(
     def_map: &DefMapDb,
     semantic_ir: &SemanticIrDb,
@@ -118,6 +143,8 @@ pub(super) fn local_function_applies_to_receiver(
         return false;
     };
     if impl_data.self_item != Some(receiver_ty.item) || impl_data.trait_ref.is_some() {
+        // Body-local trait impls are an explicit non-goal for now. They are rare enough that
+        // modeling their lookup would add more complexity than useful LSP signal at this stage.
         return false;
     }
 
@@ -239,6 +266,37 @@ fn impl_self_args_match_receiver(
     true
 }
 
+fn semantic_trait_impl_applicability(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    trait_impl: TraitImplRef,
+    receiver_ty: &BodyNominalTy,
+) -> TraitApplicability {
+    let Some(impl_data) = semantic_ir.impl_data(trait_impl.impl_ref) else {
+        return TraitApplicability::No;
+    };
+    if !impl_data.resolved_self_tys.contains(&receiver_ty.def)
+        || !impl_data
+            .resolved_trait_refs
+            .contains(&trait_impl.trait_ref)
+    {
+        return TraitApplicability::No;
+    }
+
+    let header_applicability = if impl_header_is_definitely_direct(impl_data) {
+        TraitApplicability::Yes
+    } else {
+        TraitApplicability::Maybe
+    };
+    header_applicability.and(impl_self_args_applicability(
+        def_map,
+        semantic_ir,
+        trait_impl.impl_ref,
+        impl_data,
+        receiver_ty,
+    ))
+}
+
 fn local_impl_self_args_match_receiver(
     def_map: &DefMapDb,
     semantic_ir: &SemanticIrDb,
@@ -297,10 +355,121 @@ fn local_impl_self_args_match_receiver(
     true
 }
 
+fn impl_self_args_applicability(
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    impl_ref: ImplRef,
+    impl_data: &rg_semantic_ir::ImplData,
+    receiver_ty: &BodyNominalTy,
+) -> TraitApplicability {
+    // This mirrors inherent impl matching, but returns `Maybe` instead of rejecting patterns that
+    // contain generic parameters or unsupported pieces we intentionally do not solve.
+    let TypeRef::Path(self_ty) = &impl_data.self_ty else {
+        return TraitApplicability::Maybe;
+    };
+    let Some(segment) = self_ty.segments.last() else {
+        return TraitApplicability::Maybe;
+    };
+
+    let impl_type_args = segment
+        .args
+        .iter()
+        .filter_map(generic_arg_type_ref)
+        .collect::<Vec<_>>();
+    if impl_type_args.is_empty() {
+        return TraitApplicability::Yes;
+    }
+
+    let receiver_type_args = receiver_ty
+        .args
+        .iter()
+        .filter_map(body_generic_arg_ty)
+        .collect::<Vec<_>>();
+    if impl_type_args.len() != receiver_type_args.len() {
+        return TraitApplicability::Maybe;
+    }
+
+    let impl_type_params = impl_type_param_names(&impl_data.generics);
+    let mut applicability = TraitApplicability::Yes;
+
+    for (impl_arg, receiver_arg) in impl_type_args.into_iter().zip(receiver_type_args) {
+        if impl_arg.mentions_type_param(&impl_type_params) {
+            applicability = applicability.and(TraitApplicability::Maybe);
+            continue;
+        }
+
+        let context = TypePathContext {
+            module: impl_data.owner,
+            impl_ref: Some(impl_ref),
+        };
+        let impl_arg_ty = ty_from_type_ref_in_context(
+            def_map,
+            semantic_ir,
+            impl_arg,
+            context,
+            BodyTy::Syntax(impl_arg.clone()),
+            &TypeSubst::new(),
+        );
+        if type_arg_comparison_is_uncertain(&impl_arg_ty)
+            || type_arg_comparison_is_uncertain(&receiver_arg)
+        {
+            applicability = applicability.and(TraitApplicability::Maybe);
+            continue;
+        }
+
+        if impl_arg_ty != receiver_arg {
+            return TraitApplicability::No;
+        }
+    }
+
+    applicability
+}
+
 fn impl_type_param_names(generics: &GenericParams) -> Vec<&str> {
     generics
         .types
         .iter()
         .map(|param| param.name.as_str())
         .collect()
+}
+
+fn impl_header_is_definitely_direct(impl_data: &rg_semantic_ir::ImplData) -> bool {
+    impl_data.generics.lifetimes.is_empty()
+        && impl_data.generics.types.is_empty()
+        && impl_data.generics.consts.is_empty()
+        && impl_data.generics.where_predicates.is_empty()
+        && impl_data
+            .trait_ref
+            .as_ref()
+            .is_none_or(|trait_ref| !trait_ref.has_generic_args())
+}
+
+fn type_arg_comparison_is_uncertain(ty: &BodyTy) -> bool {
+    matches!(ty, BodyTy::Syntax(_) | BodyTy::Unknown)
+}
+
+fn push_function_candidate(
+    functions: &mut Vec<(FunctionRef, TraitApplicability)>,
+    function: FunctionRef,
+    applicability: TraitApplicability,
+) {
+    if let Some((_, existing)) = functions
+        .iter_mut()
+        .find(|(existing_function, _)| *existing_function == function)
+    {
+        *existing = best_applicability(*existing, applicability);
+        return;
+    }
+
+    functions.push((function, applicability));
+}
+
+fn best_applicability(left: TraitApplicability, right: TraitApplicability) -> TraitApplicability {
+    match (left, right) {
+        (TraitApplicability::Yes, _) | (_, TraitApplicability::Yes) => TraitApplicability::Yes,
+        (TraitApplicability::Maybe, _) | (_, TraitApplicability::Maybe) => {
+            TraitApplicability::Maybe
+        }
+        (TraitApplicability::No, TraitApplicability::No) => TraitApplicability::No,
+    }
 }

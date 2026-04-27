@@ -190,6 +190,42 @@ pub fn use_it(pair: Pair) {
 }
 
 #[test]
+fn resolves_direct_trait_method_calls_to_trait_declarations() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_direct_trait_method_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub trait Identify {
+    fn id(&self);
+}
+
+impl Identify for User {
+    fn id(&self) {}
+}
+
+pub fn use_it(user: User) {
+    user.i$goto_direct_trait$d();
+}
+"#,
+        &[AnalysisQuery::goto(
+            "goto direct trait method",
+            "goto_direct_trait",
+        )],
+        expect![[r#"
+            goto direct trait method
+            - fn id @ 4:5-4:18
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_use_and_signature_paths_to_definitions() {
     check_analysis_queries(
         r#"

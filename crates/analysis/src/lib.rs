@@ -17,7 +17,7 @@ mod ty;
 #[cfg(test)]
 mod tests;
 
-pub use self::data::{CompletionItem, NavigationTarget, SymbolAt};
+pub use self::data::{CompletionApplicability, CompletionItem, NavigationTarget, SymbolAt};
 #[allow(unused_imports)]
 pub use self::data::{CompletionKind, CompletionTarget, NavigationTargetKind};
 

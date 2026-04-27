@@ -88,6 +88,31 @@ pub struct TraitImplRef {
     pub trait_ref: TraitRef,
 }
 
+/// Best-effort answer for "does this trait impl apply to this receiver type?".
+///
+/// `Maybe` is a first-class result because this project intentionally prefers useful trait-method
+/// candidates over trying to prove generic bounds and where-clauses precisely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TraitApplicability {
+    Yes,
+    Maybe,
+    No,
+}
+
+impl TraitApplicability {
+    pub fn is_applicable(self) -> bool {
+        !matches!(self, Self::No)
+    }
+
+    pub fn and(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::No, _) | (_, Self::No) => Self::No,
+            (Self::Maybe, _) | (_, Self::Maybe) => Self::Maybe,
+            (Self::Yes, Self::Yes) => Self::Yes,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemId {
     Struct(StructId),
