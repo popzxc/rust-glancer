@@ -94,6 +94,7 @@ mod api;
         ],
         expect![[r#"
             changed files
+            - host_new_module_fixture src/api.rs
             - host_new_module_fixture src/lib.rs
 
             affected packages
@@ -176,14 +177,14 @@ pub struct Api;
         &[HostObservation::type_names_at("app marker 0", "app", "0")],
         expect![[r#"
             changed files
-            - <none>
+            - dep crates/dep/src/api.rs
 
             affected packages
             - app
             - dep
 
             changed targets
-            - <none>
+            - dep[lib]
 
             type names at `app marker 0`
             - Api

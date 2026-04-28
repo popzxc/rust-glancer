@@ -80,6 +80,7 @@ impl AnalysisHost {
 
         let mut changed_files = Vec::new();
         let mut fallback_package_roots = Vec::new();
+        let mut fallback_saved_paths = Vec::new();
 
         for change in changes {
             let changed = self
@@ -94,6 +95,10 @@ impl AnalysisHost {
                 })?;
 
             if changed.is_empty() {
+                if !fallback_saved_paths.contains(&change.path) {
+                    fallback_saved_paths.push(change.path.clone());
+                }
+
                 // A saved file can be new to the graph even though it now exists on disk. In that
                 // case, package roots are the coarse ownership boundary: rebuilding the containing
                 // package lets item-tree lowering rediscover any newly materialized `mod foo;`
@@ -127,6 +132,11 @@ impl AnalysisHost {
                 .rebuild_packages(&affected_packages)
                 .context("while attempting to rebuild affected analysis packages")?;
         }
+        self.promote_discovered_fallback_files(
+            &fallback_saved_paths,
+            &fallback_package_roots,
+            &mut changed_files,
+        );
         let changed_targets = self.targets_for_changed_files(&changed_files);
 
         Ok(AnalysisChangeSummary {
@@ -167,6 +177,37 @@ impl AnalysisHost {
             .into_iter()
             .map(PackageSlot)
             .collect()
+    }
+
+    fn promote_discovered_fallback_files(
+        &self,
+        fallback_saved_paths: &[PathBuf],
+        fallback_package_roots: &[PackageSlot],
+        changed_files: &mut Vec<ChangedFile>,
+    ) {
+        for saved_path in fallback_saved_paths {
+            for package_slot in fallback_package_roots {
+                let Some(package) = self.project.parse_db().package(package_slot.0) else {
+                    continue;
+                };
+
+                // Unknown saved files only become target/file diagnostics candidates after a
+                // package rebuild proves they are actually part of the parsed module graph.
+                for parsed_file in package.parsed_files() {
+                    if parsed_file.path() != saved_path {
+                        continue;
+                    }
+
+                    let changed_file = ChangedFile {
+                        package: *package_slot,
+                        file: parsed_file.file_id(),
+                    };
+                    if !changed_files.contains(&changed_file) {
+                        changed_files.push(changed_file);
+                    }
+                }
+            }
+        }
     }
 
     fn targets_for_changed_files(&self, changed_files: &[ChangedFile]) -> Vec<TargetRef> {
