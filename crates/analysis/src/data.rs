@@ -62,6 +62,7 @@ pub enum SymbolAt {
 /// One goto-definition destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavigationTarget {
+    pub target: TargetRef,
     pub kind: NavigationTargetKind,
     pub name: String,
     pub file_id: FileId,
@@ -69,8 +70,9 @@ pub struct NavigationTarget {
 }
 
 impl NavigationTarget {
-    pub(super) fn from_binding(binding: &BindingData) -> Self {
+    pub(super) fn from_binding(target: TargetRef, binding: &BindingData) -> Self {
         Self {
+            target,
             kind: NavigationTargetKind::LocalBinding,
             name: binding
                 .name

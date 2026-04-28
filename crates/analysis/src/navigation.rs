@@ -50,6 +50,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         };
 
         Some(NavigationTarget {
+            target: module_ref.target,
             kind: NavigationTargetKind::Module,
             name: module.name.clone().unwrap_or_else(|| "crate".to_string()),
             file_id,
@@ -61,6 +62,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         let local_def_data = self.0.def_map.local_def(local_def)?;
 
         Some(NavigationTarget {
+            target: local_def.target,
             kind: NavigationTargetKind::from_local_def_kind(local_def_data.kind),
             name: local_def_data.name.clone(),
             file_id: local_def_data.file_id,
@@ -72,6 +74,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         let item = self.body_data(item_ref.body)?.local_item(item_ref.item)?;
 
         Some(NavigationTarget {
+            target: item_ref.body.target,
             kind: NavigationTargetKind::from_body_item_kind(item.kind),
             name: item.name.clone(),
             file_id: item.source.file_id,
@@ -83,6 +86,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         let field_data = self.0.semantic_ir.field_data(field_ref)?;
         let key = field_data.field.key.as_ref()?;
         Some(NavigationTarget {
+            target: field_ref.owner.target,
             kind: NavigationTargetKind::Field,
             name: key.declaration_label(),
             file_id: field_data.file_id,
@@ -108,6 +112,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         let key = field_data.field.key.as_ref()?;
 
         Some(NavigationTarget {
+            target: field_ref.item.body.target,
             kind: NavigationTargetKind::Field,
             name: key.declaration_label(),
             file_id: field_data.item.source.file_id,
@@ -122,6 +127,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         let function_data = self.0.semantic_ir.function_data(function_ref)?;
 
         Some(NavigationTarget {
+            target: function_ref.target,
             kind: NavigationTargetKind::Function,
             name: function_data.name.clone(),
             file_id: function_data.source.file_id,
@@ -140,6 +146,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
             ResolvedFunctionRef::BodyLocal(function) => {
                 let data = self.0.body_ir.local_function_data(function)?;
                 Some(NavigationTarget {
+                    target: function.body.target,
                     kind: NavigationTargetKind::Function,
                     name: data.name.clone(),
                     file_id: data.source.file_id,
@@ -192,7 +199,7 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
             SymbolAt::Binding { body, binding } => self
                 .body_data(body)
                 .and_then(|body_data| body_data.binding(binding))
-                .map(|binding_data| vec![NavigationTarget::from_binding(binding_data)])
+                .map(|binding_data| vec![NavigationTarget::from_binding(body.target, binding_data)])
                 .unwrap_or_default(),
             SymbolAt::BodyPath {
                 body, scope, path, ..
@@ -253,7 +260,7 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         match resolution {
             BodyResolution::Local(binding) => body
                 .binding(*binding)
-                .map(NavigationTarget::from_binding)
+                .map(|binding_data| NavigationTarget::from_binding(body.owner.target, binding_data))
                 .into_iter()
                 .collect(),
             BodyResolution::LocalItem(item) => self

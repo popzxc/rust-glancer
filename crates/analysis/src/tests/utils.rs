@@ -498,6 +498,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             (
                 target.kind,
                 target.name.clone(),
+                target.target.package.0,
+                target.target.target.0,
                 target.file_id.0,
                 target.span.map(|span| span.text.start),
             )
