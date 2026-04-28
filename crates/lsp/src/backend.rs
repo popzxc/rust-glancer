@@ -1,0 +1,82 @@
+use tower_lsp_server::{
+    Client, LanguageServer,
+    jsonrpc::Result,
+    ls_types::{request::*, *},
+};
+
+use crate::{engine::EngineHandle, methods};
+
+#[derive(Debug)]
+pub(crate) struct Backend {
+    ctx: ServerContext,
+}
+
+impl Backend {
+    pub(crate) fn new(client: Client) -> Self {
+        Self {
+            ctx: ServerContext {
+                client,
+                engine: EngineHandle::spawn(),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ServerContext {
+    pub(crate) client: Client,
+    pub(crate) engine: EngineHandle,
+}
+
+impl LanguageServer for Backend {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        methods::initialize(&self.ctx, params).await
+    }
+
+    async fn initialized(&self, _: InitializedParams) {
+        self.ctx
+            .client
+            .log_message(MessageType::INFO, "rust-glimpser initialized")
+            .await;
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        methods::shutdown(&self.ctx).await
+    }
+
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        methods::text_document::did_save::did_save(&self.ctx, params).await;
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        methods::text_document::definition::definition(&self.ctx, params).await
+    }
+
+    async fn goto_type_definition(
+        &self,
+        params: GotoTypeDefinitionParams,
+    ) -> Result<Option<GotoTypeDefinitionResponse>> {
+        methods::text_document::type_definition::type_definition(&self.ctx, params).await
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        methods::text_document::completion::completion(&self.ctx, params).await
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        methods::text_document::document_symbol::document_symbol(&self.ctx, params).await
+    }
+
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Result<Option<WorkspaceSymbolResponse>> {
+        methods::workspace::symbol::symbol(&self.ctx, params).await
+    }
+}

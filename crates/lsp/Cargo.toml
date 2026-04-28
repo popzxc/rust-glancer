@@ -1,5 +1,5 @@
 [package]
-name = "rust-glimpser"
+name = "rg_lsp"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,8 +12,12 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-clap = { workspace = true, features = ["derive"] }
 cargo_metadata.workspace = true
+rg_analysis.workspace = true
+rg_def_map.workspace = true
+rg_parse.workspace = true
 rg_project.workspace = true
 rg_workspace.workspace = true
-rg_lsp.workspace = true
+tokio = { workspace = true, features = ["io-std", "macros", "rt-multi-thread", "sync"] }
+tower-lsp-server.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt"] }

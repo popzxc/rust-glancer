@@ -19,6 +19,8 @@ struct Cli {
 enum Command {
     /// Analyze the crate or workspace package located at `path`.
     Analyze { path: PathBuf },
+    /// Start the language server over stdio.
+    Lsp,
 }
 
 /// Parses CLI arguments and dispatches to the selected command handler.
@@ -27,6 +29,7 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Analyze { path } => analyze(path),
+        Command::Lsp => rg_lsp::run_stdio(),
     }
 }
 
