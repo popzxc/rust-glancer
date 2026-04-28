@@ -1,0 +1,18 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "rust-glimpser: compile VS Code extension",
+      "type": "shell",
+      "command": "npm",
+      "args": [
+        "run",
+        "compile"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/editors/code"
+      },
+      "problemMatcher": "$tsc"
+    }
+  ]
+}

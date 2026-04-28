@@ -1,0 +1,91 @@
+{
+  "name": "rust-glimpser-code",
+  "displayName": "Rust Glimpser",
+  "description": "VS Code client for the rust-glimpser language server.",
+  "version": "0.1.0",
+  "publisher": "rust-glimpser",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "vscode": "^1.88.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:rust",
+    "workspaceContains:Cargo.toml",
+    "onCommand:rust-glimpser.restartServer"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "rust",
+        "aliases": [
+          "Rust",
+          "rust"
+        ],
+        "extensions": [
+          ".rs"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "rust-glimpser.restartServer",
+        "title": "Rust Glimpser: Restart Server"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Rust Glimpser",
+      "properties": {
+        "rust-glimpser.server.path": {
+          "scope": "window",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Path to the rust-glimpser executable. When set, the extension runs this executable with the lsp subcommand."
+        },
+        "rust-glimpser.server.extraEnv": {
+          "scope": "window",
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Additional environment variables for the rust-glimpser server process."
+        },
+        "rust-glimpser.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Controls LSP protocol tracing for the rust-glimpser client."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "tsc --noEmit -p .",
+    "compile": "npm run check && esbuild ./src/extension.ts --bundle --external:vscode --format=cjs --platform=node --target=node18 --sourcemap --outfile=dist/extension.js",
+    "watch": "tsc --noEmit -watch -p .",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.88.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.4.5"
+  }
+}
