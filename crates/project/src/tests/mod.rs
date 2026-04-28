@@ -113,6 +113,55 @@ mod api;
 }
 
 #[test]
+fn resolves_lsp_file_contexts_from_paths() {
+    let fixture = HostFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "file_context_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod shared;
+
+//- /src/main.rs
+mod shared;
+
+fn main() {}
+
+//- /src/shared.rs
+pub struct Shared;
+
+//- /src/orphan.rs
+pub struct Orphan;
+"#,
+    );
+
+    fixture.check(
+        &[
+            HostObservation::file_contexts("lib root", "src/lib.rs"),
+            HostObservation::file_contexts("bin root", "src/main.rs"),
+            HostObservation::file_contexts("shared module", "src/shared.rs"),
+            HostObservation::file_contexts("orphan file", "src/orphan.rs"),
+        ],
+        expect![[r#"
+            file contexts `lib root`
+            - file_context_fixture src/lib.rs -> file_context_fixture[lib]
+
+            file contexts `bin root`
+            - file_context_fixture src/main.rs -> file_context_fixture[bin]
+
+            file contexts `shared module`
+            - file_context_fixture src/shared.rs -> file_context_fixture[bin], file_context_fixture[lib]
+
+            file contexts `orphan file`
+            - <none>
+        "#]],
+    );
+}
+
+#[test]
 fn rebuilds_package_roots_for_new_saved_module_files() {
     let mut fixture = HostFixture::build(
         r#"

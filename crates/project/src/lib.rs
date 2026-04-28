@@ -2,7 +2,10 @@ mod host;
 mod project;
 
 pub use self::{
-    host::{AnalysisChangeSummary, AnalysisHost, AnalysisSnapshot, ChangedFile, SavedFileChange},
+    host::{
+        AnalysisChangeSummary, AnalysisHost, AnalysisSnapshot, ChangedFile, FileContext,
+        SavedFileChange,
+    },
     project::Project,
 };
 

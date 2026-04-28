@@ -7,7 +7,7 @@ use rg_parse::{FileId, ParseDb};
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate_with_markers};
 
-use crate::{AnalysisChangeSummary, AnalysisHost, SavedFileChange};
+use crate::{AnalysisChangeSummary, AnalysisHost, FileContext, SavedFileChange};
 
 pub(super) struct HostFixture {
     fixture: CrateFixture,
@@ -162,6 +162,12 @@ impl HostFixture {
                 HostObservation::WorkspaceSymbols { query } => {
                     self.render_workspace_symbols(query, &mut dump);
                 }
+                HostObservation::FileContexts {
+                    label,
+                    relative_path,
+                } => {
+                    self.render_file_contexts(label, relative_path, &mut dump);
+                }
                 HostObservation::TypeNamesAt {
                     label,
                     package,
@@ -202,6 +208,47 @@ impl HostFixture {
         }
     }
 
+    fn render_file_contexts(&self, label: &str, relative_path: &str, dump: &mut String) {
+        writeln!(dump, "file contexts `{label}`").expect("string writes should not fail");
+
+        let mut contexts = self
+            .host
+            .snapshot()
+            .file_contexts_for_path(self.fixture.path(relative_path))
+            .expect("fixture path should resolve to file contexts");
+        contexts.sort_by(|left, right| {
+            self.file_context_key(left)
+                .cmp(&self.file_context_key(right))
+        });
+
+        if contexts.is_empty() {
+            writeln!(dump, "- <none>").expect("string writes should not fail");
+            return;
+        }
+
+        for context in contexts {
+            let package = self.package(context.package);
+            let path = package
+                .file_path(context.file)
+                .expect("file context should have a parsed path");
+            let mut targets = context
+                .targets
+                .iter()
+                .map(|target| self.render_target_ref(*target))
+                .collect::<Vec<_>>();
+            targets.sort();
+
+            writeln!(
+                dump,
+                "- {} {} -> {}",
+                package.package_name(),
+                self.display_path(path),
+                targets.join(", ")
+            )
+            .expect("string writes should not fail");
+        }
+    }
+
     fn render_type_names_at(
         &self,
         label: &str,
@@ -233,6 +280,14 @@ impl HostFixture {
             self.render_target_ref(symbol.target),
             self.symbol_path(symbol),
         )
+    }
+
+    fn file_context_key(&self, context: &FileContext) -> (String, String) {
+        let package = self.package(context.package);
+        let path = package
+            .file_path(context.file)
+            .expect("file context should have a parsed path");
+        (package.package_name().to_string(), self.display_path(path))
     }
 
     fn symbol_path(&self, symbol: &WorkspaceSymbol) -> String {
@@ -277,6 +332,10 @@ pub(super) enum HostObservation<'a> {
     WorkspaceSymbols {
         query: &'a str,
     },
+    FileContexts {
+        label: &'a str,
+        relative_path: &'a str,
+    },
     TypeNamesAt {
         label: &'a str,
         package: &'a str,
@@ -287,6 +346,13 @@ pub(super) enum HostObservation<'a> {
 impl<'a> HostObservation<'a> {
     pub(super) fn workspace_symbols(query: &'a str) -> Self {
         Self::WorkspaceSymbols { query }
+    }
+
+    pub(super) fn file_contexts(label: &'a str, relative_path: &'a str) -> Self {
+        Self::FileContexts {
+            label,
+            relative_path,
+        }
     }
 
     pub(super) fn type_names_at(label: &'a str, package: &'a str, marker: &'a str) -> Self {

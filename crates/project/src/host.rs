@@ -268,6 +268,18 @@ pub struct ChangedFile {
     pub file: FileId,
 }
 
+/// Analysis-ready context for one filesystem path.
+///
+/// The same file can be reachable from more than one target, for example when a package library
+/// and binary both declare `mod shared;`. Unreachable parsed-cache files are intentionally omitted
+/// by path lookups, because LSP queries need a current target context to answer semantic questions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileContext {
+    pub package: PackageSlot,
+    pub file: FileId,
+    pub targets: Vec<TargetRef>,
+}
+
 /// Immutable project view used to answer LSP-shaped queries.
 #[derive(Debug, Clone, Copy)]
 pub struct AnalysisSnapshot<'a> {
@@ -298,6 +310,42 @@ impl<'a> AnalysisSnapshot<'a> {
 
     pub fn body_ir_db(&self) -> &'a BodyIrDb {
         self.project.body_ir_db()
+    }
+
+    /// Returns current analysis contexts for a saved filesystem path.
+    pub fn file_contexts_for_path(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> anyhow::Result<Vec<FileContext>> {
+        let path = path.as_ref();
+        let canonical_path = path
+            .canonicalize()
+            .with_context(|| format!("while attempting to canonicalize {}", path.display()))?;
+
+        let mut contexts = Vec::new();
+
+        for (package_idx, package) in self.project.parse_db().packages().iter().enumerate() {
+            let package_slot = PackageSlot(package_idx);
+
+            for parsed_file in package.parsed_files() {
+                if parsed_file.path() != canonical_path.as_path() {
+                    continue;
+                }
+
+                let targets = self.targets_for_file(package_slot, parsed_file.file_id());
+                if targets.is_empty() {
+                    continue;
+                }
+
+                contexts.push(FileContext {
+                    package: package_slot,
+                    file: parsed_file.file_id(),
+                    targets,
+                });
+            }
+        }
+
+        Ok(contexts)
     }
 
     /// Returns target contexts whose module tree contains a package-local file.
