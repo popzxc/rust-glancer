@@ -197,6 +197,20 @@ impl WorkspaceMetadata {
         self.packages.get(slot)
     }
 
+    /// Returns package slots whose manifest directory contains `path`.
+    ///
+    /// This is intentionally a filesystem-root query, not a parsed-file ownership query. The
+    /// analysis host uses it when a saved file was not part of the parsed graph yet, for example
+    /// after `mod api;` was saved before `api.rs` existed. Rebuilding the containing package lets
+    /// normal module discovery decide whether the new path is actually reachable.
+    pub fn package_slots_containing_path(&self, path: &Path) -> Vec<usize> {
+        self.packages
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, package)| package.contains_path(path).then_some(slot))
+            .collect()
+    }
+
     /// Iterates over packages that belong to the analyzed workspace.
     pub fn workspace_packages(&self) -> impl Iterator<Item = &Package> + '_ {
         self.packages
@@ -324,6 +338,28 @@ pub struct Package {
     pub manifest_path: PathBuf,
     pub targets: Vec<Target>,
     pub dependencies: Vec<PackageDependency>,
+}
+
+impl Package {
+    /// Returns the package root directory, modeled as the parent of `Cargo.toml`.
+    pub fn root_dir(&self) -> &Path {
+        self.manifest_path
+            .parent()
+            .expect("package manifest path should have a parent directory")
+    }
+
+    fn contains_path(&self, path: &Path) -> bool {
+        if path.starts_with(self.root_dir()) {
+            return true;
+        }
+
+        // Save events are canonicalized by the analysis host, while Cargo metadata can preserve a
+        // non-canonical spelling of the same temp/source directory. Canonicalizing the package root
+        // here keeps this query about filesystem ownership instead of string-prefix spelling.
+        self.root_dir()
+            .canonicalize()
+            .is_ok_and(|root| path.starts_with(root))
+    }
 }
 
 /// Normalized target metadata with one target kind per target.

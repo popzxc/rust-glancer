@@ -453,6 +453,7 @@ name = "rg_project"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "expect-test",
  "rg_analysis",
  "rg_body_ir",
  "rg_def_map",

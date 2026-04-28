@@ -313,16 +313,36 @@ impl CrateFixture {
         C: AsRef<str>,
     {
         let root = Self::create_root_directory();
+        let fixture = Self { root };
 
         for (relative_path, contents) in files {
-            let path = root.join(relative_path.as_ref());
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).expect("fixture directories should be created");
-            }
-            fs::write(path, contents.as_ref()).expect("fixture file should be written");
+            fixture.write_file(relative_path.as_ref(), contents.as_ref());
         }
 
-        Self { root }
+        fixture
+    }
+
+    /// Writes one or more fixture files into this crate root and returns the parsed file set.
+    ///
+    /// This is intentionally generic filesystem materialization, not an analysis update helper.
+    /// Higher-level crates can interpret the returned file contents as save events, VFS changes,
+    /// generated outputs, or any other domain-specific action they need to test.
+    pub fn write_fixture_files(&self, spec: &str) -> FixtureSpec {
+        let fixture = FixtureSpec::parse(spec);
+
+        for file in fixture.files() {
+            self.write_file(file.relative_path(), file.contents());
+        }
+
+        fixture
+    }
+
+    fn write_file(&self, relative_path: &str, contents: &str) {
+        let path = self.root.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("fixture directories should be created");
+        }
+        fs::write(path, contents).expect("fixture file should be written");
     }
 
     /// Resolves a relative path within the fixture root.
@@ -458,6 +478,36 @@ pub fn use_it(user: User) {
                     .expect("method name should be present")
             )
             .expect("fixture offset should fit into u32")
+        );
+    }
+
+    #[test]
+    fn writes_fixture_files_into_existing_crate_root() {
+        let fixture = crate::fixture_crate(
+            r#"
+//- /Cargo.toml
+[package]
+name = "write_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Root;
+"#,
+        );
+
+        let saved = fixture.write_fixture_files(
+            r#"
+//- /src/api.rs
+pub struct Api;
+"#,
+        );
+
+        assert_eq!(saved.files()[0].relative_path(), "src/api.rs");
+        assert_eq!(
+            std::fs::read_to_string(fixture.path("src/api.rs"))
+                .expect("written fixture file should be readable"),
+            "pub struct Api;\n"
         );
     }
 }

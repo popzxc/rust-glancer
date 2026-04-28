@@ -62,17 +62,24 @@ impl AnalysisHost {
         &mut self,
         changes: impl IntoIterator<Item = SavedFileChange>,
     ) -> anyhow::Result<AnalysisChangeSummary> {
-        let changes = changes.into_iter().collect::<Vec<_>>();
-        for change in &changes {
-            change.path.canonicalize().with_context(|| {
-                format!(
-                    "while attempting to canonicalize changed file {}",
-                    change.path.display()
-                )
-            })?;
-        }
+        let changes = changes
+            .into_iter()
+            .map(|change| {
+                let path = change.path.canonicalize().with_context(|| {
+                    format!(
+                        "while attempting to canonicalize changed file {}",
+                        change.path.display()
+                    )
+                })?;
+                Ok(SavedFileChange {
+                    path,
+                    text: change.text,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         let mut changed_files = Vec::new();
+        let mut fallback_package_roots = Vec::new();
 
         for change in changes {
             let changed = self
@@ -86,6 +93,23 @@ impl AnalysisHost {
                     )
                 })?;
 
+            if changed.is_empty() {
+                // A saved file can be new to the graph even though it now exists on disk. In that
+                // case, package roots are the coarse ownership boundary: rebuilding the containing
+                // package lets item-tree lowering rediscover any newly materialized `mod foo;`
+                // files through the normal Rust module rules.
+                for package_slot in self
+                    .project
+                    .workspace()
+                    .package_slots_containing_path(&change.path)
+                {
+                    let package_slot = PackageSlot(package_slot);
+                    if !fallback_package_roots.contains(&package_slot) {
+                        fallback_package_roots.push(package_slot);
+                    }
+                }
+            }
+
             for changed_file in changed {
                 let changed_file = ChangedFile {
                     package: PackageSlot(changed_file.package),
@@ -97,8 +121,8 @@ impl AnalysisHost {
             }
         }
 
-        let affected_packages = self.affected_packages(&changed_files);
-        if !changed_files.is_empty() {
+        let affected_packages = self.affected_packages(&changed_files, &fallback_package_roots);
+        if !affected_packages.is_empty() {
             self.project
                 .rebuild_packages(&affected_packages)
                 .context("while attempting to rebuild affected analysis packages")?;
@@ -112,8 +136,12 @@ impl AnalysisHost {
         })
     }
 
-    fn affected_packages(&self, changed_files: &[ChangedFile]) -> Vec<PackageSlot> {
-        let changed_package_ids = changed_files
+    fn affected_packages(
+        &self,
+        changed_files: &[ChangedFile],
+        fallback_package_roots: &[PackageSlot],
+    ) -> Vec<PackageSlot> {
+        let mut changed_package_ids = changed_files
             .iter()
             .filter_map(|changed_file| {
                 self.project
@@ -123,6 +151,16 @@ impl AnalysisHost {
                     .map(|package| package.id.clone())
             })
             .collect::<Vec<_>>();
+
+        for package_slot in fallback_package_roots {
+            let Some(package) = self.project.workspace().packages().get(package_slot.0) else {
+                continue;
+            };
+            if !changed_package_ids.contains(&package.id) {
+                changed_package_ids.push(package.id.clone());
+            }
+        }
+
         self.project
             .workspace()
             .reverse_dependency_closure(&changed_package_ids)

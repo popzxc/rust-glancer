@@ -295,3 +295,52 @@ pub struct Independent;
         "reverse dependency closure should include transitive dependents only"
     );
 }
+
+#[test]
+fn finds_packages_containing_source_paths() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/app", "crates/dep"]
+resolver = "3"
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/app/src/lib.rs
+pub struct App;
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+
+    let package_names = workspace
+        .package_slots_containing_path(&fixture.path("crates/app/src/api.rs"))
+        .into_iter()
+        .map(|slot| workspace.packages()[slot].name.clone())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        package_names,
+        BTreeSet::from(["app".to_string()]),
+        "a new source path should map to the package root that contains it"
+    );
+    assert!(
+        workspace
+            .package_slots_containing_path(&fixture.path("generated/api.rs"))
+            .is_empty(),
+        "paths outside every package root should not force a package rebuild"
+    );
+}
