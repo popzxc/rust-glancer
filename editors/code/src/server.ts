@@ -62,15 +62,6 @@ export namespace ResolvedServer {
         stdio: "pipe",
       });
 
-      child.stderr?.setEncoding("utf8");
-      child.stderr?.on("data", (chunk: string) => {
-        for (const line of chunk.split(/\r?\n/)) {
-          if (line.length > 0) {
-            output.appendLine(`server stderr: ${line}`);
-          }
-        }
-      });
-
       child.on("spawn", () => {
         output.appendLine(`server process started with pid ${child.pid ?? "unknown"}`);
       });

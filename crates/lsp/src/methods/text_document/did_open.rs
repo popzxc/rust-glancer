@@ -7,9 +7,17 @@ pub(crate) async fn did_open(ctx: &ServerContext, params: DidOpenTextDocumentPar
         return;
     };
 
+    let version = params.text_document.version;
+    let text_len = params.text_document.text.len();
     ctx.documents
         .lock()
         .await
-        .did_open(path.clone(), Some(params.text_document.version));
+        .did_open(path.clone(), Some(version), &params.text_document.text);
     tracing::debug!(path = %path.display(), "opened clean document snapshot");
+    tracing::trace!(
+        path = %path.display(),
+        version,
+        text_len,
+        "recorded open document freshness"
+    );
 }

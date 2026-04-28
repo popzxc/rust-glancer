@@ -33,6 +33,7 @@ impl EngineWorker {
         while let Ok(command) = receiver.recv() {
             match command {
                 EngineCommand::Initialize { root, respond_to } => {
+                    tracing::trace!(root = %root.display(), "engine command started: initialize");
                     let _ = respond_to.send(self.initialize(root));
                 }
                 EngineCommand::DidSave {
@@ -40,6 +41,12 @@ impl EngineWorker {
                     text,
                     respond_to,
                 } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        has_text = text.is_some(),
+                        text_len = ?text.as_ref().map(String::len),
+                        "engine command started: did_save"
+                    );
                     let _ = respond_to.send(self.did_save(path, text));
                 }
                 EngineCommand::GotoDefinition {
@@ -47,6 +54,12 @@ impl EngineWorker {
                     position,
                     respond_to,
                 } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        line = position.line,
+                        character = position.character,
+                        "engine command started: goto_definition"
+                    );
                     let _ = respond_to.send(self.goto_definition(path, position));
                 }
                 EngineCommand::GotoTypeDefinition {
@@ -54,6 +67,12 @@ impl EngineWorker {
                     position,
                     respond_to,
                 } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        line = position.line,
+                        character = position.character,
+                        "engine command started: goto_type_definition"
+                    );
                     let _ = respond_to.send(self.goto_type_definition(path, position));
                 }
                 EngineCommand::Completion {
@@ -61,9 +80,19 @@ impl EngineWorker {
                     position,
                     respond_to,
                 } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        line = position.line,
+                        character = position.character,
+                        "engine command started: completion"
+                    );
                     let _ = respond_to.send(self.completion(path, position));
                 }
                 EngineCommand::DocumentSymbol { path, respond_to } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        "engine command started: document_symbol"
+                    );
                     let _ = respond_to.send(self.document_symbol(path));
                 }
                 EngineCommand::InlayHint {
@@ -71,9 +100,18 @@ impl EngineWorker {
                     range,
                     respond_to,
                 } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        start_line = range.start.line,
+                        start_character = range.start.character,
+                        end_line = range.end.line,
+                        end_character = range.end.character,
+                        "engine command started: inlay_hint"
+                    );
                     let _ = respond_to.send(self.inlay_hint(path, range));
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
+                    tracing::trace!(query = %query, "engine command started: workspace_symbol");
                     let _ = respond_to.send(self.workspace_symbol(&query));
                 }
                 EngineCommand::Shutdown(respond_to) => {
@@ -387,8 +425,17 @@ impl EngineWorker {
     ) -> anyhow::Result<Vec<(FileContext, TargetRef, u32)>> {
         let mut targets = Vec::new();
 
-        for context in self.file_contexts(snapshot, path)? {
+        let contexts = self.file_contexts(snapshot, path)?;
+        for context in contexts {
             let Some(offset) = self.offset_for_context(snapshot, &context, position) else {
+                tracing::trace!(
+                    path = %path.display(),
+                    line = position.line,
+                    character = position.character,
+                    package = ?context.package,
+                    file = ?context.file,
+                    "could not convert LSP position to file offset"
+                );
                 continue;
             };
 
@@ -396,6 +443,14 @@ impl EngineWorker {
                 targets.push((context.clone(), *target, offset));
             }
         }
+
+        tracing::trace!(
+            path = %path.display(),
+            line = position.line,
+            character = position.character,
+            target_offset_count = targets.len(),
+            "resolved request target offsets"
+        );
 
         Ok(targets)
     }
@@ -421,6 +476,12 @@ impl EngineWorker {
             target_count,
             "resolved file contexts"
         );
+        tracing::trace!(
+            path = %path.display(),
+            context_count = contexts.len(),
+            target_count,
+            "resolved file contexts for query"
+        );
 
         Ok(contexts)
     }
@@ -434,8 +495,18 @@ impl EngineWorker {
         let package = snapshot.parse_db().package(context.package.0)?;
         let file = package.parsed_file(context.file)?;
 
-        file.line_index()
-            .offset_from_utf16_position(position::parse_position(position))
+        let offset = file
+            .line_index()
+            .offset_from_utf16_position(position::parse_position(position));
+        tracing::trace!(
+            package = ?context.package,
+            file = ?context.file,
+            line = position.line,
+            character = position.character,
+            offset = ?offset,
+            "converted LSP position to file offset"
+        );
+        offset
     }
 
     fn text_span_for_context(
@@ -453,7 +524,19 @@ impl EngineWorker {
             .line_index()
             .offset_from_utf16_position(position::parse_position(range.end))?;
 
-        Some(TextSpan { start, end })
+        let span = TextSpan { start, end };
+        tracing::trace!(
+            package = ?context.package,
+            file = ?context.file,
+            start_line = range.start.line,
+            start_character = range.start.character,
+            end_line = range.end.line,
+            end_character = range.end.character,
+            span_start = span.start,
+            span_end = span.end,
+            "converted LSP range to text span"
+        );
+        Some(span)
     }
 
     fn snapshot(&self) -> anyhow::Result<AnalysisSnapshot<'_>> {

@@ -13,13 +13,25 @@ use std::path::Path;
 use crate::backend::ServerContext;
 
 pub(crate) async fn is_dirty(ctx: &ServerContext, path: &Path) -> bool {
-    let dirty = ctx.documents.lock().await.is_dirty(path);
-    if dirty {
+    let freshness = ctx.documents.lock().await.freshness(path);
+    tracing::trace!(
+        path = %path.display(),
+        tracked = freshness.tracked(),
+        version = ?freshness.version(),
+        dirty = freshness.dirty(),
+        saved_len = ?freshness.saved_len(),
+        live_len = ?freshness.live_len(),
+        saved_hash = ?freshness.saved_hash(),
+        live_hash = ?freshness.live_hash(),
+        "checked document freshness"
+    );
+
+    if freshness.dirty() {
         tracing::debug!(
             path = %path.display(),
             "returning empty result for dirty document"
         );
     }
 
-    dirty
+    freshness.dirty()
 }

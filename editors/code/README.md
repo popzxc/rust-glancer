@@ -82,6 +82,3 @@ Server logs are controlled through environment variables. For example:
   }
 }
 ```
-
-The server writes logs to stderr, and the extension forwards that stream to the
-`Rust Glimpser` output channel. stdout remains reserved for the LSP protocol.

@@ -15,15 +15,37 @@ pub(crate) async fn type_definition(
     let Some(path) = uri_to_path(&params.text_document_position_params.text_document.uri) else {
         return Ok(None);
     };
+    let position = params.text_document_position_params.position;
+    tracing::trace!(
+        path = %path.display(),
+        line = position.line,
+        character = position.character,
+        "type definition request received"
+    );
     if text_document::is_dirty(ctx, &path).await {
+        tracing::trace!(
+            path = %path.display(),
+            line = position.line,
+            character = position.character,
+            result_count = 0usize,
+            reason = "dirty",
+            "type definition request suppressed"
+        );
         return Ok(Some(GotoDefinitionResponse::Array(Vec::new())));
     }
 
     let locations = ctx
         .engine
-        .goto_type_definition(path, params.text_document_position_params.position)
+        .goto_type_definition(path.clone(), position)
         .await
         .map_err(internal_error)?;
+    tracing::trace!(
+        path = %path.display(),
+        line = position.line,
+        character = position.character,
+        result_count = locations.len(),
+        "type definition request answered"
+    );
 
     Ok(Some(GotoDefinitionResponse::Array(locations)))
 }

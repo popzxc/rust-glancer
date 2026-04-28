@@ -7,6 +7,21 @@ pub(crate) async fn did_close(ctx: &ServerContext, params: DidCloseTextDocumentP
         return;
     };
 
-    ctx.documents.lock().await.did_close(&path);
+    let mut documents = ctx.documents.lock().await;
+    let freshness = documents.freshness(&path);
+    documents.did_close(&path);
+    drop(documents);
+
     tracing::debug!(path = %path.display(), "closed document");
+    tracing::trace!(
+        path = %path.display(),
+        tracked = freshness.tracked(),
+        version = ?freshness.version(),
+        dirty = freshness.dirty(),
+        saved_len = ?freshness.saved_len(),
+        live_len = ?freshness.live_len(),
+        saved_hash = ?freshness.saved_hash(),
+        live_hash = ?freshness.live_hash(),
+        "removed document freshness"
+    );
 }
