@@ -94,6 +94,7 @@ impl DefMap {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleData {
     pub name: Option<String>,
+    pub name_span: Option<Span>,
     pub parent: Option<ModuleId>,
     pub children: Vec<(String, ModuleId)>,
     pub local_defs: Vec<LocalDefId>,

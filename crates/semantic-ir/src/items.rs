@@ -224,6 +224,8 @@ impl FunctionData {
 pub struct TypeAliasData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemTreeRef,
+    pub span: Span,
+    pub name_span: Option<Span>,
     pub owner: ItemOwner,
     pub name: String,
     pub visibility: VisibilityLevel,
@@ -235,6 +237,8 @@ pub struct TypeAliasData {
 pub struct ConstData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemTreeRef,
+    pub span: Span,
+    pub name_span: Option<Span>,
     pub owner: ItemOwner,
     pub name: String,
     pub visibility: VisibilityLevel,
@@ -246,6 +250,8 @@ pub struct ConstData {
 pub struct StaticData {
     pub local_def: LocalDefRef,
     pub source: ItemTreeRef,
+    pub span: Span,
+    pub name_span: Option<Span>,
     pub owner: ModuleRef,
     pub name: String,
     pub visibility: VisibilityLevel,

@@ -336,16 +336,26 @@ impl EnumItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumVariantItem {
     pub name: String,
+    pub span: Span,
+    pub name_span: Span,
     pub fields: FieldList,
 }
 
 impl EnumVariantItem {
     fn from_ast(variant: ast::Variant, line_index: &LineIndex) -> Self {
+        let name = variant.name();
+        let span = Span::from_text_range(variant.syntax().text_range(), line_index);
+        let name_span = name
+            .as_ref()
+            .map(|name| Span::from_text_range(name.syntax().text_range(), line_index))
+            .unwrap_or(span);
+
         Self {
-            name: variant
-                .name()
+            name: name
                 .map(|name| name.text().to_string())
                 .unwrap_or_else(|| "<missing>".to_string()),
+            span,
+            name_span,
             fields: FieldList::from_ast(variant.field_list(), line_index),
         }
     }

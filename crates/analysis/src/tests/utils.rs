@@ -2,7 +2,10 @@ use std::fmt::Write as _;
 
 use expect_test::Expect;
 
-use crate::{Analysis, CompletionApplicability, CompletionItem, NavigationTarget, SymbolAt};
+use crate::{
+    Analysis, CompletionApplicability, CompletionItem, DocumentSymbol, NavigationTarget, SymbolAt,
+    WorkspaceSymbol,
+};
 use rg_body_ir::{
     BodyGenericArg, BodyIrDb, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyTy, ExprData,
     ExprKind,
@@ -12,7 +15,7 @@ use rg_item_tree::ItemTreeDb;
 use rg_parse::{FileId, ParseDb, Span};
 use rg_semantic_ir::{FunctionRef, ItemOwner, SemanticIrDb, TraitRef, TypeDefId, TypeDefRef};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
-use test_fixture::{FixtureMarkers, fixture_crate_with_markers};
+use test_fixture::{FixtureMarkers, fixture_crate, fixture_crate_with_markers};
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
@@ -35,6 +38,22 @@ pub(super) fn check_analysis_queries_with_sysroot(
     let db = AnalysisFixtureDb::build(workspace);
     let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery, expect: Expect) {
+    let fixture = fixture_crate(fixture);
+    let db = AnalysisFixtureDb::build(WorkspaceMetadata::from_cargo(fixture.metadata()));
+    let renderer = AnalysisSymbolSnapshot::new(&db);
+    let actual = format!("{}\n", renderer.render_document_symbols(&query).trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect) {
+    let fixture = fixture_crate(fixture);
+    let db = AnalysisFixtureDb::build(WorkspaceMetadata::from_cargo(fixture.metadata()));
+    let renderer = AnalysisSymbolSnapshot::new(&db);
+    let actual = format!("{}\n", renderer.render_workspace_symbols(query).trim_end());
     expect.assert_eq(&actual);
 }
 
@@ -87,6 +106,32 @@ impl AnalysisQuery {
             target: AnalysisTarget::lib(),
             kind,
         }
+    }
+}
+
+pub(super) struct DocumentSymbolsQuery {
+    title: &'static str,
+    path: &'static str,
+    target: AnalysisTarget,
+}
+
+impl DocumentSymbolsQuery {
+    pub(super) fn new(title: &'static str, path: &'static str) -> Self {
+        Self {
+            title,
+            path,
+            target: AnalysisTarget::lib(),
+        }
+    }
+
+    pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
+        self.target = AnalysisTarget::bin(package_name);
+        self
+    }
+
+    pub(super) fn in_lib(mut self, package_name: &'static str) -> Self {
+        self.target = AnalysisTarget::lib_package(package_name);
+        self
     }
 }
 
@@ -164,6 +209,63 @@ impl AnalysisFixtureDb {
 
     fn analysis(&self) -> Analysis<'_> {
         Analysis::new(&self.def_map, &self.semantic_ir, &self.body_ir)
+    }
+
+    fn target_and_file_for_path(
+        &self,
+        selected: &AnalysisTarget,
+        path: &str,
+    ) -> (TargetRef, FileId) {
+        let mut matches = Vec::new();
+        let normalized_path = path.trim_start_matches('/');
+
+        for (package_slot, package) in self.parse.packages().iter().enumerate() {
+            if !selected.matches_package(package.package_name()) {
+                continue;
+            }
+
+            for target in package
+                .targets()
+                .iter()
+                .filter(|target| target.kind == selected.kind)
+            {
+                let Some(file_id) = package
+                    .parsed_files()
+                    .find(|file| file.path().ends_with(normalized_path))
+                    .map(|file| file.file_id())
+                else {
+                    continue;
+                };
+
+                let target_ref = TargetRef {
+                    package: PackageSlot(package_slot),
+                    target: target.id,
+                };
+                if self.target_owns_file(target_ref, file_id) {
+                    matches.push((target_ref, file_id));
+                }
+            }
+        }
+
+        assert_eq!(
+            matches.len(),
+            1,
+            "path `{path}` should identify exactly one file owned by one {} target",
+            selected.kind
+        );
+        matches.pop().expect("one match should be present")
+    }
+
+    fn target_owns_file(&self, target: TargetRef, file_id: FileId) -> bool {
+        let def_map = self
+            .def_map
+            .def_map(target)
+            .expect("selected fixture target should have a def map");
+
+        def_map
+            .modules()
+            .iter()
+            .any(|module| module.origin.contains_file(file_id))
     }
 }
 
@@ -251,66 +353,11 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
     fn query_location(&self, query: &AnalysisQuery) -> (TargetRef, FileId, u32) {
         let marker = self.markers.position(query.marker);
-        let (target, file_id) = self.target_and_file_for_path(&query.target, &marker.path);
+        let (target, file_id) = self
+            .db
+            .target_and_file_for_path(&query.target, &marker.path);
 
         (target, file_id, marker.offset)
-    }
-
-    fn target_and_file_for_path(
-        &self,
-        selected: &AnalysisTarget,
-        path: &str,
-    ) -> (TargetRef, FileId) {
-        let mut matches = Vec::new();
-
-        for (package_slot, package) in self.db.parse.packages().iter().enumerate() {
-            if !selected.matches_package(package.package_name()) {
-                continue;
-            }
-
-            for target in package
-                .targets()
-                .iter()
-                .filter(|target| target.kind == selected.kind)
-            {
-                let Some(file_id) = package
-                    .parsed_files()
-                    .find(|file| file.path().ends_with(path))
-                    .map(|file| file.file_id())
-                else {
-                    continue;
-                };
-
-                let target_ref = TargetRef {
-                    package: PackageSlot(package_slot),
-                    target: target.id,
-                };
-                if self.target_owns_file(target_ref, file_id) {
-                    matches.push((target_ref, file_id));
-                }
-            }
-        }
-
-        assert_eq!(
-            matches.len(),
-            1,
-            "marker path `{path}` should identify exactly one file owned by one {} target",
-            selected.kind
-        );
-        matches.pop().expect("one match should be present")
-    }
-
-    fn target_owns_file(&self, target: TargetRef, file_id: FileId) -> bool {
-        let def_map = self
-            .db
-            .def_map
-            .def_map(target)
-            .expect("selected fixture target should have a def map");
-
-        def_map
-            .modules()
-            .iter()
-            .any(|module| module.origin.contains_file(file_id))
     }
 
     fn render_symbol(&self, symbol: Option<SymbolAt>, dump: &mut String) {
@@ -714,6 +761,163 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn render_optional_span(&self, span: Option<Span>) -> String {
         span.map(|span| self.render_source_span(span))
             .unwrap_or_else(|| "<root>".to_string())
+    }
+
+    fn render_source_span(&self, span: Span) -> String {
+        format!(
+            "{}:{}-{}:{}",
+            span.line_column.start.line + 1,
+            span.line_column.start.column + 1,
+            span.line_column.end.line + 1,
+            span.line_column.end.column + 1,
+        )
+    }
+}
+
+struct AnalysisSymbolSnapshot<'a> {
+    db: &'a AnalysisFixtureDb,
+}
+
+impl<'a> AnalysisSymbolSnapshot<'a> {
+    fn new(db: &'a AnalysisFixtureDb) -> Self {
+        Self { db }
+    }
+
+    fn render_document_symbols(&self, query: &DocumentSymbolsQuery) -> String {
+        let (target, file_id) = self.db.target_and_file_for_path(&query.target, query.path);
+        let symbols = self.db.analysis().document_symbols(target, file_id);
+        let mut dump = query.title.to_string();
+
+        if symbols.is_empty() {
+            writeln!(dump, "\n- <none>").expect("string writes should not fail");
+            return dump;
+        }
+
+        writeln!(dump).expect("string writes should not fail");
+        self.render_document_symbol_list(&symbols, 0, &mut dump);
+        dump
+    }
+
+    fn render_workspace_symbols(&self, query: &str) -> String {
+        let symbols = self.db.analysis().workspace_symbols(query);
+        let mut dump = format!("workspace symbols `{query}`");
+
+        if symbols.is_empty() {
+            writeln!(dump, "\n- <none>").expect("string writes should not fail");
+            return dump;
+        }
+
+        writeln!(dump).expect("string writes should not fail");
+        for symbol in symbols {
+            self.render_workspace_symbol(&symbol, &mut dump);
+        }
+        dump
+    }
+
+    fn render_document_symbol_list(
+        &self,
+        symbols: &[DocumentSymbol],
+        depth: usize,
+        dump: &mut String,
+    ) {
+        for symbol in symbols {
+            self.render_document_symbol(symbol, depth, dump);
+        }
+    }
+
+    fn render_document_symbol(&self, symbol: &DocumentSymbol, depth: usize, dump: &mut String) {
+        let indent = "  ".repeat(depth);
+        let selection = if symbol.selection_span == symbol.span {
+            String::new()
+        } else {
+            format!(
+                " selection {}",
+                self.render_source_span(symbol.selection_span)
+            )
+        };
+        let label = if symbol.kind == crate::SymbolKind::Impl {
+            symbol.name.clone()
+        } else {
+            format!("{} {}", symbol.kind, symbol.name)
+        };
+
+        writeln!(
+            dump,
+            "{indent}- {label} @ {}{}",
+            self.render_source_span(symbol.span),
+            selection
+        )
+        .expect("string writes should not fail");
+
+        self.render_document_symbol_list(&symbol.children, depth + 1, dump);
+    }
+
+    fn render_workspace_symbol(&self, symbol: &WorkspaceSymbol, dump: &mut String) {
+        let container = symbol
+            .container_name
+            .as_ref()
+            .map(|container| format!(" in {container}"))
+            .unwrap_or_default();
+
+        writeln!(
+            dump,
+            "- {} {}{} @ {} {}",
+            symbol.kind,
+            symbol.name,
+            container,
+            self.render_target_ref(symbol.target),
+            self.render_file_span(symbol.target.package, symbol.file_id, symbol.span)
+        )
+        .expect("string writes should not fail");
+    }
+
+    fn render_target_ref(&self, target_ref: TargetRef) -> String {
+        let package = self
+            .db
+            .parse
+            .packages()
+            .get(target_ref.package.0)
+            .expect("target package should exist while rendering workspace symbol");
+        let target = package
+            .target(target_ref.target)
+            .expect("target should exist while rendering workspace symbol");
+
+        format!("{}[{}]", package.package_name(), target.kind)
+    }
+
+    fn render_file_span(
+        &self,
+        package: PackageSlot,
+        file_id: FileId,
+        span: Option<Span>,
+    ) -> String {
+        let file = self.render_file_path(package, file_id);
+        match span {
+            Some(span) => format!("{file}:{}", self.render_source_span(span)),
+            None => format!("{file}:<root>"),
+        }
+    }
+
+    fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
+        let package = self
+            .db
+            .parse
+            .packages()
+            .get(package.0)
+            .expect("symbol package should exist while rendering file path");
+        let path = package
+            .file_path(file_id)
+            .expect("symbol file should exist while rendering file path");
+        let path = path.to_string_lossy();
+
+        path.rfind("/src/")
+            .map(|idx| path[idx + 1..].to_string())
+            .unwrap_or_else(|| {
+                path.rsplit('/')
+                    .next()
+                    .expect("path string should contain a file name")
+                    .to_string()
+            })
     }
 
     fn render_source_span(&self, span: Span) -> String {

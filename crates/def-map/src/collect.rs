@@ -126,6 +126,7 @@ impl<'db> TargetScopeCollector<'db> {
         let root_module = self.alloc_module(
             None,
             None,
+            None,
             ModuleOrigin::Root {
                 file_id: target.root_file,
             },
@@ -156,11 +157,13 @@ impl<'db> TargetScopeCollector<'db> {
         &mut self,
         parent: Option<ModuleId>,
         name: Option<String>,
+        name_span: Option<rg_parse::Span>,
         origin: ModuleOrigin,
     ) -> ModuleId {
         let module_id = ModuleId(self.def_map.modules.len());
         self.def_map.modules.push(ModuleData {
             name,
+            name_span,
             parent,
             children: Vec::new(),
             local_defs: Vec::new(),
@@ -301,8 +304,12 @@ impl<'db> TargetScopeCollector<'db> {
                 definition_file: *definition_file,
             },
         };
-        let child_module =
-            self.alloc_module(Some(parent_module), Some(module_name.clone()), origin);
+        let child_module = self.alloc_module(
+            Some(parent_module),
+            Some(module_name.clone()),
+            item.name_span,
+            origin,
+        );
         self.link_child_module(
             parent_module,
             child_module,

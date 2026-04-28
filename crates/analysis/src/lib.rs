@@ -12,14 +12,18 @@ mod cursor;
 mod data;
 mod navigation;
 mod symbol;
+mod symbols;
 mod ty;
 
 #[cfg(test)]
 mod tests;
 
-pub use self::data::{CompletionApplicability, CompletionItem, NavigationTarget, SymbolAt};
+pub use self::data::{
+    CompletionApplicability, CompletionItem, DocumentSymbol, NavigationTarget, SymbolAt,
+    WorkspaceSymbol,
+};
 #[allow(unused_imports)]
-pub use self::data::{CompletionKind, CompletionTarget, NavigationTargetKind};
+pub use self::data::{CompletionKind, CompletionTarget, NavigationTargetKind, SymbolKind};
 
 /// High-level query API over the frozen phase databases.
 pub struct Analysis<'a> {
@@ -84,5 +88,15 @@ impl<'a> Analysis<'a> {
         offset: u32,
     ) -> Vec<CompletionItem> {
         completion::CompletionResolver::new(self).completions_at_dot(target, file_id, offset)
+    }
+
+    /// Returns a hierarchical outline for one file under the selected target context.
+    pub fn document_symbols(&self, target: TargetRef, file_id: FileId) -> Vec<DocumentSymbol> {
+        symbols::SymbolCollector::new(self).document_symbols(target, file_id)
+    }
+
+    /// Returns flat, best-effort symbols matching a case-insensitive workspace query.
+    pub fn workspace_symbols(&self, query: &str) -> Vec<WorkspaceSymbol> {
+        symbols::SymbolCollector::new(self).workspace_symbols(query)
     }
 }

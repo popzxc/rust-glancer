@@ -2,7 +2,7 @@ use rg_body_ir::{
     BindingData, BindingId, BodyItemKind, BodyItemRef, BodyRef, ExprId, ResolvedFieldRef,
     ResolvedFunctionRef, ScopeId,
 };
-use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path};
+use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{FieldRef, FunctionRef, TypePathContext};
 
@@ -78,6 +78,83 @@ impl NavigationTarget {
                 .unwrap_or_else(|| "<unsupported>".to_string()),
             file_id: binding.source.file_id,
             span: Some(binding.source.span),
+        }
+    }
+}
+
+/// Hierarchical source outline for one file under one target context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentSymbol {
+    pub name: String,
+    pub kind: SymbolKind,
+    pub file_id: FileId,
+    pub span: Span,
+    pub selection_span: Span,
+    pub children: Vec<DocumentSymbol>,
+}
+
+/// Flat symbol row suitable for workspace-wide search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSymbol {
+    pub target: TargetRef,
+    pub name: String,
+    pub kind: SymbolKind,
+    pub file_id: FileId,
+    pub span: Option<Span>,
+    pub container_name: Option<String>,
+}
+
+/// LSP-shaped symbol category without depending on LSP transport types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
+pub enum SymbolKind {
+    #[display("const")]
+    Const,
+    #[display("enum")]
+    Enum,
+    #[display("variant")]
+    EnumVariant,
+    #[display("field")]
+    Field,
+    #[display("fn")]
+    Function,
+    #[display("impl")]
+    Impl,
+    #[display("macro")]
+    Macro,
+    #[display("method")]
+    Method,
+    #[display("module")]
+    Module,
+    #[display("static")]
+    Static,
+    #[display("struct")]
+    Struct,
+    #[display("trait")]
+    Trait,
+    #[display("type_alias")]
+    TypeAlias,
+    #[display("union")]
+    Union,
+}
+
+impl SymbolKind {
+    pub(super) fn from_local_def_kind(kind: LocalDefKind) -> Self {
+        match kind {
+            LocalDefKind::Const => Self::Const,
+            LocalDefKind::Enum => Self::Enum,
+            LocalDefKind::Function => Self::Function,
+            LocalDefKind::MacroDefinition => Self::Macro,
+            LocalDefKind::Static => Self::Static,
+            LocalDefKind::Struct => Self::Struct,
+            LocalDefKind::Trait => Self::Trait,
+            LocalDefKind::TypeAlias => Self::TypeAlias,
+            LocalDefKind::Union => Self::Union,
+        }
+    }
+
+    pub(super) fn from_body_item_kind(kind: BodyItemKind) -> Self {
+        match kind {
+            BodyItemKind::Struct => Self::Struct,
         }
     }
 }
