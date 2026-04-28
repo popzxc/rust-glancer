@@ -28,6 +28,11 @@ impl Package {
         self.files.get_or_parse_file(file_path)
     }
 
+    /// Replaces the cached text for a known package file.
+    pub(crate) fn set_file_text(&mut self, file_path: &Path, text: &str) -> Option<FileId> {
+        self.files.set_file_text(file_path, text)
+    }
+
     /// Returns the cached parsed file for a previously known `FileId`.
     pub fn parsed_file(&self, file_id: FileId) -> Option<ParsedFile<'_>> {
         self.files.parsed_file(file_id)

@@ -78,6 +78,7 @@ impl<'a> ParsedFile<'a> {
 pub(super) struct FileDb {
     parsed_files: Vec<ParsedFileData>,
     file_ids_by_path: HashMap<PathBuf, FileId>,
+    source_overrides: HashMap<PathBuf, String>,
 }
 
 impl FileDb {
@@ -91,32 +92,31 @@ impl FileDb {
             return Ok(*file_id);
         }
 
-        let source = std::fs::read_to_string(&canonical_file_path).with_context(|| {
-            format!("while attempting to read {}", canonical_file_path.display())
-        })?;
-        let line_index = LineIndex::new(&source);
-        let parsed_file = SourceFile::parse(&source, Edition::CURRENT);
-
         let file_id = FileId(self.parsed_files.len());
-        let parse_errors = parsed_file
-            .errors()
-            .into_iter()
-            .map(|error| ParseError {
-                file_id,
-                message: error.to_string(),
-                span: Span::from_text_range(error.range(), &line_index),
-            })
-            .collect();
+        let source = self.source_for(&canonical_file_path)?;
 
-        self.parsed_files.push(ParsedFileData {
-            path: canonical_file_path.clone(),
-            parse_errors,
-            line_index,
-            tree: parsed_file.tree(),
-        });
+        self.parsed_files.push(Self::parse_source(
+            file_id,
+            canonical_file_path.clone(),
+            &source,
+        ));
         self.file_ids_by_path.insert(canonical_file_path, file_id);
 
         Ok(file_id)
+    }
+
+    /// Replaces the cached text for a known file and reparses it under the same `FileId`.
+    ///
+    /// The source override is kept even when the file has not been parsed by this package yet.
+    /// That lets a later module-discovery rebuild pick up unsaved editor text instead of falling
+    /// back to the on-disk file.
+    pub(super) fn set_file_text(&mut self, file_path: &Path, text: &str) -> Option<FileId> {
+        self.source_overrides
+            .insert(file_path.to_path_buf(), text.to_string());
+
+        let file_id = self.file_ids_by_path.get(file_path).copied()?;
+        self.parsed_files[file_id.0] = Self::parse_source(file_id, file_path.to_path_buf(), text);
+        Some(file_id)
     }
 
     /// Returns the cached parsed file for a previously known `FileId`.
@@ -139,5 +139,35 @@ impl FileDb {
         self.parsed_files
             .get(file_id.0)
             .map(|parsed_file| parsed_file.path.as_path())
+    }
+
+    fn source_for(&self, file_path: &Path) -> anyhow::Result<String> {
+        if let Some(source) = self.source_overrides.get(file_path) {
+            return Ok(source.clone());
+        }
+
+        std::fs::read_to_string(file_path)
+            .with_context(|| format!("while attempting to read {}", file_path.display()))
+    }
+
+    fn parse_source(file_id: FileId, path: PathBuf, source: &str) -> ParsedFileData {
+        let line_index = LineIndex::new(source);
+        let parsed_file = SourceFile::parse(source, Edition::CURRENT);
+        let parse_errors = parsed_file
+            .errors()
+            .into_iter()
+            .map(|error| ParseError {
+                file_id,
+                message: error.to_string(),
+                span: Span::from_text_range(error.range(), &line_index),
+            })
+            .collect();
+
+        ParsedFileData {
+            path,
+            parse_errors,
+            line_index,
+            tree: parsed_file.tree(),
+        }
     }
 }

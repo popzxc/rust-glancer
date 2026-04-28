@@ -1,4 +1,7 @@
-use std::{fmt, path::PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context as _;
 
@@ -24,6 +27,13 @@ pub use self::{
 pub struct ParseDb {
     workspace_root: PathBuf,
     packages: Vec<Package>,
+}
+
+/// One package-local file touched by an editor/source update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PackageFileRef {
+    pub package: usize,
+    pub file: FileId,
 }
 
 impl ParseDb {
@@ -73,6 +83,36 @@ impl ParseDb {
     /// Returns one mutable parsed package by slot.
     pub fn package_mut(&mut self, package_slot: usize) -> Option<&mut Package> {
         self.packages.get_mut(package_slot)
+    }
+
+    /// Replaces the in-memory text for every parsed package that already owns `file_path`.
+    ///
+    /// This keeps package-local `FileId`s stable. Unknown files do not appear in the returned
+    /// owner list yet, but their source override is still recorded so later module discovery can
+    /// parse the editor text instead of the on-disk file.
+    pub fn set_file_text(
+        &mut self,
+        file_path: &Path,
+        text: impl AsRef<str>,
+    ) -> anyhow::Result<Vec<PackageFileRef>> {
+        let canonical_file_path = file_path
+            .canonicalize()
+            .with_context(|| format!("while attempting to canonicalize {}", file_path.display()))?;
+        let mut changed_files = Vec::new();
+        let text = text.as_ref();
+
+        for (package_slot, package) in self.packages.iter_mut().enumerate() {
+            let Some(file_id) = package.set_file_text(&canonical_file_path, text) else {
+                continue;
+            };
+
+            changed_files.push(PackageFileRef {
+                package: package_slot,
+                file: file_id,
+            });
+        }
+
+        Ok(changed_files)
     }
 }
 
