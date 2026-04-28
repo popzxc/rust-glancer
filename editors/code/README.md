@@ -72,3 +72,16 @@ stderr there.
 
 `rust-glimpser.server.path` should point to the `rust-glimpser` executable
 itself; the extension adds the `lsp` subcommand.
+
+Server logs are controlled through environment variables. For example:
+
+```json
+{
+  "rust-glimpser.server.extraEnv": {
+    "RUST_GLIMPSER_LOG": "rg_lsp=debug"
+  }
+}
+```
+
+The server writes logs to stderr, and the extension forwards that stream to the
+`Rust Glimpser` output channel. stdout remains reserved for the LSP protocol.
