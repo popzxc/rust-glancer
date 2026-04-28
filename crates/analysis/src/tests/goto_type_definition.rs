@@ -39,16 +39,16 @@ pub fn use_it(account: Account) {
         ],
         expect![[r#"
             goto type from binding declaration
-            - struct User @ 1:1-1:17
+            - struct User @ 1:12-1:16
 
             goto type from local usage
-            - struct User @ 1:1-1:17
+            - struct User @ 1:12-1:16
 
             goto type from field access
-            - struct Profile @ 2:1-2:20
+            - struct Profile @ 2:12-2:19
 
             goto type from call expression
-            - struct User @ 1:1-1:17
+            - struct User @ 1:12-1:16
         "#]],
     );
 }
@@ -90,19 +90,19 @@ impl User {
         ],
         expect![[r#"
             goto type from field declaration
-            - struct Profile @ 2:1-2:20
+            - struct Profile @ 2:12-2:19
 
             goto type from field type path
-            - struct Profile @ 2:1-2:20
+            - struct Profile @ 2:12-2:19
 
             goto type from parameter
-            - struct User @ 1:1-1:17
+            - struct User @ 1:12-1:16
 
             goto type from return
-            - struct User @ 1:1-1:17
+            - struct User @ 1:12-1:16
 
             goto type from Self
-            - struct User @ 1:1-1:17
+            - struct User @ 1:12-1:16
         "#]],
     );
 }
@@ -136,10 +136,10 @@ pub fn use_it() {
         ],
         expect![[r#"
             goto type from body-local binding declaration
-            - struct User @ 4:5-4:17
+            - struct User @ 4:12-4:16
 
             goto type from body-local usage
-            - struct User @ 4:5-4:17
+            - struct User @ 4:12-4:16
         "#]],
     );
 }
@@ -177,7 +177,7 @@ pub fn use_it() {
         )],
         expect![[r#"
             goto type from body-local generic impl method
-            - struct User @ 2:5-2:17
+            - struct User @ 2:12-2:16
         "#]],
     );
 }
@@ -211,7 +211,7 @@ pub fn use_it(maybe: Option<User>) {
         )],
         expect![[r#"
             goto type from enum pattern payload
-            - struct User @ 1:1-1:17
+            - struct User @ 1:12-1:16
         "#]],
     );
 }

@@ -34,7 +34,7 @@ pub fn use_it() {
             - local local @ 8:9-8:14
 
             goto item
-            - fn helper @ 3:1-5:2
+            - fn helper @ 3:8-3:14
         "#]],
     );
 }
@@ -64,6 +64,43 @@ pub fn use_it() {
         expect![[r#"
             goto declaration binding
             - local local @ 8:9-8:14
+        "#]],
+    );
+}
+
+#[test]
+fn lands_on_declaration_names_after_doc_comments() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_doc_comment_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+/// User docs.
+pub struct User;
+
+/// Builds a user.
+pub fn make() -> User {
+    User
+}
+
+pub fn use_it() {
+    let _user: Us$goto_type$er = ma$goto_fn$ke();
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto documented type", "goto_type"),
+            AnalysisQuery::goto("goto documented function", "goto_fn"),
+        ],
+        expect![[r#"
+            goto documented type
+            - struct User @ 2:12-2:16
+
+            goto documented function
+            - fn make @ 5:8-5:12
         "#]],
     );
 }
@@ -220,7 +257,7 @@ pub fn use_it(user: User) {
         )],
         expect![[r#"
             goto direct trait method
-            - fn id @ 4:5-4:18
+            - fn id @ 4:8-4:10
         "#]],
     );
 }
@@ -262,19 +299,19 @@ pub fn make(user: Us$goto_param$er) -> Us$goto_ret$er {
             - module api @ 1:1-4:2
 
             goto use path
-            - struct User @ 3:5-3:21
+            - struct User @ 3:16-3:20
 
             goto impl trait
-            - trait Named @ 2:5-2:23
+            - trait Named @ 2:15-2:20
 
             goto impl self type
-            - struct User @ 3:5-3:21
+            - struct User @ 3:16-3:20
 
             goto parameter type
-            - struct User @ 3:5-3:21
+            - struct User @ 3:16-3:20
 
             goto return type
-            - struct User @ 3:5-3:21
+            - struct User @ 3:16-3:20
         "#]],
     );
 }
@@ -328,10 +365,10 @@ fn main() {
         ],
         expect![[r#"
             goto bin root to library item
-            - struct Api @ 1:1-1:16
+            - struct Api @ 1:12-1:15
 
             goto bin root to dependency item
-            - struct Thing @ 1:1-1:18
+            - struct Thing @ 1:12-1:17
         "#]],
     );
 }
@@ -372,7 +409,7 @@ pub mod prelude {
         ],
         expect![[r#"
             goto prelude type
-            - struct StdPrelude @ 2:5-2:27
+            - struct StdPrelude @ 2:16-2:26
         "#]],
     );
 }
@@ -403,7 +440,7 @@ pub fn use_it(_: crate::A$goto_nested_file$pi) {}
         ],
         expect![[r#"
             goto from nested file
-            - struct Api @ 1:1-1:16
+            - struct Api @ 1:12-1:15
         "#]],
     );
 }
@@ -434,7 +471,7 @@ pub struct User {
             - field profile @ 4:9-4:16
 
             goto field type
-            - struct Profile @ 1:1-1:20
+            - struct Profile @ 1:12-1:19
         "#]],
     );
 }
@@ -462,7 +499,7 @@ use api::User as Acc$goto_import_alias$ount;
         )],
         expect![[r#"
             goto import alias
-            - struct User @ 2:5-2:21
+            - struct User @ 2:16-2:20
         "#]],
     );
 }
@@ -492,7 +529,7 @@ impl User {
         )],
         expect![[r#"
             goto impl signature Self
-            - struct User @ 1:1-1:17
+            - struct User @ 1:12-1:16
         "#]],
     );
 }
@@ -526,13 +563,13 @@ pub fn outside() {
         ],
         expect![[r#"
             goto local type path
-            - struct User @ 4:5-4:17
+            - struct User @ 4:12-4:16
 
             goto local constructor
-            - struct User @ 4:5-4:17
+            - struct User @ 4:12-4:16
 
             goto module constructor
-            - struct User @ 1:1-1:17
+            - struct User @ 1:12-1:16
         "#]],
     );
 }
@@ -570,16 +607,16 @@ pub fn make() {
         ],
         expect![[r#"
             goto body Self annotation
-            - struct User @ 1:1-1:17
+            - struct User @ 1:12-1:16
 
             goto wildcard annotation
-            - struct User @ 10:5-10:17
+            - struct User @ 10:12-10:16
 
             goto tuple annotation left
-            - struct User @ 10:5-10:17
+            - struct User @ 10:12-10:16
 
             goto tuple annotation right
-            - struct User @ 10:5-10:17
+            - struct User @ 10:12-10:16
         "#]],
     );
 }

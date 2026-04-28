@@ -34,7 +34,7 @@ pub fn use_it() {
             - local local @ 8:9-8:14
 
             resolve item
-            - fn helper @ 3:1-5:2
+            - fn helper @ 3:8-3:14
         "#]],
     );
 }
@@ -63,10 +63,10 @@ pub fn make() {
         ],
         expect![[r#"
             resolve local type path
-            - struct User @ 4:5-4:17
+            - struct User @ 4:12-4:16
 
             resolve local constructor
-            - struct User @ 4:5-4:17
+            - struct User @ 4:12-4:16
         "#]],
     );
 }

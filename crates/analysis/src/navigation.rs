@@ -66,7 +66,10 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
             kind: NavigationTargetKind::from_local_def_kind(local_def_data.kind),
             name: local_def_data.name.clone(),
             file_id: local_def_data.file_id,
-            span: Some(local_def_data.span),
+            // Goto should land on the declaration name rather than the whole item. The full item
+            // span intentionally includes doc comments, which is useful for outline/hover-like
+            // features but feels wrong as an editor cursor destination.
+            span: Some(local_def_data.name_span.unwrap_or(local_def_data.span)),
         })
     }
 
@@ -78,7 +81,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
             kind: NavigationTargetKind::from_body_item_kind(item.kind),
             name: item.name.clone(),
             file_id: item.source.file_id,
-            span: Some(item.source.span),
+            span: Some(item.name_source.span),
         })
     }
 
@@ -131,7 +134,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
             kind: NavigationTargetKind::Function,
             name: function_data.name.clone(),
             file_id: function_data.source.file_id,
-            span: Some(function_data.span),
+            span: Some(function_data.name_span.unwrap_or(function_data.span)),
         })
     }
 
