@@ -5,7 +5,7 @@ use tower_lsp_server::{
 
 use crate::{
     backend::ServerContext,
-    methods::{internal_error, uri_to_path},
+    methods::{internal_error, text_document, uri_to_path},
 };
 
 pub(crate) async fn type_definition(
@@ -15,6 +15,9 @@ pub(crate) async fn type_definition(
     let Some(path) = uri_to_path(&params.text_document_position_params.text_document.uri) else {
         return Ok(None);
     };
+    if text_document::is_dirty(ctx, &path).await {
+        return Ok(Some(GotoDefinitionResponse::Array(Vec::new())));
+    }
 
     let locations = ctx
         .engine

@@ -2,7 +2,7 @@ use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
 use crate::{
     backend::ServerContext,
-    methods::{internal_error, uri_to_path},
+    methods::{internal_error, text_document, uri_to_path},
 };
 
 pub(crate) async fn completion(
@@ -12,6 +12,9 @@ pub(crate) async fn completion(
     let Some(path) = uri_to_path(&params.text_document_position.text_document.uri) else {
         return Ok(None);
     };
+    if text_document::is_dirty(ctx, &path).await {
+        return Ok(Some(CompletionResponse::Array(Vec::new())));
+    }
 
     let completions = ctx
         .engine

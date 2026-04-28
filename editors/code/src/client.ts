@@ -8,17 +8,39 @@ import {
 
 import { ExtensionConfig, type TraceSetting } from "./config";
 import { ResolvedServer } from "./server";
-import { StatusView } from "./status";
+import { StatusView, type StatusDetails } from "./status";
 
 export class ClientManager implements vscode.Disposable {
   private client: LanguageClient | undefined;
   private clientState: vscode.Disposable | undefined;
+  private currentStatusDetails: StatusDetails | undefined;
+  private running = false;
+  private readonly editorStateListeners: vscode.Disposable;
 
   public constructor(
     private readonly extensionPath: string,
     private readonly output: vscode.OutputChannel,
     private readonly status: StatusView,
-  ) {}
+  ) {
+    this.editorStateListeners = vscode.Disposable.from(
+      vscode.window.onDidChangeActiveTextEditor(() => this.updateDocumentFreshnessStatus()),
+      vscode.workspace.onDidChangeTextDocument((event) => {
+        if (this.isRustFile(event.document)) {
+          this.updateDocumentFreshnessStatus();
+        }
+      }),
+      vscode.workspace.onDidSaveTextDocument((document) => {
+        if (this.isRustFile(document)) {
+          this.updateDocumentFreshnessStatus();
+        }
+      }),
+      vscode.workspace.onDidCloseTextDocument((document) => {
+        if (this.isRustFile(document)) {
+          this.updateDocumentFreshnessStatus();
+        }
+      }),
+    );
+  }
 
   public async start(): Promise<void> {
     if (this.client !== undefined) {
@@ -39,6 +61,7 @@ export class ClientManager implements vscode.Disposable {
       serverCommand: ResolvedServer.commandLine(server),
       serverSource: server.source,
     };
+    this.currentStatusDetails = statusDetails;
 
     this.output.appendLine(`workspace root: ${workspaceFolder.uri.fsPath}`);
     this.output.appendLine(`server command: ${statusDetails.serverCommand}`);
@@ -70,12 +93,16 @@ export class ClientManager implements vscode.Disposable {
     this.clientState = client.onDidChangeState((event) => {
       switch (event.newState) {
         case State.Starting:
+          this.running = false;
           this.status.starting(statusDetails);
           break;
         case State.Running:
+          this.running = true;
           this.status.ready(statusDetails);
+          this.updateDocumentFreshnessStatus();
           break;
         case State.Stopped:
+          this.running = false;
           if (this.client === client) {
             this.status.stopped("language client stopped", statusDetails);
           }
@@ -86,12 +113,15 @@ export class ClientManager implements vscode.Disposable {
     try {
       await client.start();
       await client.setTrace(trace(config.traceServer));
+      this.running = true;
       this.status.ready(statusDetails);
+      this.updateDocumentFreshnessStatus();
       this.output.appendLine("rust-glimpser client started");
     } catch (error) {
       this.client = undefined;
       this.clientState?.dispose();
       this.clientState = undefined;
+      this.running = false;
       this.status.failed(String(error), statusDetails);
       this.output.appendLine(`rust-glimpser client failed to start: ${String(error)}`);
       void vscode.window.showErrorMessage(
@@ -111,6 +141,7 @@ export class ClientManager implements vscode.Disposable {
     this.client = undefined;
     this.clientState?.dispose();
     this.clientState = undefined;
+    this.running = false;
 
     if (client !== undefined) {
       await client.stop();
@@ -121,7 +152,25 @@ export class ClientManager implements vscode.Disposable {
   }
 
   public dispose(): void {
+    this.editorStateListeners.dispose();
     void this.stop();
+  }
+
+  private updateDocumentFreshnessStatus(): void {
+    if (!this.running || this.currentStatusDetails === undefined) {
+      return;
+    }
+
+    const document = vscode.window.activeTextEditor?.document;
+    if (document !== undefined && this.isRustFile(document) && document.isDirty) {
+      this.status.stale(this.currentStatusDetails);
+    } else {
+      this.status.ready(this.currentStatusDetails);
+    }
+  }
+
+  private isRustFile(document: vscode.TextDocument): boolean {
+    return document.uri.scheme === "file" && document.languageId === "rust";
   }
 
   private async workspaceFolder(): Promise<vscode.WorkspaceFolder | undefined> {

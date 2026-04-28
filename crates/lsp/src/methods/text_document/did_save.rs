@@ -10,7 +10,7 @@ pub(crate) async fn did_save(ctx: &ServerContext, params: DidSaveTextDocumentPar
         return;
     };
 
-    if let Err(error) = ctx.engine.did_save(path, params.text).await {
+    if let Err(error) = ctx.engine.did_save(path.clone(), params.text).await {
         let error = internal_error(error);
         ctx.client
             .log_message(
@@ -20,6 +20,9 @@ pub(crate) async fn did_save(ctx: &ServerContext, params: DidSaveTextDocumentPar
             .await;
         return;
     }
+
+    ctx.documents.lock().await.did_save(path.clone());
+    tracing::debug!(path = %path.display(), "marked document clean after save");
 
     if let Err(error) = ctx.client.inlay_hint_refresh().await {
         tracing::debug!(

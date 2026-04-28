@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 
-interface StatusDetails {
+export interface StatusDetails {
   readonly workspaceRoot?: string;
   readonly serverCommand?: string;
   readonly serverSource?: string;
@@ -37,6 +37,18 @@ export class StatusView implements vscode.Disposable {
     this.details = details;
     this.item.text = "$(check) Rust Glimpser";
     this.item.tooltip = this.tooltip("Ready");
+    this.item.backgroundColor = undefined;
+    this.item.show();
+  }
+
+  public stale(details: StatusDetails = this.details): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.details = details;
+    this.item.text = "$(warning) Rust Glimpser";
+    this.item.tooltip = this.tooltip("Stale: save to update");
     this.item.backgroundColor = undefined;
     this.item.show();
   }

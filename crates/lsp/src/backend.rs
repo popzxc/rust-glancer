@@ -1,10 +1,13 @@
+use std::sync::Arc;
+
+use tokio::sync::Mutex;
 use tower_lsp_server::{
     Client, LanguageServer,
     jsonrpc::Result,
     ls_types::{request::*, *},
 };
 
-use crate::{engine::EngineHandle, methods};
+use crate::{documents::DocumentStore, engine::EngineHandle, methods};
 
 #[derive(Debug)]
 pub(crate) struct Backend {
@@ -17,6 +20,7 @@ impl Backend {
             ctx: ServerContext {
                 client,
                 engine: EngineHandle::spawn(),
+                documents: Arc::new(Mutex::new(DocumentStore::default())),
             },
         }
     }
@@ -26,6 +30,7 @@ impl Backend {
 pub(crate) struct ServerContext {
     pub(crate) client: Client,
     pub(crate) engine: EngineHandle,
+    pub(crate) documents: Arc<Mutex<DocumentStore>>,
 }
 
 impl LanguageServer for Backend {
@@ -44,8 +49,20 @@ impl LanguageServer for Backend {
         methods::shutdown(&self.ctx).await
     }
 
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        methods::text_document::did_open::did_open(&self.ctx, params).await;
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        methods::text_document::did_change::did_change(&self.ctx, params).await;
+    }
+
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         methods::text_document::did_save::did_save(&self.ctx, params).await;
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        methods::text_document::did_close::did_close(&self.ctx, params).await;
     }
 
     async fn goto_definition(
