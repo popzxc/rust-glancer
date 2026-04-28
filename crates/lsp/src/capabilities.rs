@@ -24,11 +24,27 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         workspace_symbol_provider: Some(OneOf::Left(true)),
         workspace: Some(WorkspaceServerCapabilities {
             workspace_folders: Some(WorkspaceFoldersServerCapabilities {
-                supported: Some(true),
+                supported: Some(false), // TODO: We might in fact want to support it eventually (low prio though)
                 change_notifications: Some(OneOf::Left(false)),
             }),
             file_operations: None,
         }),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::server_capabilities;
+
+    #[test]
+    fn does_not_advertise_multi_root_workspace_support_yet() {
+        let capabilities = server_capabilities();
+        let workspace_folders = capabilities
+            .workspace
+            .and_then(|workspace| workspace.workspace_folders)
+            .expect("workspace folder capability should stay explicit");
+
+        assert_eq!(workspace_folders.supported, Some(false));
     }
 }
