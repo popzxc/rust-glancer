@@ -1,3 +1,8 @@
+//! Converts found symbols and inferred types into editor navigation targets.
+//!
+//! Analysis can receive identities from def-map, semantic IR, or body IR. This adapter keeps the
+//! public navigation shape uniform while preserving the source span each layer considers primary.
+
 use rg_body_ir::{
     BodyData, BodyFieldRef, BodyItemRef, BodyRef, BodyResolution, BodyTy, BodyTypePathResolution,
     ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
@@ -29,6 +34,8 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
 
     fn navigation_target_for_module(&self, module_ref: ModuleRef) -> Option<NavigationTarget> {
         let module = self.0.def_map.module(module_ref)?;
+        // Root modules have no declaration name to jump to, so they navigate to the owning file.
+        // Named modules navigate to the `mod` declaration that introduced them.
         let (file_id, span) = match module.origin {
             ModuleOrigin::Root { file_id } => (file_id, None),
             ModuleOrigin::Inline {
@@ -241,6 +248,8 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         body: &BodyData,
         resolution: &BodyResolution,
     ) -> Vec<NavigationTarget> {
+        // Body resolution can point at lexical bindings, body-local items, or semantic items.
+        // Normalize each source of identity into the same navigation payload.
         match resolution {
             BodyResolution::Local(binding) => body
                 .binding(*binding)
@@ -319,6 +328,8 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         &self,
         resolution: SemanticTypePathResolution,
     ) -> Vec<NavigationTarget> {
+        // Type paths can legally resolve to traits in bound positions, so goto-definition should
+        // navigate to those traits instead of treating them as unknown.
         match resolution {
             SemanticTypePathResolution::SelfType(types)
             | SemanticTypePathResolution::TypeDefs(types) => types

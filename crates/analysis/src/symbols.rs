@@ -424,6 +424,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
             let Some(function) = self.0.semantic_ir.function_data(body.owner) else {
                 continue;
             };
+            // Body-local structs and impls should appear under the function that contains them,
+            // regardless of whether that function is module-owned or associated.
             if let Some(parent) = Self::find_function_symbol_mut(symbols, function) {
                 parent.children.append(&mut children);
             }
@@ -503,6 +505,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         symbols: &'s mut [DocumentSymbol],
         function: &FunctionData,
     ) -> Option<&'s mut DocumentSymbol> {
+        // Associated functions may already be nested below traits or impls, so search the outline
+        // tree instead of assuming module-level placement.
         for symbol in symbols {
             if symbol.name == function.name
                 && symbol.span == function.span
@@ -998,6 +1002,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
     }
 
     fn module_parents_by_symbol(symbols: &[DocumentSymbol]) -> Vec<Option<usize>> {
+        // Inline module spans contain their nested item spans. Choosing the smallest containing
+        // module reconstructs the outline hierarchy without consulting def-map parent ids.
         symbols
             .iter()
             .enumerate()

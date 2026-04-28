@@ -214,6 +214,8 @@ impl<'a> FunctionBodyLowering<'a> {
     }
 
     fn lower(mut self, function: ast::Fn, body: ast::BlockExpr) -> BodyData {
+        // Parameters live in the function's outer lexical scope. The body block gets a child scope
+        // so locals do not appear before the function boundary.
         let param_scope = self.builder.alloc_scope(None);
         let params = self.lower_params(function.param_list(), param_scope);
         let root_expr = self.lower_block_expr(body, param_scope);
@@ -331,6 +333,8 @@ impl<'a> FunctionBodyLowering<'a> {
 
     fn lower_item_statement(&mut self, item: ast::Item, scope: ScopeId) -> StmtId {
         let source = self.source(item.syntax());
+        // Body IR only keeps local items that can affect current editor queries. Other item
+        // statements remain represented as ignored statements so source layout stays stable.
         let kind = match item {
             ast::Item::Struct(item) => self
                 .lower_local_struct_item(item, scope)
@@ -587,6 +591,8 @@ impl<'a> FunctionBodyLowering<'a> {
         annotation: Option<TypeRef>,
         bindings: &mut Vec<BindingId>,
     ) -> Option<BindingId> {
+        // Multiple bindings with the same textual name can appear in or-patterns. Keep the first
+        // lowered binding so downstream snapshots and type propagation have one stable target.
         if bindings
             .iter()
             .filter_map(|binding| self.builder.bindings.get(binding.0))
@@ -674,6 +680,8 @@ impl<'a> FunctionBodyLowering<'a> {
                 }
                 None => self.lower_unknown_expr(return_expr.syntax(), scope),
             },
+            // Unsupported expressions still lower their direct expression children so cursor and
+            // type queries can work inside syntax the IR does not model yet.
             expr => self.lower_unknown_with_direct_children(expr.syntax(), scope),
         }
     }
@@ -864,6 +872,8 @@ impl<'a> FunctionBodyLowering<'a> {
         scope: ScopeId,
         kind: ExprKind,
     ) -> ExprId {
+        // Name resolution uses this boundary to avoid seeing bindings introduced after the
+        // expression, while still allowing earlier bindings in the same lexical scope.
         let visible_bindings = self.builder.bindings.len();
         self.builder.alloc_expr(ExprData {
             source: self.source(syntax),

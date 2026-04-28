@@ -1,3 +1,8 @@
+//! Collects item-signature cursor candidates for analysis queries.
+//!
+//! Def-map can see module definitions and use paths; semantic IR can see fields, functions, and
+//! type paths inside signatures. Analysis keeps the final `SymbolAt` vocabulary here.
+
 use rg_def_map::{DefMapCursorCandidate, TargetRef};
 use rg_parse::FileId;
 use rg_semantic_ir::SemanticCursorCandidate;
@@ -37,6 +42,7 @@ struct CursorScanner<'a, 'db> {
 
 impl CursorScanner<'_, '_> {
     fn scan(&mut self) {
+        // Query both signature-level sources before `symbol_at` applies its smallest-span policy.
         self.scan_def_map_items();
         self.scan_semantic_items();
     }

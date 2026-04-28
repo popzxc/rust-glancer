@@ -1,3 +1,8 @@
+//! Dot-completion assembly for known receiver types.
+//!
+//! Body IR finds the receiver before the dot and classifies its type. This layer collects fields
+//! and methods from semantic and body-local item stores into stable completion rows.
+
 use rg_body_ir::{BodyLocalNominalTy, BodyNominalTy, ResolvedFieldRef, ResolvedFunctionRef};
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
@@ -35,6 +40,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         for ty in receiver_ty.nominal_tys() {
             self.push_type_completions(ty, &mut completions);
         }
+        // Keep snapshot output and editor ordering stable across equivalent resolution paths.
         completions.sort_by(|left, right| {
             left.label
                 .cmp(&right.label)
@@ -45,6 +51,8 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
     }
 
     fn push_type_completions(&self, ty: &BodyNominalTy, completions: &mut Vec<CompletionItem>) {
+        // Semantic nominal types can offer fields, inherent methods, and trait methods. Trait
+        // candidates carry applicability because this project intentionally avoids full solving.
         for field in self.0.semantic_ir.fields_for_type(ty.def) {
             self.push_field_completion(ResolvedFieldRef::Semantic(field), completions);
         }
@@ -86,6 +94,8 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         ty: &BodyLocalNominalTy,
         completions: &mut Vec<CompletionItem>,
     ) {
+        // Body-local structs are visible only through Body IR, and currently only support
+        // inherent methods from body-local impls.
         for field in self.0.body_ir.fields_for_local_type(ty.item) {
             self.push_field_completion(ResolvedFieldRef::BodyLocal(field), completions);
         }

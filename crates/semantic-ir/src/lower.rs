@@ -1,3 +1,9 @@
+//! Lowers resolved module items into the semantic signature graph.
+//!
+//! The def-map owns name-resolution identity, while the item tree owns syntax-shaped declarations.
+//! This pass joins those two views into stable semantic items that later query layers can use
+//! without walking AST or module scopes again.
+
 use anyhow::Context as _;
 
 use rg_def_map::{DefMapDb, LocalDefRef, LocalImplRef, ModuleRef, PackageSlot, TargetRef};
@@ -73,6 +79,8 @@ impl<'a> TargetLowering<'a> {
     }
 
     fn lower(mut self) -> anyhow::Result<TargetIr> {
+        // Local definitions already come from the def-map, so lowering follows def-map identity
+        // order and only asks the item tree for declaration payloads.
         let local_defs = self
             .def_map
             .local_defs(self.target)
@@ -91,6 +99,8 @@ impl<'a> TargetLowering<'a> {
             }
         }
 
+        // Impl blocks are not namespace bindings, so they travel through a separate def-map table
+        // and are lowered after named items have their semantic ids.
         let local_impls = self
             .def_map
             .local_impls(self.target)
@@ -130,6 +140,8 @@ impl<'a> TargetLowering<'a> {
         owner: ModuleRef,
         item: &ItemNode,
     ) -> Option<ItemId> {
+        // Imports, modules, and unsupported syntax already did their def-map work. Semantic IR
+        // keeps only declarations that carry signature facts or item identities for queries.
         match &item.kind {
             ItemKind::Const(const_item) => Some(ItemId::Const(self.lower_const(
                 Some(local_def),
@@ -210,6 +222,7 @@ impl<'a> TargetLowering<'a> {
         item: &ItemNode,
         trait_item: &TraitItem,
     ) -> TraitId {
+        // Allocate first so associated items can point back at this trait as their owner.
         let trait_id = self.target_ir.items_mut().alloc_trait(TraitData {
             local_def,
             source,
@@ -237,6 +250,8 @@ impl<'a> TargetLowering<'a> {
         owner: ModuleRef,
         impl_item: &ImplItem,
     ) -> ImplId {
+        // Impl header paths are stored as syntax here; semantic resolution fills the resolved
+        // self/trait ids once every target's item store exists.
         let impl_id = self.target_ir.items_mut().alloc_impl(ImplData {
             local_impl,
             source,
@@ -263,6 +278,8 @@ impl<'a> TargetLowering<'a> {
     ) -> Vec<AssocItemId> {
         let mut assoc_items = Vec::new();
 
+        // Associated items share the same stores as module items, but they do not have def-map
+        // local definitions because they are reached through their trait/impl owner.
         for item_id in item_ids {
             let source = ItemTreeRef {
                 file_id,

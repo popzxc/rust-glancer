@@ -1,3 +1,8 @@
+//! Syntax-level declaration facts stored in item trees.
+//!
+//! These types preserve what the user wrote in signatures and item headers. Name resolution,
+//! type solving, and semantic ownership are left to later IR layers.
+
 use std::fmt;
 
 use ra_syntax::{
@@ -155,6 +160,7 @@ pub struct ConstParamData {
     pub default: Option<String>,
 }
 
+/// Where-clause predicate that can affect later signature resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WherePredicate {
     Type {
@@ -361,6 +367,7 @@ impl EnumVariantItem {
     }
 }
 
+/// Field shape shared by structs and enum variants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldList {
     Named(Vec<FieldItem>),
@@ -397,6 +404,7 @@ pub struct FieldItem {
     pub span: Span,
 }
 
+/// User-visible field identity before semantic ownership is known.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FieldKey {
     Named(String),
@@ -504,6 +512,8 @@ impl ImplItem {
     }
 
     fn header_from_ast(item: &ast::Impl, line_index: &LineIndex) -> (Option<TypeRef>, TypeRef) {
+        // `ra_syntax` exposes impl headers as child type nodes. The presence of `for` decides
+        // whether the first type is a trait path or the inherent self type.
         let types = item
             .syntax()
             .children()

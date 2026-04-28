@@ -1,3 +1,8 @@
+//! Best-effort type queries over analysis symbols.
+//!
+//! The public query returns Body IR types because they can describe both semantic items and
+//! body-local declarations. Signature-only resolutions are converted into that common shape here.
+
 use rg_body_ir::{
     BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyTy, BodyTypePathResolution, ScopeId,
 };
@@ -96,6 +101,8 @@ pub(super) fn semantic_type_path_resolution_to_ty(
         SemanticTypePathResolution::TypeDefs(types) => {
             BodyTy::Nominal(types.into_iter().map(BodyNominalTy::bare).collect())
         }
+        // Traits are navigable symbols, but they are not value-like receiver types in this small
+        // analysis model.
         SemanticTypePathResolution::Traits(_) => BodyTy::Unknown,
         SemanticTypePathResolution::Unknown => BodyTy::Unknown,
     }
@@ -112,6 +119,8 @@ pub(super) fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution
         BodyTypePathResolution::TypeDefs(types) => {
             BodyTy::Nominal(types.into_iter().map(BodyNominalTy::bare).collect())
         }
+        // Trait paths are useful for goto-definition, but `type_at` reports only nominal values
+        // and body-local item types.
         BodyTypePathResolution::Traits(_) => BodyTy::Unknown,
         BodyTypePathResolution::Unknown => BodyTy::Unknown,
     }
