@@ -16,7 +16,7 @@ use rg_workspace::WorkspaceMetadata;
 use super::{
     DefMapDb, ImportData, ImportId, ImportPath, ModuleId, ModuleRef, ModuleScope, PackageSlot,
     ScopeBinding, TargetRef,
-    collect::{TargetState, collect_target_states},
+    collect::{TargetState, collect_package_target_states, collect_target_states},
     path_resolution::{
         namespace_for_def, resolve_path_to_defs, resolve_path_to_modules,
         visible_module_scope_entry_set,
@@ -33,34 +33,195 @@ pub fn build_db(
     parse: &rg_parse::ParseDb,
     item_tree: &ItemTreeDb,
 ) -> anyhow::Result<DefMapDb> {
+    // First compute every implicit crate root from the complete package graph. These roots are
+    // needed while collecting target states because extern prelude bindings can point across
+    // packages and targets.
     let implicit_roots = build_implicit_roots(workspace, parse.packages())
         .context("while attempting to build implicit target roots")?;
 
+    // A fresh build collects every target from item trees. At this point scopes contain only
+    // directly declared names; imports and preludes are deliberately unresolved.
     let mut target_states = collect_target_states(parse.packages(), item_tree, &implicit_roots)
         .context("while attempting to collect target definitions and imports")?;
 
-    select_preludes(workspace, parse.packages(), &mut target_states)
-        .context("while attempting to select target preludes")?;
-    finalize_scopes(&mut target_states).context("while attempting to resolve target scopes")?;
-
-    let packages = target_states
-        .into_iter()
-        .map(|package_states| super::Package {
-            targets: package_states
-                .into_iter()
-                .map(|mut state| {
-                    // The same implicit roots used by import resolution are still needed by later
-                    // frozen path queries. Keep them as an extern prelude rather than pretending
-                    // they are child modules of the crate root.
-                    state.def_map.set_extern_prelude(state.implicit_roots);
-                    state.def_map.set_prelude(state.prelude);
-                    state.def_map
-                })
-                .collect::<Vec<_>>(),
-        })
-        .collect::<Vec<_>>();
+    let packages = finalize_and_freeze(workspace, parse.packages(), &mut target_states)
+        .context("while attempting to finish target states")?;
 
     Ok(DefMapDb { packages })
+}
+
+/// Rebuilds selected package def maps against the previous frozen graph.
+///
+/// Fresh package states are collected for affected packages. Unaffected packages are represented
+/// by their already-final scopes, so affected imports can still resolve through dependencies
+/// without re-collecting or re-lowering the whole workspace.
+pub fn rebuild_packages(
+    old: &DefMapDb,
+    workspace: &WorkspaceMetadata,
+    parse: &rg_parse::ParseDb,
+    item_tree: &ItemTreeDb,
+    packages: &[PackageSlot],
+) -> anyhow::Result<DefMapDb> {
+    let packages = normalized_package_slots(packages);
+    if packages.is_empty() {
+        return Ok(old.clone());
+    }
+
+    // Implicit roots are still recomputed from metadata even for package-scoped source rebuilds,
+    // because the rebuilt targets need the same cross-target root map shape as a clean build.
+    let implicit_roots = build_implicit_roots(workspace, parse.packages())
+        .context("while attempting to rebuild implicit target roots")?;
+
+    // Unaffected packages become frozen target states: their final scopes are treated as base
+    // scopes, and their imports are cleared so fixed-point import resolution will not reprocess
+    // them. They remain visible as dependencies while affected packages are rebuilt.
+    let mut target_states = frozen_target_states(old);
+
+    // Replace only the affected packages with fresh target states collected from current item
+    // trees. These states re-enter the normal prelude/import finalization pipeline below.
+    for package_slot in &packages {
+        let parse_package = parse.package(package_slot.0).with_context(|| {
+            format!(
+                "while attempting to fetch parsed package {}",
+                package_slot.0
+            )
+        })?;
+        let item_tree_package = item_tree.package(package_slot.0).with_context(|| {
+            format!(
+                "while attempting to fetch item-tree package {}",
+                package_slot.0
+            )
+        })?;
+        let package_states = collect_package_target_states(
+            package_slot.0,
+            parse_package,
+            item_tree_package,
+            &implicit_roots,
+        )
+        .with_context(|| {
+            format!(
+                "while attempting to rebuild target states for package {}",
+                parse_package.package_name()
+            )
+        })?;
+
+        let slot = target_states.get_mut(package_slot.0).with_context(|| {
+            format!(
+                "while attempting to replace target states for package {}",
+                package_slot.0
+            )
+        })?;
+        *slot = package_states;
+    }
+
+    let finalized_packages = finalize_and_freeze(workspace, parse.packages(), &mut target_states)
+        .context("while attempting to finish rebuilt target states")?;
+
+    // Preserve the old snapshot shape and swap in only rebuilt package payloads. This keeps the DB
+    // immutable from query consumers' point of view while avoiding a whole-workspace replacement.
+    let mut next = old.clone();
+    for package_slot in packages {
+        let rebuilt = finalized_packages.get(package_slot.0).with_context(|| {
+            format!(
+                "while attempting to fetch rebuilt package {}",
+                package_slot.0
+            )
+        })?;
+        let package = next.packages.get_mut(package_slot.0).with_context(|| {
+            format!(
+                "while attempting to replace def-map package {}",
+                package_slot.0
+            )
+        })?;
+        *package = rebuilt.clone();
+    }
+
+    Ok(next)
+}
+
+/// Runs the common post-collection pipeline and converts mutable target states into frozen maps.
+///
+/// Target collection intentionally stops before two project-wide facts are known:
+/// - which standard prelude module each target should use;
+/// - what every import contributes after fixed-point resolution.
+///
+/// Both clean builds and package-scoped rebuilds must pass through this same finalization step so
+/// query-time path resolution sees exactly the same frozen `DefMap` shape.
+fn finalize_and_freeze(
+    workspace: &WorkspaceMetadata,
+    packages: &[Package],
+    target_states: &mut [Vec<TargetState>],
+) -> anyhow::Result<Vec<super::Package>> {
+    // Prelude selection is separated from target collection because it resolves through the
+    // package graph and the directly-declared module scopes, not through one target in isolation.
+    select_preludes(workspace, packages, target_states)
+        .context("while attempting to select target preludes")?;
+
+    // Imports can depend on each other across modules and targets. Resolve them to a fixed point
+    // before freezing scopes into `ModuleData`.
+    finalize_scopes(target_states).context("while attempting to resolve target scopes")?;
+
+    Ok(target_states
+        .iter()
+        .map(|package_states| super::Package {
+            targets: package_states
+                .iter()
+                .map(freeze_target_state)
+                .collect::<Vec<_>>(),
+        })
+        .collect())
+}
+
+fn freeze_target_state(state: &TargetState) -> super::DefMap {
+    let mut def_map = state.def_map.clone();
+
+    // The same implicit roots used by import resolution are still needed by later frozen path
+    // queries. Keep them as an extern prelude rather than pretending they are child modules of the
+    // crate root.
+    def_map.set_extern_prelude(state.implicit_roots.clone());
+    def_map.set_prelude(state.prelude);
+    def_map
+}
+
+fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
+    let mut slots = packages.to_vec();
+    slots.sort_by_key(|slot| slot.0);
+    slots.dedup();
+    slots
+}
+
+fn frozen_target_states(old: &DefMapDb) -> Vec<Vec<TargetState>> {
+    old.packages
+        .iter()
+        .enumerate()
+        .map(|(package_idx, package)| {
+            package
+                .targets
+                .iter()
+                .enumerate()
+                .map(|(target_idx, def_map)| {
+                    let mut env_def_map = def_map.clone();
+                    env_def_map.imports.clear();
+
+                    TargetState {
+                        target: TargetRef {
+                            package: PackageSlot(package_idx),
+                            target: rg_parse::TargetId(target_idx),
+                        },
+                        target_name: format!("package {package_idx} target {target_idx}"),
+                        base_scopes: def_map
+                            .modules
+                            .iter()
+                            .map(|module| module.scope.clone())
+                            .collect(),
+                        implicit_roots: def_map.extern_prelude().clone(),
+                        prelude: def_map.prelude(),
+                        def_map: env_def_map,
+                    }
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// Builds the per-target root-name map used as the first step of cross-target resolution.

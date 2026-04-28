@@ -10,6 +10,8 @@ mod target;
 #[cfg(test)]
 mod tests;
 
+use anyhow::Context as _;
+
 use rg_def_map::{DefMapDb, LocalDefRef, ModuleRef, PackageSlot, Path, TargetRef};
 use rg_item_tree::FieldKey;
 use rg_parse::TargetId;
@@ -50,6 +52,31 @@ impl SemanticIrDb {
         let mut db = lower::build_db(item_tree, def_map)?;
         resolution::resolve_impl_headers(&mut db, def_map);
         Ok(db)
+    }
+
+    /// Returns a new semantic-IR snapshot with selected packages rebuilt.
+    pub fn rebuild_packages(
+        &self,
+        item_tree: &rg_item_tree::ItemTreeDb,
+        def_map: &rg_def_map::DefMapDb,
+        packages: &[PackageSlot],
+    ) -> anyhow::Result<Self> {
+        let mut next = self.clone();
+        let packages = normalized_package_slots(packages);
+
+        for package in &packages {
+            let rebuilt = lower::build_package(item_tree, def_map, *package)?;
+            let slot = next.packages.get_mut(package.0).with_context(|| {
+                format!(
+                    "while attempting to replace semantic IR package {}",
+                    package.0
+                )
+            })?;
+            *slot = rebuilt;
+        }
+
+        resolution::resolve_impl_headers_for_packages(&mut next, def_map, &packages);
+        Ok(next)
     }
 
     pub(crate) fn new(packages: Vec<PackageIr>) -> Self {
@@ -719,6 +746,13 @@ impl SemanticIrDb {
     fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageIr> {
         self.packages.get_mut(package.0)
     }
+}
+
+fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
+    let mut slots = packages.to_vec();
+    slots.sort_by_key(|slot| slot.0);
+    slots.dedup();
+    slots
 }
 
 fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {

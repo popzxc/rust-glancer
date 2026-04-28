@@ -43,6 +43,17 @@ impl DefMapDb {
         resolve::build_db(workspace, parse, item_tree)
     }
 
+    /// Returns a new def-map snapshot with selected packages rebuilt.
+    pub fn rebuild_packages(
+        &self,
+        workspace: &WorkspaceMetadata,
+        parse: &rg_parse::ParseDb,
+        item_tree: &ItemTreeDb,
+        packages: &[PackageSlot],
+    ) -> anyhow::Result<Self> {
+        resolve::rebuild_packages(self, workspace, parse, item_tree, packages)
+    }
+
     /// Returns all package-level def-map sets.
     pub fn packages(&self) -> &[Package] {
         &self.packages

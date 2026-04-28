@@ -18,30 +18,41 @@ use super::{
 pub(super) fn build_db(item_tree: &ItemTreeDb, def_map: &DefMapDb) -> anyhow::Result<SemanticIrDb> {
     let mut packages = Vec::with_capacity(def_map.packages().len());
 
-    for (package_idx, package) in def_map.packages().iter().enumerate() {
-        let item_tree_package = item_tree.package(package_idx).with_context(|| {
-            format!("while attempting to fetch item tree package {package_idx}")
-        })?;
-        let mut targets = Vec::with_capacity(package.targets().len());
-
-        for (target_idx, _) in package.targets().iter().enumerate() {
-            let target_ref = TargetRef {
-                package: PackageSlot(package_idx),
-                target: TargetId(target_idx),
-            };
-            targets.push(
-                TargetLowering::new(item_tree_package, target_ref, def_map)
-                    .lower()
-                    .with_context(|| {
-                        format!("while attempting to lower semantic IR for target {target_idx}")
-                    })?,
-            );
-        }
-
-        packages.push(PackageIr::new(targets));
+    for (package_idx, _) in def_map.packages().iter().enumerate() {
+        packages.push(build_package(item_tree, def_map, PackageSlot(package_idx))?);
     }
 
     Ok(SemanticIrDb::new(packages))
+}
+
+pub(super) fn build_package(
+    item_tree: &ItemTreeDb,
+    def_map: &DefMapDb,
+    package: PackageSlot,
+) -> anyhow::Result<PackageIr> {
+    let def_map_package = def_map
+        .package(package)
+        .with_context(|| format!("while attempting to fetch def-map package {}", package.0))?;
+    let item_tree_package = item_tree
+        .package(package.0)
+        .with_context(|| format!("while attempting to fetch item tree package {}", package.0))?;
+    let mut targets = Vec::with_capacity(def_map_package.targets().len());
+
+    for (target_idx, _) in def_map_package.targets().iter().enumerate() {
+        let target_ref = TargetRef {
+            package,
+            target: TargetId(target_idx),
+        };
+        targets.push(
+            TargetLowering::new(item_tree_package, target_ref, def_map)
+                .lower()
+                .with_context(|| {
+                    format!("while attempting to lower semantic IR for target {target_idx}")
+                })?,
+        );
+    }
+
+    Ok(PackageIr::new(targets))
 }
 
 struct TargetLowering<'a> {

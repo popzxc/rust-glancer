@@ -203,6 +203,46 @@ impl WorkspaceMetadata {
             .iter()
             .filter(|package| package.is_workspace_member)
     }
+
+    /// Returns package slots that should be refreshed after one or more packages change.
+    ///
+    /// Source changes can alter the public surface of the changed package, so every reverse
+    /// dependent must be rebuilt against the new graph. The closure is intentionally package-wide:
+    /// it is coarse enough to stay predictable while avoiding whole-workspace rebuilds on normal
+    /// source edits.
+    pub fn reverse_dependency_closure(&self, roots: &[PackageId]) -> Vec<usize> {
+        let mut affected_ids = roots.iter().cloned().collect::<HashSet<_>>();
+
+        loop {
+            let previous_len = affected_ids.len();
+
+            for package in &self.packages {
+                if affected_ids.contains(&package.id) {
+                    continue;
+                }
+
+                if package
+                    .dependencies
+                    .iter()
+                    .any(|dependency| affected_ids.contains(dependency.package_id()))
+                {
+                    affected_ids.insert(package.id.clone());
+                }
+            }
+
+            if affected_ids.len() == previous_len {
+                break;
+            }
+        }
+
+        self.packages
+            .iter()
+            .enumerate()
+            .filter_map(|(package_slot, package)| {
+                affected_ids.contains(&package.id).then_some(package_slot)
+            })
+            .collect()
+    }
 }
 
 /// Stable package identifier derived from Cargo metadata.

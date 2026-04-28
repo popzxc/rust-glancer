@@ -29,7 +29,7 @@ pub struct ParseDb {
     packages: Vec<Package>,
 }
 
-/// One package-local file touched by an editor/source update.
+/// One package-local file touched by a saved source update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PackageFileRef {
     pub package: usize,
@@ -85,12 +85,12 @@ impl ParseDb {
         self.packages.get_mut(package_slot)
     }
 
-    /// Replaces the in-memory text for every parsed package that already owns `file_path`.
+    /// Records saved text for every parsed package that already owns `file_path`.
     ///
     /// This keeps package-local `FileId`s stable. Unknown files do not appear in the returned
-    /// owner list yet, but their source override is still recorded so later module discovery can
-    /// parse the editor text instead of the on-disk file.
-    pub fn set_file_text(
+    /// owner list yet, but their saved source is still recorded so later module discovery within
+    /// the same save batch can parse the committed text.
+    pub fn set_saved_file_text(
         &mut self,
         file_path: &Path,
         text: impl AsRef<str>,
@@ -102,7 +102,7 @@ impl ParseDb {
         let text = text.as_ref();
 
         for (package_slot, package) in self.packages.iter_mut().enumerate() {
-            let Some(file_id) = package.set_file_text(&canonical_file_path, text) else {
+            let Some(file_id) = package.set_saved_file_text(&canonical_file_path, text) else {
                 continue;
             };
 

@@ -13,6 +13,8 @@ mod ty;
 #[cfg(test)]
 mod tests;
 
+use anyhow::Context as _;
+
 use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
 use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TraitApplicability};
 
@@ -75,6 +77,47 @@ impl BodyIrDb {
         let mut db = lower::build_db(parse, item_tree, semantic_ir, policy)?;
         resolution::resolve_bodies(&mut db, def_map, semantic_ir);
         Ok(db)
+    }
+
+    /// Returns a new Body IR snapshot with selected packages rebuilt.
+    pub fn rebuild_packages(
+        &self,
+        parse: &rg_parse::ParseDb,
+        item_tree: &rg_item_tree::ItemTreeDb,
+        def_map: &rg_def_map::DefMapDb,
+        semantic_ir: &rg_semantic_ir::SemanticIrDb,
+        policy: BodyIrBuildPolicy,
+        packages: &[PackageSlot],
+    ) -> anyhow::Result<Self> {
+        let mut next = self.clone();
+        let packages = normalized_package_slots(packages);
+
+        for package in &packages {
+            let target_count = semantic_ir
+                .package(*package)
+                .map(|package| package.targets().len())
+                .with_context(|| {
+                    format!(
+                        "while attempting to fetch semantic IR package {}",
+                        package.0
+                    )
+                })?;
+            let rebuilt = lower::build_package(
+                parse,
+                item_tree,
+                semantic_ir,
+                policy,
+                package.0,
+                target_count,
+            )?;
+            let slot = next.packages.get_mut(package.0).with_context(|| {
+                format!("while attempting to replace body IR package {}", package.0)
+            })?;
+            *slot = rebuilt;
+        }
+
+        resolution::resolve_bodies_for_packages(&mut next, def_map, semantic_ir, &packages);
+        Ok(next)
     }
 
     pub(crate) fn new(packages: Vec<PackageBodies>) -> Self {
@@ -242,6 +285,13 @@ impl BodyIrDb {
     pub(crate) fn packages_mut(&mut self) -> &mut [PackageBodies] {
         &mut self.packages
     }
+}
+
+fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
+    let mut slots = packages.to_vec();
+    slots.sort_by_key(|slot| slot.0);
+    slots.dedup();
+    slots
 }
 
 /// Package-set selector for eager body lowering.

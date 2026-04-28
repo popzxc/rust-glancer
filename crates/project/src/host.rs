@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 
@@ -17,10 +14,12 @@ use crate::Project;
 
 /// Mutable owner for the current analysis state.
 ///
-/// `AnalysisHost` is the future LSP-facing state container: it accepts editor file changes,
-/// refreshes the derived phase databases, and hands out immutable snapshots for queries. The
-/// internal rebuild is intentionally centralized here so package-level replacement can be added
-/// behind this boundary without changing the query API.
+/// `AnalysisHost` is the future LSP-facing state container: it accepts saved file changes,
+/// refreshes the derived phase databases, and hands out immutable snapshots for queries.
+///
+/// The host intentionally follows a rebuild-on-save model. It does not track arbitrary unsaved
+/// editor buffers; callers should provide text only for committed save events, or read the saved
+/// file from disk and pass that content through the same API.
 #[derive(Debug, Clone)]
 pub struct AnalysisHost {
     project: Project,
@@ -50,15 +49,18 @@ impl AnalysisHost {
         }
     }
 
-    /// Applies one in-memory file replacement and refreshes derived analysis state.
-    pub fn apply_change(&mut self, change: FileChange) -> anyhow::Result<AnalysisChangeSummary> {
+    /// Applies one saved file replacement and refreshes derived analysis state.
+    pub fn apply_change(
+        &mut self,
+        change: SavedFileChange,
+    ) -> anyhow::Result<AnalysisChangeSummary> {
         self.apply_changes([change])
     }
 
-    /// Applies a batch of in-memory file replacements and refreshes derived analysis state once.
+    /// Applies a batch of saved file replacements and refreshes derived analysis state once.
     pub fn apply_changes(
         &mut self,
-        changes: impl IntoIterator<Item = FileChange>,
+        changes: impl IntoIterator<Item = SavedFileChange>,
     ) -> anyhow::Result<AnalysisChangeSummary> {
         let changes = changes.into_iter().collect::<Vec<_>>();
         for change in &changes {
@@ -76,7 +78,7 @@ impl AnalysisHost {
             let changed = self
                 .project
                 .parse_db_mut()
-                .set_file_text(&change.path, &change.text)
+                .set_saved_file_text(&change.path, &change.text)
                 .with_context(|| {
                     format!(
                         "while attempting to apply source change for {}",
@@ -97,12 +99,9 @@ impl AnalysisHost {
 
         let affected_packages = self.affected_packages(&changed_files);
         if !changed_files.is_empty() {
-            // TODO: replace whole-project derived rebuilding with package/target replacement.
-            // The host boundary and stable parse cache are in place; the next performance step is
-            // making each phase expose a package-scoped rebuild API and calling it from here.
             self.project
-                .rebuild_derived()
-                .context("while attempting to rebuild analysis after source changes")?;
+                .rebuild_packages(&affected_packages)
+                .context("while attempting to rebuild affected analysis packages")?;
         }
         let changed_targets = self.targets_for_changed_files(&changed_files);
 
@@ -114,7 +113,7 @@ impl AnalysisHost {
     }
 
     fn affected_packages(&self, changed_files: &[ChangedFile]) -> Vec<PackageSlot> {
-        let mut affected_ids = changed_files
+        let changed_package_ids = changed_files
             .iter()
             .filter_map(|changed_file| {
                 self.project
@@ -123,43 +122,12 @@ impl AnalysisHost {
                     .get(changed_file.package.0)
                     .map(|package| package.id.clone())
             })
-            .collect::<HashSet<_>>();
-
-        // A package's exported surface can affect every reverse dependent. We intentionally use
-        // package granularity here: it is coarse, predictable, and avoids pretending that we track
-        // fine-grained item dependencies before the LSP has real-world pressure on it.
-        loop {
-            let previous_len = affected_ids.len();
-
-            for package in self.project.workspace().packages() {
-                if affected_ids.contains(&package.id) {
-                    continue;
-                }
-
-                if package
-                    .dependencies
-                    .iter()
-                    .any(|dependency| affected_ids.contains(dependency.package_id()))
-                {
-                    affected_ids.insert(package.id.clone());
-                }
-            }
-
-            if affected_ids.len() == previous_len {
-                break;
-            }
-        }
-
+            .collect::<Vec<_>>();
         self.project
             .workspace()
-            .packages()
-            .iter()
-            .enumerate()
-            .filter_map(|(package_slot, package)| {
-                affected_ids
-                    .contains(&package.id)
-                    .then_some(PackageSlot(package_slot))
-            })
+            .reverse_dependency_closure(&changed_package_ids)
+            .into_iter()
+            .map(PackageSlot)
             .collect()
     }
 
@@ -186,14 +154,18 @@ impl AnalysisHost {
     }
 }
 
-/// One source file replacement from an editor buffer.
+/// One source file replacement observed at save time.
+///
+/// `text` is the saved file contents. Passing text here avoids forcing the caller to reread the
+/// file from disk, but semantically this is still a committed save event rather than live buffer
+/// synchronization.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileChange {
+pub struct SavedFileChange {
     pub path: PathBuf,
     pub text: String,
 }
 
-impl FileChange {
+impl SavedFileChange {
     pub fn new(path: impl AsRef<Path>, text: impl Into<String>) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),

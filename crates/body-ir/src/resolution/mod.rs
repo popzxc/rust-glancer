@@ -33,9 +33,26 @@ use self::{
 };
 
 pub(super) fn resolve_bodies(db: &mut BodyIrDb, def_map: &DefMapDb, semantic_ir: &SemanticIrDb) {
+    let packages = (0..db.packages().len())
+        .map(PackageSlot)
+        .collect::<Vec<_>>();
+    resolve_bodies_for_packages(db, def_map, semantic_ir, &packages);
+}
+
+pub(super) fn resolve_bodies_for_packages(
+    db: &mut BodyIrDb,
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    packages: &[PackageSlot],
+) {
     // Resolution is a mutation pass over already-lowered bodies. Skipped targets intentionally
     // keep their body stores empty so dependency body internals stay cheap by default.
     for (package_idx, package) in db.packages_mut().iter_mut().enumerate() {
+        let package_slot = PackageSlot(package_idx);
+        if !packages.contains(&package_slot) {
+            continue;
+        }
+
         for (target_idx, target) in package.targets_mut().iter_mut().enumerate() {
             if matches!(target.status(), TargetBodiesStatus::Skipped) {
                 continue;

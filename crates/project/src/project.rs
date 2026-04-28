@@ -2,7 +2,7 @@ use anyhow::Context as _;
 
 use rg_analysis::Analysis;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::DefMapDb;
+use rg_def_map::{DefMapDb, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
@@ -45,21 +45,35 @@ impl Project {
         })
     }
 
-    pub(crate) fn rebuild_derived(&mut self) -> anyhow::Result<()> {
-        let item_tree = ItemTreeDb::build(&mut self.parse)
-            .context("while attempting to rebuild item tree db")?;
-        let def_map = DefMapDb::build(&self.workspace, &self.parse, &item_tree)
-            .context("while attempting to rebuild def map db")?;
-        let semantic_ir = SemanticIrDb::build(&item_tree, &def_map)
-            .context("while attempting to rebuild semantic ir db")?;
-        let body_ir = BodyIrDb::build_with_policy(
-            &self.parse,
-            &item_tree,
-            &def_map,
-            &semantic_ir,
-            self.body_ir_policy,
-        )
-        .context("while attempting to rebuild body ir db")?;
+    pub(crate) fn rebuild_packages(&mut self, packages: &[PackageSlot]) -> anyhow::Result<()> {
+        if packages.is_empty() {
+            return Ok(());
+        }
+
+        let package_indices = packages.iter().map(|package| package.0).collect::<Vec<_>>();
+        let item_tree = self
+            .item_tree
+            .rebuild_packages(&mut self.parse, &package_indices)
+            .context("while attempting to rebuild affected item-tree packages")?;
+        let def_map = self
+            .def_map
+            .rebuild_packages(&self.workspace, &self.parse, &item_tree, packages)
+            .context("while attempting to rebuild affected def-map packages")?;
+        let semantic_ir = self
+            .semantic_ir
+            .rebuild_packages(&item_tree, &def_map, packages)
+            .context("while attempting to rebuild affected semantic IR packages")?;
+        let body_ir = self
+            .body_ir
+            .rebuild_packages(
+                &self.parse,
+                &item_tree,
+                &def_map,
+                &semantic_ir,
+                self.body_ir_policy,
+                packages,
+            )
+            .context("while attempting to rebuild affected body IR packages")?;
 
         self.item_tree = item_tree;
         self.def_map = def_map;

@@ -43,6 +43,34 @@ impl ItemTreeDb {
         Ok(Self { packages })
     }
 
+    /// Returns a new item-tree snapshot with selected packages rebuilt from the parse cache.
+    pub fn rebuild_packages(
+        &self,
+        parse: &mut ParseDb,
+        packages: &[usize],
+    ) -> anyhow::Result<Self> {
+        let mut next = self.clone();
+
+        for &package_slot in packages {
+            let parse_package = parse.package_mut(package_slot).with_context(|| {
+                format!("while attempting to fetch parsed package {package_slot}")
+            })?;
+            let rebuilt = lower::build_package(parse_package).with_context(|| {
+                format!(
+                    "while attempting to rebuild item trees for package {}",
+                    parse_package.package_name()
+                )
+            })?;
+
+            let slot = next.packages.get_mut(package_slot).with_context(|| {
+                format!("while attempting to replace item-tree package {package_slot}")
+            })?;
+            *slot = rebuilt;
+        }
+
+        Ok(next)
+    }
+
     /// Returns one package tree set by slot.
     pub fn package(&self, package_slot: usize) -> Option<&Package> {
         self.packages.get(package_slot)

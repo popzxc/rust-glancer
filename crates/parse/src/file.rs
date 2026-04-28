@@ -78,7 +78,7 @@ impl<'a> ParsedFile<'a> {
 pub(super) struct FileDb {
     parsed_files: Vec<ParsedFileData>,
     file_ids_by_path: HashMap<PathBuf, FileId>,
-    source_overrides: HashMap<PathBuf, String>,
+    saved_source_replacements: HashMap<PathBuf, String>,
 }
 
 impl FileDb {
@@ -105,13 +105,13 @@ impl FileDb {
         Ok(file_id)
     }
 
-    /// Replaces the cached text for a known file and reparses it under the same `FileId`.
+    /// Records saved text for a file and reparses it under the same `FileId` when already known.
     ///
-    /// The source override is kept even when the file has not been parsed by this package yet.
-    /// That lets a later module-discovery rebuild pick up unsaved editor text instead of falling
-    /// back to the on-disk file.
-    pub(super) fn set_file_text(&mut self, file_path: &Path, text: &str) -> Option<FileId> {
-        self.source_overrides
+    /// This is a rebuild-on-save mechanism, not an arbitrary unsaved-buffer overlay. The saved
+    /// text is retained for files that are not reachable yet so a later module-discovery rebuild in
+    /// the same save batch can parse the committed text without relying on test fixture disk writes.
+    pub(super) fn set_saved_file_text(&mut self, file_path: &Path, text: &str) -> Option<FileId> {
+        self.saved_source_replacements
             .insert(file_path.to_path_buf(), text.to_string());
 
         let file_id = self.file_ids_by_path.get(file_path).copied()?;
@@ -142,7 +142,7 @@ impl FileDb {
     }
 
     fn source_for(&self, file_path: &Path) -> anyhow::Result<String> {
-        if let Some(source) = self.source_overrides.get(file_path) {
+        if let Some(source) = self.saved_source_replacements.get(file_path) {
             return Ok(source.clone());
         }
 

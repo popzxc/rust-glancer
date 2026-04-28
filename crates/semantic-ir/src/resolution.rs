@@ -4,7 +4,7 @@
 //! item store, this pass resolves those headers through def-map path resolution and stores the
 //! resolved semantic ids for query consumers.
 
-use rg_def_map::{DefId, DefMapDb, ModuleRef, Path};
+use rg_def_map::{DefId, DefMapDb, ModuleRef, PackageSlot, Path};
 use rg_item_tree::TypeRef;
 
 use super::{
@@ -37,7 +37,23 @@ pub enum SemanticTypePathResolution {
 
 pub(super) fn resolve_impl_headers(db: &mut SemanticIrDb, def_map: &DefMapDb) {
     let impl_refs = db.impl_refs();
+    resolve_impl_refs(db, def_map, impl_refs);
+}
 
+pub(super) fn resolve_impl_headers_for_packages(
+    db: &mut SemanticIrDb,
+    def_map: &DefMapDb,
+    packages: &[PackageSlot],
+) {
+    let impl_refs = db
+        .impl_refs()
+        .into_iter()
+        .filter(|impl_ref| packages.contains(&impl_ref.target.package))
+        .collect::<Vec<_>>();
+    resolve_impl_refs(db, def_map, impl_refs);
+}
+
+fn resolve_impl_refs(db: &mut SemanticIrDb, def_map: &DefMapDb, impl_refs: Vec<ImplRef>) {
     for impl_ref in impl_refs {
         let Some((owner, self_ty, trait_ref)) = db
             .impl_data(impl_ref)

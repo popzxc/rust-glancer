@@ -57,40 +57,54 @@ pub(super) fn collect_target_states(
                 package.package_name()
             )
         })?;
-        let mut package_states = Vec::with_capacity(package.targets().len());
-
-        for target in package.targets() {
-            let target_ref = TargetRef {
-                package: PackageSlot(package_slot),
-                target: target.id,
-            };
-            let target_roots = implicit_roots
-                .get(package_slot)
-                .and_then(|package_roots| package_roots.get(target.id.0))
-                .expect("implicit roots should exist for every parsed target");
-            let target_root = item_tree_package.target_root(target.id).with_context(|| {
-                format!(
-                    "while attempting to fetch item tree target root for {}",
-                    target.name
-                )
-            })?;
-
-            let collector = TargetScopeCollector::new(target_ref, target_roots);
-            let state = collector
-                .collect(item_tree_package, target, target_root.root_file)
-                .with_context(|| {
-                    format!(
-                        "while attempting to collect target scope for {}",
-                        target.name
-                    )
-                })?;
-            package_states.push(state);
-        }
-
-        states.push(package_states);
+        states.push(collect_package_target_states(
+            package_slot,
+            package,
+            item_tree_package,
+            implicit_roots,
+        )?);
     }
 
     Ok(states)
+}
+
+pub(super) fn collect_package_target_states(
+    package_slot: usize,
+    package: &Package,
+    item_tree_package: &ItemTreePackage,
+    implicit_roots: &[Vec<HashMap<String, ModuleRef>>],
+) -> anyhow::Result<Vec<TargetState>> {
+    let mut package_states = Vec::with_capacity(package.targets().len());
+
+    for target in package.targets() {
+        let target_ref = TargetRef {
+            package: PackageSlot(package_slot),
+            target: target.id,
+        };
+        let target_roots = implicit_roots
+            .get(package_slot)
+            .and_then(|package_roots| package_roots.get(target.id.0))
+            .expect("implicit roots should exist for every parsed target");
+        let target_root = item_tree_package.target_root(target.id).with_context(|| {
+            format!(
+                "while attempting to fetch item tree target root for {}",
+                target.name
+            )
+        })?;
+
+        let collector = TargetScopeCollector::new(target_ref, target_roots);
+        let state = collector
+            .collect(item_tree_package, target, target_root.root_file)
+            .with_context(|| {
+                format!(
+                    "while attempting to collect target scope for {}",
+                    target.name
+                )
+            })?;
+        package_states.push(state);
+    }
+
+    Ok(package_states)
 }
 
 /// Mutable collector for one target's module tree.

@@ -1,6 +1,11 @@
 mod utils;
 
+use std::collections::BTreeSet;
+
 use expect_test::expect;
+use test_fixture::fixture_crate;
+
+use crate::WorkspaceMetadata;
 
 #[test]
 fn dumps_normalized_workspace_metadata() {
@@ -215,5 +220,78 @@ pub mod marker {
             - alloc -> alloc
             - core -> core
         "#]],
+    );
+}
+
+#[test]
+fn computes_transitive_reverse_dependency_closure() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/mid", "crates/app", "crates/independent"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub struct Dep;
+
+//- /crates/mid/Cargo.toml
+[package]
+name = "mid"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/mid/src/lib.rs
+pub struct Mid(dep::Dep);
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mid = { path = "../mid" }
+
+//- /crates/app/src/lib.rs
+pub struct App(mid::Mid);
+
+//- /crates/independent/Cargo.toml
+[package]
+name = "independent"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/independent/src/lib.rs
+pub struct Independent;
+"#,
+    );
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+    let dep_id = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "dep")
+        .expect("dep package should exist")
+        .id
+        .clone();
+    let affected_names = workspace
+        .reverse_dependency_closure(&[dep_id])
+        .into_iter()
+        .map(|slot| workspace.packages()[slot].name.clone())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        affected_names,
+        BTreeSet::from(["app".to_string(), "dep".to_string(), "mid".to_string()]),
+        "reverse dependency closure should include transitive dependents only"
     );
 }

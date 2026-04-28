@@ -37,44 +37,62 @@ pub(super) fn build_db(
     let mut packages = Vec::with_capacity(semantic_ir.packages().len());
 
     for (package_idx, package_ir) in semantic_ir.packages().iter().enumerate() {
-        let parse_package = parse
-            .package(package_idx)
-            .with_context(|| format!("while attempting to fetch parse package {package_idx}"))?;
-        let item_tree_package = item_tree.package(package_idx).with_context(|| {
-            format!("while attempting to fetch item tree package {package_idx}")
-        })?;
-        let mut targets = Vec::with_capacity(package_ir.targets().len());
-
-        for (target_idx, _) in package_ir.targets().iter().enumerate() {
-            let target_ref = TargetRef {
-                package: PackageSlot(package_idx),
-                target: TargetId(target_idx),
-            };
-            let function_count = semantic_ir.function_count(target_ref);
-            if !policy.should_lower_package(parse_package) {
-                targets.push(TargetBodies::skipped(function_count));
-                continue;
-            }
-
-            targets.push(
-                TargetLowering {
-                    parse_package,
-                    item_tree_package,
-                    semantic_ir,
-                    target_ref,
-                    target_bodies: TargetBodies::new(function_count),
-                }
-                .lower()
-                .with_context(|| {
-                    format!("while attempting to lower body IR for target {target_idx}")
-                })?,
-            );
-        }
-
-        packages.push(PackageBodies::new(targets));
+        packages.push(build_package(
+            parse,
+            item_tree,
+            semantic_ir,
+            policy,
+            package_idx,
+            package_ir.targets().len(),
+        )?);
     }
 
     Ok(BodyIrDb::new(packages))
+}
+
+pub(super) fn build_package(
+    parse: &ParseDb,
+    item_tree: &ItemTreeDb,
+    semantic_ir: &SemanticIrDb,
+    policy: BodyIrBuildPolicy,
+    package_idx: usize,
+    target_count: usize,
+) -> anyhow::Result<PackageBodies> {
+    let parse_package = parse
+        .package(package_idx)
+        .with_context(|| format!("while attempting to fetch parse package {package_idx}"))?;
+    let item_tree_package = item_tree
+        .package(package_idx)
+        .with_context(|| format!("while attempting to fetch item tree package {package_idx}"))?;
+    let mut targets = Vec::with_capacity(target_count);
+
+    for target_idx in 0..target_count {
+        let target_ref = TargetRef {
+            package: PackageSlot(package_idx),
+            target: TargetId(target_idx),
+        };
+        let function_count = semantic_ir.function_count(target_ref);
+        if !policy.should_lower_package(parse_package) {
+            targets.push(TargetBodies::skipped(function_count));
+            continue;
+        }
+
+        targets.push(
+            TargetLowering {
+                parse_package,
+                item_tree_package,
+                semantic_ir,
+                target_ref,
+                target_bodies: TargetBodies::new(function_count),
+            }
+            .lower()
+            .with_context(|| {
+                format!("while attempting to lower body IR for target {target_idx}")
+            })?,
+        );
+    }
+
+    Ok(PackageBodies::new(targets))
 }
 
 struct TargetLowering<'a> {
