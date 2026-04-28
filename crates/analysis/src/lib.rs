@@ -10,16 +10,18 @@ use rg_semantic_ir::SemanticIrDb;
 mod completion;
 mod cursor;
 mod data;
+mod hints;
 mod navigation;
 mod symbol;
 mod symbols;
 mod ty;
+mod type_render;
 
 #[cfg(test)]
 mod tests;
 
 pub use self::data::{
-    CompletionApplicability, CompletionItem, DocumentSymbol, NavigationTarget, SymbolAt,
+    CompletionApplicability, CompletionItem, DocumentSymbol, NavigationTarget, SymbolAt, TypeHint,
     WorkspaceSymbol,
 };
 #[allow(unused_imports)]
@@ -78,6 +80,16 @@ impl<'a> Analysis<'a> {
     /// Returns the best-effort Body IR type under a source offset.
     pub fn type_at(&self, target: TargetRef, file_id: FileId, offset: u32) -> Option<BodyTy> {
         ty::TypeResolver::new(self).type_at(target, file_id, offset)
+    }
+
+    /// Returns best-effort inferred type hints for local bindings in one file.
+    pub fn type_hints(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        range: Option<rg_parse::TextSpan>,
+    ) -> Vec<TypeHint> {
+        hints::TypeHintCollector::new(self).type_hints(target, file_id, range)
     }
 
     /// Returns field and method completion candidates for a receiver before a dot.

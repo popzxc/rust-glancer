@@ -7,4 +7,5 @@ mod goto_type_definition;
 mod resolve_symbol;
 mod symbol_at;
 mod type_at;
+mod type_hints;
 mod workspace_symbols;

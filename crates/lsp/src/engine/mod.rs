@@ -91,6 +91,19 @@ impl EngineHandle {
             .await
     }
 
+    pub(crate) async fn inlay_hint(
+        &self,
+        path: PathBuf,
+        range: ls_types::Range,
+    ) -> anyhow::Result<Vec<ls_types::InlayHint>> {
+        self.request(|respond_to| EngineCommand::InlayHint {
+            path,
+            range,
+            respond_to,
+        })
+        .await
+    }
+
     pub(crate) async fn workspace_symbol(
         &self,
         query: String,

@@ -73,6 +73,10 @@ impl LanguageServer for Backend {
         methods::text_document::document_symbol::document_symbol(&self.ctx, params).await
     }
 
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        methods::text_document::inlay_hint::inlay_hint(&self.ctx, params).await
+    }
+
     async fn symbol(
         &self,
         params: WorkspaceSymbolParams,

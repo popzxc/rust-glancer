@@ -21,6 +21,12 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             ..Default::default()
         }),
         document_symbol_provider: Some(OneOf::Left(true)),
+        inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
+            InlayHintOptions {
+                resolve_provider: Some(false),
+                ..Default::default()
+            },
+        ))),
         workspace_symbol_provider: Some(OneOf::Left(true)),
         workspace: Some(WorkspaceServerCapabilities {
             workspace_folders: Some(WorkspaceFoldersServerCapabilities {
@@ -46,5 +52,11 @@ mod tests {
             .expect("workspace folder capability should stay explicit");
 
         assert_eq!(workspace_folders.supported, Some(false));
+    }
+
+    #[test]
+    fn advertises_static_inlay_hint_support() {
+        let capabilities = server_capabilities();
+        assert!(capabilities.inlay_hint_provider.is_some());
     }
 }

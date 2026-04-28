@@ -35,6 +35,11 @@ pub(super) enum EngineCommand {
         path: PathBuf,
         respond_to: EngineResponse<Vec<ls_types::DocumentSymbol>>,
     },
+    InlayHint {
+        path: PathBuf,
+        range: ls_types::Range,
+        respond_to: EngineResponse<Vec<ls_types::InlayHint>>,
+    },
     WorkspaceSymbol {
         query: String,
         respond_to: EngineResponse<Vec<ls_types::WorkspaceSymbol>>,

@@ -106,6 +106,14 @@ pub struct WorkspaceSymbol {
     pub container_name: Option<String>,
 }
 
+/// One best-effort inferred type annotation suitable for editor inlay hints.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeHint {
+    pub file_id: FileId,
+    pub span: Span,
+    pub label: String,
+}
+
 /// LSP-shaped symbol category without depending on LSP transport types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 pub enum SymbolKind {

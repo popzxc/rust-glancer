@@ -5,14 +5,16 @@ use std::{
 };
 
 use anyhow::Context as _;
+use rg_analysis::TypeHint;
 use rg_def_map::TargetRef;
+use rg_parse::TextSpan;
 use rg_project::{AnalysisHost, AnalysisSnapshot, FileContext, SavedFileChange};
 use rg_workspace::{SysrootSources, WorkspaceMetadata};
 use tower_lsp_server::ls_types;
 
 use crate::{
     engine::command::EngineCommand,
-    proto::{completion, navigation, position, symbols},
+    proto::{completion, inlay_hint, navigation, position, symbols},
 };
 
 #[derive(Debug, Default)]
@@ -63,6 +65,13 @@ impl EngineWorker {
                 }
                 EngineCommand::DocumentSymbol { path, respond_to } => {
                     let _ = respond_to.send(self.document_symbol(path));
+                }
+                EngineCommand::InlayHint {
+                    path,
+                    range,
+                    respond_to,
+                } => {
+                    let _ = respond_to.send(self.inlay_hint(path, range));
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
                     let _ = respond_to.send(self.workspace_symbol(&query));
@@ -251,6 +260,53 @@ impl EngineWorker {
         Ok(lsp_symbols)
     }
 
+    fn inlay_hint(
+        &self,
+        path: PathBuf,
+        range: ls_types::Range,
+    ) -> anyhow::Result<Vec<ls_types::InlayHint>> {
+        let started = Instant::now();
+        let snapshot = self.snapshot()?;
+        let mut hints = Vec::<(rg_def_map::PackageSlot, TypeHint)>::new();
+
+        for context in self.file_contexts(snapshot, &path)? {
+            let Some(range) = self.text_span_for_context(snapshot, &context, range) else {
+                continue;
+            };
+
+            for target in context.targets {
+                for hint in snapshot
+                    .analysis()
+                    .type_hints(target, context.file, Some(range))
+                {
+                    if !hints
+                        .iter()
+                        .any(|(_, existing_hint)| existing_hint == &hint)
+                    {
+                        hints.push((context.package, hint));
+                    }
+                }
+            }
+        }
+
+        let mut lsp_hints = Vec::new();
+        for (package, hint) in hints {
+            let Some(hint) = inlay_hint::type_hint(snapshot.parse_db(), package.0, hint)? else {
+                continue;
+            };
+            lsp_hints.push(hint);
+        }
+
+        tracing::debug!(
+            path = %path.display(),
+            result_count = lsp_hints.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "inlay hint query finished"
+        );
+
+        Ok(lsp_hints)
+    }
+
     fn workspace_symbol(&self, query: &str) -> anyhow::Result<Vec<ls_types::WorkspaceSymbol>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
@@ -380,6 +436,24 @@ impl EngineWorker {
 
         file.line_index()
             .offset_from_utf16_position(position::parse_position(position))
+    }
+
+    fn text_span_for_context(
+        &self,
+        snapshot: AnalysisSnapshot<'_>,
+        context: &FileContext,
+        range: ls_types::Range,
+    ) -> Option<TextSpan> {
+        let package = snapshot.parse_db().package(context.package.0)?;
+        let file = package.parsed_file(context.file)?;
+        let start = file
+            .line_index()
+            .offset_from_utf16_position(position::parse_position(range.start))?;
+        let end = file
+            .line_index()
+            .offset_from_utf16_position(position::parse_position(range.end))?;
+
+        Some(TextSpan { start, end })
     }
 
     fn snapshot(&self) -> anyhow::Result<AnalysisSnapshot<'_>> {

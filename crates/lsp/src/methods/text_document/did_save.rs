@@ -18,5 +18,13 @@ pub(crate) async fn did_save(ctx: &ServerContext, params: DidSaveTextDocumentPar
                 format!("failed to process saved file: {}", error.message),
             )
             .await;
+        return;
+    }
+
+    if let Err(error) = ctx.client.inlay_hint_refresh().await {
+        tracing::debug!(
+            error = %error,
+            "failed to request inlay hint refresh after save"
+        );
     }
 }

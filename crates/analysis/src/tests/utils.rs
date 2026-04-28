@@ -4,7 +4,7 @@ use expect_test::Expect;
 
 use crate::{
     Analysis, CompletionApplicability, CompletionItem, DocumentSymbol, NavigationTarget, SymbolAt,
-    WorkspaceSymbol,
+    TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{
     BodyGenericArg, BodyIrDb, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyTy, ExprData,
@@ -54,6 +54,14 @@ pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect
     let db = AnalysisFixtureDb::build(WorkspaceMetadata::from_cargo(fixture.metadata()));
     let renderer = AnalysisSymbolSnapshot::new(&db);
     let actual = format!("{}\n", renderer.render_workspace_symbols(query).trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) fn check_type_hints(fixture: &str, query: TypeHintsQuery, expect: Expect) {
+    let fixture = fixture_crate(fixture);
+    let db = AnalysisFixtureDb::build(WorkspaceMetadata::from_cargo(fixture.metadata()));
+    let renderer = AnalysisSymbolSnapshot::new(&db);
+    let actual = format!("{}\n", renderer.render_type_hints(&query).trim_end());
     expect.assert_eq(&actual);
 }
 
@@ -113,6 +121,33 @@ pub(super) struct DocumentSymbolsQuery {
     title: &'static str,
     path: &'static str,
     target: AnalysisTarget,
+}
+
+pub(super) struct TypeHintsQuery {
+    title: &'static str,
+    path: &'static str,
+    target: AnalysisTarget,
+}
+
+impl TypeHintsQuery {
+    pub(super) fn new(title: &'static str, path: &'static str) -> Self {
+        Self {
+            title,
+            path,
+            target: AnalysisTarget::lib(),
+        }
+    }
+
+    pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
+        self.target = AnalysisTarget::bin(package_name);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn in_lib(mut self, package_name: &'static str) -> Self {
+        self.target = AnalysisTarget::lib_package(package_name);
+        self
+    }
 }
 
 impl DocumentSymbolsQuery {
@@ -816,6 +851,23 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
         dump
     }
 
+    fn render_type_hints(&self, query: &TypeHintsQuery) -> String {
+        let (target, file_id) = self.db.target_and_file_for_path(&query.target, query.path);
+        let hints = self.db.analysis().type_hints(target, file_id, None);
+        let mut dump = query.title.to_string();
+
+        if hints.is_empty() {
+            writeln!(dump, "\n- <none>").expect("string writes should not fail");
+            return dump;
+        }
+
+        writeln!(dump).expect("string writes should not fail");
+        for hint in hints {
+            self.render_type_hint(&hint, &mut dump);
+        }
+        dump
+    }
+
     fn render_document_symbol_list(
         &self,
         symbols: &[DocumentSymbol],
@@ -869,6 +921,16 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
             container,
             self.render_target_ref(symbol.target),
             self.render_file_span(symbol.target.package, symbol.file_id, symbol.span)
+        )
+        .expect("string writes should not fail");
+    }
+
+    fn render_type_hint(&self, hint: &TypeHint, dump: &mut String) {
+        writeln!(
+            dump,
+            "- `{}` @ {}",
+            hint.label,
+            self.render_source_span(hint.span)
         )
         .expect("string writes should not fail");
     }
