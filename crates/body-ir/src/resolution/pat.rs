@@ -13,6 +13,7 @@ use crate::{
     expr::ExprKind,
     ids::{BindingId, BodyRef, ExprId, PatId, ScopeId},
     pat::{PatKind, RecordPatField},
+    path::BodyPath,
     stmt::StmtKind,
     ty::{BodyNominalTy, BodyTy},
 };
@@ -141,11 +142,11 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
 
     fn propagate_tuple_variant(
         &mut self,
-        path: Option<&Path>,
+        path: Option<&BodyPath>,
         fields: &[PatId],
         expected_ty: &BodyTy,
     ) -> bool {
-        let Some(variant_name) = variant_name(path) else {
+        let Some(variant_name) = variant_name(path.map(|path| &path.path)) else {
             return false;
         };
 
@@ -161,11 +162,11 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
 
     fn propagate_record_variant(
         &mut self,
-        path: Option<&Path>,
+        path: Option<&BodyPath>,
         fields: &[RecordPatField],
         expected_ty: &BodyTy,
     ) -> bool {
-        let Some(variant_name) = variant_name(path) else {
+        let Some(variant_name) = variant_name(path.map(|path| &path.path)) else {
             return false;
         };
 

@@ -3,9 +3,9 @@
 //! This module walks lowered bodies and fills resolution/type slots on bindings and expressions.
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
-use rg_def_map::{DefId, DefMapDb, Path};
+use rg_def_map::{DefId, DefMapDb, Path, PathSegment};
 use rg_item_tree::{FieldKey, TypeRef};
-use rg_semantic_ir::{FunctionRef, SemanticIrDb, TypePathContext};
+use rg_semantic_ir::{FunctionRef, SemanticIrDb, TypeDefId, TypePathContext};
 
 use crate::{
     body::BodyData,
@@ -138,7 +138,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
 
         match kind {
             ExprKind::Path { path } => {
-                let (resolution, ty) = self.resolve_path_expr(expr, &path);
+                let (resolution, ty) = self.resolve_path_expr(expr, &path.path);
                 let data = &mut self.body.exprs[expr.0];
                 data.resolution = resolution;
                 data.ty = ty;
@@ -195,27 +195,16 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             }
         }
 
-        match self.type_path_resolver().resolve_in_scope(scope, path) {
-            BodyTypePathResolution::BodyLocal(item_ref) => {
-                return (
-                    BodyResolution::LocalItem(item_ref),
-                    BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
-                );
-            }
-            BodyTypePathResolution::SelfType(types) => {
-                return (
-                    BodyResolution::Unknown,
-                    BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect()),
-                );
-            }
-            BodyTypePathResolution::TypeDefs(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => {}
-        }
+        self.resolve_nonlocal_path_expr(scope, path)
+    }
 
-        let result = self.def_map.resolve_path(self.body.owner_module, path);
-        let ty = self.nominal_ty_from_defs(&result.resolved);
-        (BodyResolution::Item(result.resolved), ty)
+    pub(super) fn resolve_nonlocal_path_expr(
+        &self,
+        scope: ScopeId,
+        path: &Path,
+    ) -> (BodyResolution, BodyTy) {
+        BodyValuePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+            .resolve_nonlocal_path_expr(scope, path)
     }
 
     fn resolve_field_expr(
@@ -539,29 +528,45 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             return callee_data.ty.clone();
         }
 
-        let BodyResolution::Item(defs) = &callee_data.resolution else {
-            return BodyTy::Unknown;
-        };
-
         // Ordinary calls use explicit return types only. Generic function inference remains
         // outside the current intentionally-small Body IR model.
         let mut return_tys = Vec::new();
-        for def in defs {
-            let Some(function_ref) = self.function_ref_for_def(*def) else {
-                continue;
-            };
-            let Some(function_data) = self.semantic_ir.function_data(function_ref) else {
-                continue;
-            };
-            let Some(ret_ty) = &function_data.declaration.ret_ty else {
-                push_unique(&mut return_tys, BodyTy::Unit);
-                continue;
-            };
-
-            let ty = self
-                .type_path_resolver()
-                .ty_from_type_ref_for_function(ret_ty, function_ref);
-            push_unique(&mut return_tys, ty);
+        match &callee_data.resolution {
+            BodyResolution::Item(defs) => {
+                for def in defs {
+                    let Some(function_ref) = self.function_ref_for_def(*def) else {
+                        continue;
+                    };
+                    push_unique(
+                        &mut return_tys,
+                        self.semantic_function_return_ty(function_ref, None),
+                    );
+                }
+            }
+            BodyResolution::Function(functions) => {
+                for function in functions {
+                    match function {
+                        ResolvedFunctionRef::Semantic(function_ref) => {
+                            push_unique(
+                                &mut return_tys,
+                                self.semantic_function_return_ty(*function_ref, None),
+                            );
+                        }
+                        ResolvedFunctionRef::BodyLocal(function_ref) => {
+                            push_unique(
+                                &mut return_tys,
+                                self.local_function_return_ty(*function_ref, None),
+                            );
+                        }
+                    }
+                }
+            }
+            BodyResolution::Local(_)
+            | BodyResolution::LocalItem(_)
+            | BodyResolution::Field(_)
+            | BodyResolution::EnumVariant(_)
+            | BodyResolution::Method(_)
+            | BodyResolution::Unknown => {}
         }
 
         if return_tys.len() == 1 {
@@ -569,6 +574,180 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         } else {
             BodyTy::Unknown
         }
+    }
+
+    fn function_ref_for_def(&self, def: DefId) -> Option<FunctionRef> {
+        let DefId::Local(local_def) = def else {
+            return None;
+        };
+        self.semantic_ir.function_for_local_def(local_def)
+    }
+}
+
+/// Resolves body value paths without mutating the body.
+///
+/// The main resolver uses this during the fixed-point pass, and analysis reuses it for cursor
+/// queries over path prefixes. Keeping it read-only avoids cloning bodies just to answer
+/// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
+pub(super) struct BodyValuePathResolver<'db, 'body> {
+    def_map: &'db DefMapDb,
+    semantic_ir: &'db SemanticIrDb,
+    body_ref: BodyRef,
+    body: &'body BodyData,
+}
+
+impl<'db, 'body> BodyValuePathResolver<'db, 'body> {
+    pub(super) fn new(
+        def_map: &'db DefMapDb,
+        semantic_ir: &'db SemanticIrDb,
+        body_ref: BodyRef,
+        body: &'body BodyData,
+    ) -> Self {
+        Self {
+            def_map,
+            semantic_ir,
+            body_ref,
+            body,
+        }
+    }
+
+    pub(super) fn resolve_nonlocal_path_expr(
+        &self,
+        scope: ScopeId,
+        path: &Path,
+    ) -> (BodyResolution, BodyTy) {
+        // Value paths can start with type-like names: tuple/unit struct constructors, body-local
+        // item constructors, `Self`, and the prefix of associated paths all need type resolution
+        // before falling back to ordinary module/DefMap lookup.
+        match self.type_path_resolver().resolve_in_scope(scope, path) {
+            BodyTypePathResolution::BodyLocal(item_ref) => {
+                return (
+                    BodyResolution::LocalItem(item_ref),
+                    BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
+                );
+            }
+            BodyTypePathResolution::SelfType(types) => {
+                return (
+                    BodyResolution::Unknown,
+                    BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect()),
+                );
+            }
+            BodyTypePathResolution::TypeDefs(_)
+            | BodyTypePathResolution::Traits(_)
+            | BodyTypePathResolution::Unknown => {}
+        }
+
+        if let Some((prefix, last_segment)) = split_associated_path(path) {
+            if let Some((resolution, ty)) =
+                self.resolve_associated_path(scope, &prefix, last_segment)
+            {
+                return (resolution, ty);
+            }
+        }
+
+        let result = self.def_map.resolve_path(self.body.owner_module, path);
+        let ty = self.nominal_ty_from_defs(&result.resolved);
+        (BodyResolution::Item(result.resolved), ty)
+    }
+
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'db, '_> {
+        BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+    }
+
+    fn resolve_associated_path(
+        &self,
+        scope: ScopeId,
+        prefix: &Path,
+        last_segment: &str,
+    ) -> Option<(BodyResolution, BodyTy)> {
+        // Associated value paths are resolved as "type prefix + value member". This keeps
+        // `Action::Start` distinct from a module path while also handling `Widget::new` through
+        // the same type-substitution rules used by method calls.
+        let prefix_resolution = self.type_path_resolver().resolve_in_scope(scope, prefix);
+        let prefix_ty = type_path_resolution_to_body_ty(prefix_resolution);
+
+        let mut variants = Vec::new();
+        let mut variant_tys = Vec::new();
+        for nominal_ty in prefix_ty.nominal_tys() {
+            if !matches!(nominal_ty.def.id, TypeDefId::Enum(_)) {
+                continue;
+            }
+            let Some(variant_ref) = self
+                .semantic_ir
+                .enum_variant_ref_for_type_def(nominal_ty.def, last_segment)
+            else {
+                continue;
+            };
+            push_unique(&mut variants, variant_ref);
+            push_unique(&mut variant_tys, BodyTy::Nominal(vec![nominal_ty.clone()]));
+        }
+
+        if !variants.is_empty() {
+            let ty = unique_ty_or_unknown(variant_tys);
+            return Some((BodyResolution::EnumVariant(variants), ty));
+        }
+
+        // Inherent associated functions are exact candidates. Trait-associated functions are kept
+        // deliberately optimistic, following the same "prefer useful candidates over false
+        // negatives" policy as dot completion.
+        let mut functions = Vec::new();
+        for local_ty in prefix_ty.local_nominals() {
+            for function_ref in self.local_associated_functions_for_type(local_ty) {
+                let Some(function_data) = self.body.local_function(function_ref.function) else {
+                    continue;
+                };
+                if function_data.name == last_segment && !function_data.has_self_receiver() {
+                    push_unique(&mut functions, ResolvedFunctionRef::BodyLocal(function_ref));
+                }
+            }
+        }
+        for nominal_ty in prefix_ty.nominal_tys() {
+            for function_ref in self.semantic_associated_functions_for_type(nominal_ty) {
+                let Some(function_data) = self.semantic_ir.function_data(function_ref) else {
+                    continue;
+                };
+                if function_data.name == last_segment && !function_data.has_self_receiver() {
+                    push_unique(&mut functions, ResolvedFunctionRef::Semantic(function_ref));
+                }
+            }
+        }
+
+        (!functions.is_empty()).then_some((BodyResolution::Function(functions), BodyTy::Unknown))
+    }
+
+    fn local_associated_functions_for_type(&self, ty: &BodyLocalNominalTy) -> Vec<BodyFunctionRef> {
+        if ty.item.body != self.body_ref {
+            return Vec::new();
+        }
+
+        let mut functions = self
+            .body
+            .inherent_functions_for_local_type(self.body_ref, ty.item);
+        functions.retain(|function| {
+            local_function_applies_to_receiver(
+                self.def_map,
+                self.semantic_ir,
+                self.body_ref,
+                self.body,
+                *function,
+                ty,
+            )
+        });
+        functions
+    }
+
+    fn semantic_associated_functions_for_type(&self, ty: &BodyNominalTy) -> Vec<FunctionRef> {
+        let mut functions = self.semantic_ir.inherent_functions_for_type(ty.def);
+        functions.retain(|function| {
+            semantic_function_applies_to_receiver(self.def_map, self.semantic_ir, *function, ty)
+        });
+
+        for (function, _) in
+            semantic_trait_function_candidates_for_receiver(self.def_map, self.semantic_ir, ty)
+        {
+            push_unique(&mut functions, function);
+        }
+        functions
     }
 
     fn nominal_ty_from_defs(&self, defs: &[DefId]) -> BodyTy {
@@ -589,11 +768,45 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             BodyTy::Nominal(type_defs.into_iter().map(BodyNominalTy::bare).collect())
         }
     }
+}
 
-    fn function_ref_for_def(&self, def: DefId) -> Option<FunctionRef> {
-        let DefId::Local(local_def) = def else {
-            return None;
-        };
-        self.semantic_ir.function_for_local_def(local_def)
+fn split_associated_path(path: &Path) -> Option<(Path, &str)> {
+    if path.segments.len() < 2 {
+        return None;
+    }
+
+    let PathSegment::Name(last_segment) = path.segments.last()? else {
+        return None;
+    };
+
+    Some((
+        Path {
+            absolute: path.absolute,
+            segments: path.segments[..path.segments.len() - 1].to_vec(),
+        },
+        last_segment.as_str(),
+    ))
+}
+
+fn type_path_resolution_to_body_ty(resolution: BodyTypePathResolution) -> BodyTy {
+    match resolution {
+        BodyTypePathResolution::BodyLocal(item) => {
+            BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)])
+        }
+        BodyTypePathResolution::SelfType(types) => {
+            BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect())
+        }
+        BodyTypePathResolution::TypeDefs(types) => {
+            BodyTy::Nominal(types.into_iter().map(BodyNominalTy::bare).collect())
+        }
+        BodyTypePathResolution::Traits(_) | BodyTypePathResolution::Unknown => BodyTy::Unknown,
+    }
+}
+
+fn unique_ty_or_unknown(mut tys: Vec<BodyTy>) -> BodyTy {
+    if tys.len() == 1 {
+        tys.pop().expect("one type should exist")
+    } else {
+        BodyTy::Unknown
     }
 }

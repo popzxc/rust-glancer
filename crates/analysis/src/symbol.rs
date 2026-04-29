@@ -73,6 +73,17 @@ fn body_cursor_candidate_to_symbol_candidate(candidate: BodyCursorCandidate) -> 
             path,
             span,
         },
+        BodyCursorCandidate::ValuePath {
+            body,
+            scope,
+            path,
+            span,
+        } => SymbolAt::BodyValuePath {
+            body,
+            scope,
+            path,
+            span,
+        },
     };
 
     SymbolCandidate { symbol, span }

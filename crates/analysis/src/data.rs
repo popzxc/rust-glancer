@@ -4,7 +4,7 @@ use rg_body_ir::{
 };
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{FieldRef, FunctionRef, TypePathContext};
+use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, TypePathContext};
 
 pub(super) struct SymbolCandidate {
     pub(super) symbol: SymbolAt,
@@ -27,6 +27,12 @@ pub enum SymbolAt {
         path: Path,
         span: Span,
     },
+    BodyValuePath {
+        body: BodyRef,
+        scope: ScopeId,
+        path: Path,
+        span: Span,
+    },
     Def {
         def: DefId,
         span: Span,
@@ -41,6 +47,10 @@ pub enum SymbolAt {
     },
     Function {
         function: FunctionRef,
+        span: Span,
+    },
+    EnumVariant {
+        variant: EnumVariantRef,
         span: Span,
     },
     LocalItem {
@@ -180,6 +190,8 @@ pub enum NavigationTargetKind {
     Const,
     #[display("enum")]
     Enum,
+    #[display("variant")]
+    EnumVariant,
     #[display("field")]
     Field,
     #[display("fn")]

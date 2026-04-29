@@ -1,10 +1,10 @@
-use rg_def_map::Path;
 use rg_item_tree::FieldKey;
 use rg_parse::Span;
 
 use crate::{
     body::BodySource,
     ids::{ExprId, PatId, ScopeId, StmtId},
+    path::BodyPath,
     resolved::BodyResolution,
     ty::BodyTy,
 };
@@ -33,7 +33,7 @@ pub enum ExprKind {
         tail: Option<ExprId>,
     },
     Path {
-        path: Path,
+        path: BodyPath,
     },
     Call {
         callee: Option<ExprId>,

@@ -65,6 +65,48 @@ pub fn use_it() {
 }
 
 #[test]
+fn returns_associated_function_and_enum_variant_call_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_associated_path_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Widget;
+
+impl Widget {
+    pub fn create() -> Self {
+        Widget
+    }
+}
+
+pub enum Action {
+    Configure(Widget),
+}
+
+pub fn use_it() {
+    let widget = Widget::create($type_assoc_call$);
+    let action = Action::Configure(widget)$type_variant_call$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at associated function call", "type_assoc_call"),
+            AnalysisQuery::ty("type at enum variant call", "type_variant_call"),
+        ],
+        expect![[r#"
+            type at associated function call
+            - Self struct analysis_associated_path_type[lib]::crate::Widget
+
+            type at enum variant call
+            - nominal enum analysis_associated_path_type[lib]::crate::Action
+        "#]],
+    );
+}
+
+#[test]
 fn returns_bin_root_dependency_types() {
     check_analysis_queries(
         r#"

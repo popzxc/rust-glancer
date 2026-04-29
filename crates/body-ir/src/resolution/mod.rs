@@ -14,7 +14,7 @@ use rg_parse::TargetId;
 use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TraitApplicability, TypePathContext};
 
 use crate::{
-    BodyIrDb,
+    BodyIrDb, BodyResolution,
     body::TargetBodiesStatus,
     ids::{BodyFunctionRef, BodyId, BodyRef, ScopeId},
     resolved::BodyTypePathResolution,
@@ -22,7 +22,7 @@ use crate::{
 };
 
 use self::{
-    body::BodyResolver,
+    body::{BodyResolver, BodyValuePathResolver},
     method::{
         local_function_applies_to_receiver as local_function_applies_to_receiver_impl,
         semantic_function_applies_to_receiver as semantic_function_applies_to_receiver_impl,
@@ -92,6 +92,22 @@ pub(super) fn resolve_type_path_in_scope(
     };
 
     BodyTypePathResolver::new(def_map, semantic_ir, body_ref, body).resolve_in_scope(scope, path)
+}
+
+pub(super) fn resolve_value_path_in_scope(
+    db: &BodyIrDb,
+    def_map: &DefMapDb,
+    semantic_ir: &SemanticIrDb,
+    body_ref: BodyRef,
+    scope: ScopeId,
+    path: &Path,
+) -> (BodyResolution, BodyTy) {
+    let Some(body) = db.body_data(body_ref) else {
+        return (BodyResolution::Unknown, BodyTy::Unknown);
+    };
+
+    BodyValuePathResolver::new(def_map, semantic_ir, body_ref, body)
+        .resolve_nonlocal_path_expr(scope, path)
 }
 
 pub(super) fn ty_for_field(

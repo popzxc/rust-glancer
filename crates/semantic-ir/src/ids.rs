@@ -82,6 +82,18 @@ pub struct FieldRef {
     pub index: usize,
 }
 
+/// Stable identity for one enum variant.
+///
+/// Variants are currently stored as children of `EnumData` rather than promoted to top-level
+/// semantic items. The explicit ref gives analysis enough identity for navigation and type queries
+/// without changing that storage model prematurely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EnumVariantRef {
+    pub target: TargetRef,
+    pub enum_id: EnumId,
+    pub index: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TraitImplRef {
     pub impl_ref: ImplRef,

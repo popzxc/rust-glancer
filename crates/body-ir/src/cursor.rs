@@ -10,7 +10,7 @@ use rg_parse::{FileId, Span};
 
 use crate::{
     BindingId, BodyData, BodyId, BodyIrDb, BodyItemId, BodyItemRef, BodyRef, BodyTy, ExprData,
-    ExprId, ExprKind, ScopeId, StmtKind,
+    ExprId, ExprKind, ScopeId, StmtKind, ids::PatId, pat::PatKind, path::BodyPath,
 };
 
 /// Receiver expression selected for a dot-completion query.
@@ -47,6 +47,17 @@ pub enum BodyCursorCandidate {
         path: Path,
         span: Span,
     },
+    /// A value-namespace path segment inside a body expression or pattern.
+    ///
+    /// Type annotations have their own candidate kind because `Self` and body-local items need
+    /// type resolution. This variant is for value-looking paths such as associated functions and
+    /// enum variants, where a cursor on each segment can mean a different target.
+    ValuePath {
+        body: BodyRef,
+        scope: ScopeId,
+        path: Path,
+        span: Span,
+    },
 }
 
 impl BodyCursorCandidate {
@@ -56,7 +67,8 @@ impl BodyCursorCandidate {
             | Self::Binding { span, .. }
             | Self::Expr { span, .. }
             | Self::LocalItem { span, .. }
-            | Self::TypePath { span, .. } => *span,
+            | Self::TypePath { span, .. }
+            | Self::ValuePath { span, .. } => *span,
         }
     }
 }
@@ -79,6 +91,14 @@ impl BodyIrDb {
         let mut candidates = Vec::new();
         candidates.push(Self::candidate_for_source_node(body, source_node));
         TypePathCursorScanner {
+            body_ref: source_node.body,
+            body,
+            file_id,
+            offset,
+            candidates: &mut candidates,
+        }
+        .scan();
+        ValuePathCursorScanner {
             body_ref: source_node.body,
             body,
             file_id,
@@ -346,6 +366,133 @@ impl TypePathCursorScanner<'_> {
             | GenericArg::Const(_)
             | GenericArg::AssocType { ty: None, .. }
             | GenericArg::Unsupported(_) => {}
+        }
+    }
+}
+
+struct ValuePathCursorScanner<'a> {
+    body_ref: BodyRef,
+    body: &'a BodyData,
+    file_id: FileId,
+    offset: u32,
+    candidates: &'a mut Vec<BodyCursorCandidate>,
+}
+
+impl ValuePathCursorScanner<'_> {
+    fn scan(&mut self) {
+        // Expression source-node lookup deliberately picks one smallest AST-ish node. Qualified
+        // paths need finer granularity: in `Action::Start()`, `Action` and `Start` should produce
+        // different symbols even though they belong to the same lowered expression.
+        for expr_idx in 0..self.body.exprs.len() {
+            let expr = ExprId(expr_idx);
+            let Some(expr_data) = self.body.expr(expr) else {
+                continue;
+            };
+            if expr_data.source.file_id != self.file_id {
+                continue;
+            }
+            if let ExprKind::Path { path } = &expr_data.kind {
+                self.scan_body_path(expr_data.scope, path);
+            }
+        }
+
+        // Pattern paths are not represented as expressions, but they are still editor-visible
+        // value paths: `let Some(value) = option` and `Action::Start { .. }` should navigate from
+        // both the enum name and the variant name.
+        for statement in &self.body.statements {
+            if statement.source.file_id != self.file_id {
+                continue;
+            }
+            let StmtKind::Let {
+                scope,
+                pat: Some(pat),
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+            self.scan_pat(*scope, *pat);
+        }
+
+        for expr in &self.body.exprs {
+            if expr.source.file_id != self.file_id {
+                continue;
+            }
+            let ExprKind::Match { arms, .. } = &expr.kind else {
+                continue;
+            };
+            for arm in arms {
+                if let Some(pat) = arm.pat {
+                    self.scan_pat(arm.scope, pat);
+                }
+            }
+        }
+    }
+
+    fn scan_pat(&mut self, scope: ScopeId, pat: PatId) {
+        let Some(data) = self.body.pat(pat) else {
+            return;
+        };
+
+        match &data.kind {
+            PatKind::TupleStruct { path, fields } => {
+                if let Some(path) = path {
+                    self.scan_body_path(scope, path);
+                }
+                for field in fields {
+                    self.scan_pat(scope, *field);
+                }
+            }
+            PatKind::Record { path, fields } => {
+                if let Some(path) = path {
+                    self.scan_body_path(scope, path);
+                }
+                for field in fields {
+                    self.scan_pat(scope, field.pat);
+                }
+            }
+            PatKind::Path { path } => {
+                if let Some(path) = path {
+                    self.scan_body_path(scope, path);
+                }
+            }
+            PatKind::Binding { subpat, .. } => {
+                if let Some(subpat) = subpat {
+                    self.scan_pat(scope, *subpat);
+                }
+            }
+            PatKind::Tuple { fields }
+            | PatKind::Or { pats: fields }
+            | PatKind::Slice { fields } => {
+                for field in fields {
+                    self.scan_pat(scope, *field);
+                }
+            }
+            PatKind::Ref { pat } | PatKind::Box { pat } => self.scan_pat(scope, *pat),
+            PatKind::Wildcard | PatKind::Unsupported { .. } => {}
+        }
+    }
+
+    fn scan_body_path(&mut self, scope: ScopeId, path: &BodyPath) {
+        // Single-segment expression paths are already represented by the surrounding expression
+        // node. Segment candidates are only needed when the cursor can mean a prefix or an
+        // associated item/variant inside one qualified path.
+        if path.segment_count() <= 1 {
+            return;
+        }
+
+        for idx in 0..path.segment_count() {
+            let Some(span) = path.segment_span(idx) else {
+                continue;
+            };
+            if span.touches(self.offset) {
+                self.candidates.push(BodyCursorCandidate::ValuePath {
+                    body: self.body_ref,
+                    scope,
+                    path: path.prefix_through(idx),
+                    span,
+                });
+            }
         }
     }
 }

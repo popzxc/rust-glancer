@@ -441,6 +441,14 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
+            SymbolAt::BodyValuePath { ref path, span, .. } => {
+                writeln!(
+                    dump,
+                    "\n- body value path {path} @ {}",
+                    self.render_source_span(span)
+                )
+                .expect("string writes should not fail");
+            }
             SymbolAt::Def { def, span } => {
                 let targets = self
                     .db
@@ -486,6 +494,18 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
                     .unwrap_or_else(|| "fn <unresolved>".to_string());
+                writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
+                    .expect("string writes should not fail");
+            }
+            SymbolAt::EnumVariant { variant, span } => {
+                let targets = self
+                    .db
+                    .analysis()
+                    .resolve_symbol(SymbolAt::EnumVariant { variant, span });
+                let label = targets
+                    .first()
+                    .map(|target| format!("{} {}", target.kind, target.name))
+                    .unwrap_or_else(|| "variant <unresolved>".to_string());
                 writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
                     .expect("string writes should not fail");
             }

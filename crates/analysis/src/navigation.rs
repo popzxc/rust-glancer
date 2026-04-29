@@ -10,7 +10,8 @@ use rg_body_ir::{
 use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef, Path, TargetRef};
 use rg_parse::FileId;
 use rg_semantic_ir::{
-    FieldRef, FunctionRef, SemanticTypePathResolution, TraitRef, TypeDefRef, TypePathContext,
+    EnumVariantRef, FieldRef, FunctionRef, SemanticTypePathResolution, TraitRef, TypeDefRef,
+    TypePathContext,
 };
 
 use super::{
@@ -159,6 +160,21 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         }
     }
 
+    fn navigation_target_for_enum_variant(
+        &self,
+        variant_ref: EnumVariantRef,
+    ) -> Option<NavigationTarget> {
+        let data = self.0.semantic_ir.enum_variant_data(variant_ref)?;
+
+        Some(NavigationTarget {
+            target: variant_ref.target,
+            kind: NavigationTargetKind::EnumVariant,
+            name: data.variant.name.clone(),
+            file_id: data.file_id,
+            span: Some(data.variant.name_span),
+        })
+    }
+
     fn navigation_target_for_trait(&self, trait_ref: TraitRef) -> Option<NavigationTarget> {
         let local_def = self.0.semantic_ir.trait_data(trait_ref)?.local_def;
 
@@ -207,6 +223,9 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
             SymbolAt::BodyPath {
                 body, scope, path, ..
             } => self.navigation_targets_for_body_type_path(body, scope, &path),
+            SymbolAt::BodyValuePath {
+                body, scope, path, ..
+            } => self.navigation_targets_for_body_value_path(body, scope, &path),
             SymbolAt::Def { def, .. } => self
                 .targets()
                 .navigation_target_for_def(def)
@@ -228,6 +247,11 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
             SymbolAt::Function { function, .. } => self
                 .targets()
                 .navigation_target_for_function(function)
+                .into_iter()
+                .collect(),
+            SymbolAt::EnumVariant { variant, .. } => self
+                .targets()
+                .navigation_target_for_enum_variant(variant)
                 .into_iter()
                 .collect(),
             SymbolAt::LocalItem { item, .. } => self
@@ -279,6 +303,17 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
                 .iter()
                 .filter_map(|field| self.targets().navigation_target_for_resolved_field(*field))
                 .collect(),
+            BodyResolution::Function(functions) => functions
+                .iter()
+                .filter_map(|function| {
+                    self.targets()
+                        .navigation_target_for_resolved_function(*function)
+                })
+                .collect(),
+            BodyResolution::EnumVariant(variants) => variants
+                .iter()
+                .filter_map(|variant| self.targets().navigation_target_for_enum_variant(*variant))
+                .collect(),
             BodyResolution::Method(functions) => functions
                 .iter()
                 .filter_map(|function| {
@@ -300,7 +335,15 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
             .semantic_ir
             .resolve_type_path(self.0.def_map, context, path);
 
-        self.navigation_targets_for_semantic_type_path_resolution(resolution)
+        let targets = self.navigation_targets_for_semantic_type_path_resolution(resolution);
+        if targets.is_empty() {
+            // A cursor can sit on a non-type prefix inside a type path, for example `helper` in
+            // `helper::Tool`. Semantic type resolution correctly says "not a type", but editor
+            // navigation should still use DefMap to jump to the module/crate prefix.
+            self.navigation_targets_for_use_path(context.module, path)
+        } else {
+            targets
+        }
     }
 
     fn navigation_targets_for_use_path(
@@ -331,7 +374,37 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
             path,
         );
 
-        self.navigation_targets_for_body_type_path_resolution(resolution)
+        let targets = self.navigation_targets_for_body_type_path_resolution(resolution);
+        if targets.is_empty() {
+            // Body-local type resolution owns `Self` and local items. If that fails, the path may
+            // still be a module/crate prefix selected by the cursor, so fall back to the owning
+            // module's DefMap lookup.
+            self.body_data(body_ref)
+                .map(|body| self.navigation_targets_for_use_path(body.owner_module, path))
+                .unwrap_or_default()
+        } else {
+            targets
+        }
+    }
+
+    fn navigation_targets_for_body_value_path(
+        &self,
+        body_ref: BodyRef,
+        scope: ScopeId,
+        path: &Path,
+    ) -> Vec<NavigationTarget> {
+        let (resolution, _) = self.0.body_ir.resolve_value_path_in_scope(
+            self.0.def_map,
+            self.0.semantic_ir,
+            body_ref,
+            scope,
+            path,
+        );
+
+        let Some(body_data) = self.body_data(body_ref) else {
+            return Vec::new();
+        };
+        self.navigation_targets_for_resolution(body_data, &resolution)
     }
 
     fn navigation_targets_for_semantic_type_path_resolution(

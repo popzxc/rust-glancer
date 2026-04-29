@@ -269,6 +269,74 @@ impl User {
 }
 
 #[test]
+fn resolves_associated_functions_and_enum_variant_calls() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_associated_path_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Widget;
+
+impl Widget {
+    pub fn create() -> Self {
+        Widget
+    }
+}
+
+pub enum Action {
+    Configure(Widget),
+}
+
+pub fn use_it() {
+    let widget = Widget::create();
+    let action = Action::Configure(widget);
+}
+"#,
+        expect![[r#"
+            package body_associated_path_fixture
+
+            body_associated_path_fixture [lib]
+            body b0 fn body_associated_path_fixture[lib]::crate::use_it @ 13:1-16:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1
+            bindings
+            - v0 let widget `widget` => Self struct body_associated_path_fixture[lib]::crate::Widget @ 14:9-14:15
+            - v1 let action `action` => nominal enum body_associated_path_fixture[lib]::crate::Action @ 15:9-15:15
+            body
+            expr e5 block s1 => () @ 13:17-16:2
+              stmt s0 let v0 @ 14:5-14:35
+                initializer
+                  expr e1 call => Self struct body_associated_path_fixture[lib]::crate::Widget @ 14:18-14:34
+                    callee
+                      expr e0 path Widget::create -> fn impl Widget::create => <unknown> @ 14:18-14:32
+              stmt s1 let v1 @ 15:5-15:44
+                initializer
+                  expr e4 call => nominal enum body_associated_path_fixture[lib]::crate::Action @ 15:18-15:43
+                    callee
+                      expr e2 path Action::Configure -> variant enum body_associated_path_fixture[lib]::crate::Action::Configure => nominal enum body_associated_path_fixture[lib]::crate::Action @ 15:18-15:35
+                    arg
+                      expr e3 path widget -> local v0 => Self struct body_associated_path_fixture[lib]::crate::Widget @ 15:36-15:42
+
+
+            body b1 fn impl Widget::create @ 4:5-6:6
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 4:29-6:6
+              tail
+                expr e0 path Widget -> item struct body_associated_path_fixture[lib]::crate::Widget => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 5:9-5:15
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_basic_generic_arguments_through_body_types() {
     check_project_body_ir(
         r#"

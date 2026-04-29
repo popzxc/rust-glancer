@@ -129,6 +129,18 @@ pub struct FieldData<'a> {
     pub field: &'a FieldItem,
 }
 
+/// Borrowed view over one enum variant plus the owning enum facts needed by analysis.
+///
+/// The owner data is repeated here so callers do not have to re-open the enum just to answer
+/// editor questions such as "what type does this variant construct?".
+#[derive(Debug, Clone, Copy)]
+pub struct EnumVariantData<'a> {
+    pub owner: TypeDefRef,
+    pub owner_module: ModuleRef,
+    pub file_id: FileId,
+    pub variant: &'a EnumVariantItem,
+}
+
 /// Nominal struct lowered from a module item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructData {

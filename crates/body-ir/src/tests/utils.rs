@@ -570,6 +570,22 @@ impl TargetBodyIrSnapshot<'_> {
                 fields.sort();
                 format!(" -> {}", fields.join(" | "))
             }
+            BodyResolution::Function(functions) => {
+                let mut functions = functions
+                    .iter()
+                    .map(|function| self.render_resolved_function_ref(*function))
+                    .collect::<Vec<_>>();
+                functions.sort();
+                format!(" -> {}", functions.join(" | "))
+            }
+            BodyResolution::EnumVariant(variants) => {
+                let mut variants = variants
+                    .iter()
+                    .map(|variant| self.render_enum_variant_ref(*variant))
+                    .collect::<Vec<_>>();
+                variants.sort();
+                format!(" -> {}", variants.join(" | "))
+            }
             BodyResolution::Method(functions) => {
                 let mut functions = functions
                     .iter()
@@ -853,6 +869,20 @@ impl TargetBodyIrSnapshot<'_> {
         format!(
             "field {}::{name}",
             self.render_body_item_ref(field_ref.item)
+        )
+    }
+
+    fn render_enum_variant_ref(&self, variant_ref: rg_semantic_ir::EnumVariantRef) -> String {
+        let data = self
+            .project
+            .semantic_ir_db()
+            .enum_variant_data(variant_ref)
+            .expect("enum variant ref should exist while rendering body IR");
+
+        format!(
+            "variant {}::{}",
+            self.render_type_def_ref(data.owner),
+            data.variant.name
         )
     }
 

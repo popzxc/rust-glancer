@@ -199,6 +199,116 @@ pub fn use_it() {
 }
 
 #[test]
+fn resolves_associated_functions_and_enum_variants_in_body_paths() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_associated_path_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Widget;
+
+impl Widget {
+    pub fn create() -> Self {
+        Widget
+    }
+}
+
+pub enum Action {
+    Configure(Widget),
+    Project { widget: Widget },
+    Quit,
+}
+
+pub fn use_it(action: Action) {
+    let widget = Wi$goto_assoc_type$dget::cre$goto_assoc_fn$ate();
+    let _action = A$goto_enum_expr$ction::Con$goto_expr_variant$figure(Widget::create());
+
+    match action {
+        A$goto_enum_tuple_pattern$ction::Con$goto_tuple_variant$figure(widget) => widget,
+        Action::Pro$goto_record_variant$ject { widget } => widget,
+        Action::Quit => Widget,
+    };
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto associated type prefix", "goto_assoc_type"),
+            AnalysisQuery::goto("goto associated function", "goto_assoc_fn"),
+            AnalysisQuery::goto("goto enum expression prefix", "goto_enum_expr"),
+            AnalysisQuery::goto("goto expression variant", "goto_expr_variant"),
+            AnalysisQuery::goto("goto tuple pattern enum prefix", "goto_enum_tuple_pattern"),
+            AnalysisQuery::goto("goto tuple pattern variant", "goto_tuple_variant"),
+            AnalysisQuery::goto("goto record pattern variant", "goto_record_variant"),
+        ],
+        expect![[r#"
+            goto associated type prefix
+            - struct Widget @ 1:12-1:18
+
+            goto associated function
+            - fn create @ 4:12-4:18
+
+            goto enum expression prefix
+            - enum Action @ 9:10-9:16
+
+            goto expression variant
+            - variant Configure @ 10:5-10:14
+
+            goto tuple pattern enum prefix
+            - enum Action @ 9:10-9:16
+
+            goto tuple pattern variant
+            - variant Configure @ 10:5-10:14
+
+            goto record pattern variant
+            - variant Project @ 11:5-11:12
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_crate_prefixes_inside_body_type_paths() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/helper", "crates/app"]
+resolver = "3"
+
+//- /crates/helper/Cargo.toml
+[package]
+name = "helper"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/helper/src/lib.rs
+pub struct Tool;
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+helper = { path = "../helper" }
+
+//- /crates/app/src/lib.rs
+pub fn use_it() {
+    let _tool: hel$goto_crate_prefix$per::Tool = todo!();
+}
+"#,
+        &[AnalysisQuery::goto("goto crate prefix", "goto_crate_prefix").in_lib("app")],
+        expect![[r#"
+            goto crate prefix
+            - module crate @ <root>
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_tuple_field_accesses_to_tuple_field_declarations() {
     check_analysis_queries(
         r#"

@@ -19,13 +19,13 @@ use rg_parse::TargetId;
 pub use self::{
     cursor::SemanticCursorCandidate,
     ids::{
-        AssocItemId, ConstId, ConstRef, EnumId, FieldRef, FunctionId, FunctionRef, ImplId, ImplRef,
-        ItemId, ItemOwner, StaticId, StaticRef, StructId, TraitApplicability, TraitId,
-        TraitImplRef, TraitRef, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
+        AssocItemId, ConstId, ConstRef, EnumId, EnumVariantRef, FieldRef, FunctionId, FunctionRef,
+        ImplId, ImplRef, ItemId, ItemOwner, StaticId, StaticRef, StructId, TraitApplicability,
+        TraitId, TraitImplRef, TraitRef, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
     },
     items::{
-        ConstData, EnumData, FieldData, FunctionData, ImplData, ItemStore, StaticData, StructData,
-        TraitData, TypeAliasData, UnionData,
+        ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, ItemStore,
+        StaticData, StructData, TraitData, TypeAliasData, UnionData,
     },
     package::PackageIr,
     resolution::{SemanticTypePathResolution, TypePathContext},
@@ -496,6 +496,39 @@ impl SemanticIrDb {
             .iter()
             .enumerate()
             .find(|(_, variant)| variant.name == variant_name)
+    }
+
+    pub fn enum_variant_ref_for_type_def(
+        &self,
+        ty: TypeDefRef,
+        variant_name: &str,
+    ) -> Option<EnumVariantRef> {
+        // Variants are addressed by `(enum, index)` so that storing them inside `EnumData` remains
+        // cheap and compact while analysis still receives a stable identity.
+        let TypeDefId::Enum(enum_id) = ty.id else {
+            return None;
+        };
+        let (index, _) = self.enum_variant_for_type_def(ty, variant_name)?;
+        Some(EnumVariantRef {
+            target: ty.target,
+            enum_id,
+            index,
+        })
+    }
+
+    pub fn enum_variant_data(&self, variant_ref: EnumVariantRef) -> Option<EnumVariantData<'_>> {
+        let target_ir = self.target_ir(variant_ref.target)?;
+        let data = target_ir.items().enum_data(variant_ref.enum_id)?;
+        let variant = data.variants.get(variant_ref.index)?;
+        Some(EnumVariantData {
+            owner: TypeDefRef {
+                target: variant_ref.target,
+                id: TypeDefId::Enum(variant_ref.enum_id),
+            },
+            owner_module: data.owner,
+            file_id: data.source.file_id,
+            variant,
+        })
     }
 
     pub fn impl_data(&self, impl_ref: ImplRef) -> Option<&ImplData> {

@@ -1,9 +1,9 @@
-use rg_def_map::Path;
 use rg_item_tree::FieldKey;
 
 use crate::{
     body::BodySource,
     ids::{BindingId, PatId},
+    path::BodyPath,
 };
 
 /// One lowered pattern node.
@@ -24,11 +24,11 @@ pub enum PatKind {
         fields: Vec<PatId>,
     },
     TupleStruct {
-        path: Option<Path>,
+        path: Option<BodyPath>,
         fields: Vec<PatId>,
     },
     Record {
-        path: Option<Path>,
+        path: Option<BodyPath>,
         fields: Vec<RecordPatField>,
     },
     Or {
@@ -44,7 +44,7 @@ pub enum PatKind {
         pat: PatId,
     },
     Path {
-        path: Option<Path>,
+        path: Option<BodyPath>,
     },
     Wildcard,
     Unsupported {

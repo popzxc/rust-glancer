@@ -116,14 +116,6 @@ impl<'db, 'body> BodyTypePathResolver<'db, 'body> {
         }
     }
 
-    pub(super) fn ty_from_type_ref_for_function(
-        &self,
-        ty: &TypeRef,
-        function: FunctionRef,
-    ) -> BodyTy {
-        self.ty_from_type_ref_for_function_with_subst(ty, function, &TypeSubst::new())
-    }
-
     pub(super) fn ty_from_type_ref_for_function_with_subst(
         &self,
         ty: &TypeRef,

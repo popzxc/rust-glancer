@@ -5,6 +5,7 @@ mod ids;
 mod item;
 mod lower;
 mod pat;
+mod path;
 mod resolution;
 mod resolved;
 mod stmt;
@@ -34,6 +35,7 @@ pub use self::{
         BodyItemKind,
     },
     pat::{PatData, PatKind, RecordPatField},
+    path::BodyPath,
     resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
     stmt::{BindingData, BindingKind, StmtData, StmtKind},
     ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
@@ -190,6 +192,19 @@ impl BodyIrDb {
         path: &Path,
     ) -> BodyTypePathResolution {
         resolution::resolve_type_path_in_scope(self, def_map, semantic_ir, body_ref, scope, path)
+    }
+
+    pub fn resolve_value_path_in_scope(
+        &self,
+        def_map: &DefMapDb,
+        semantic_ir: &SemanticIrDb,
+        body_ref: BodyRef,
+        scope: ScopeId,
+        path: &Path,
+    ) -> (BodyResolution, BodyTy) {
+        // This is intentionally exposed as a query, not just a build-time helper: analysis uses it
+        // to resolve the exact qualified-path prefix selected by the cursor.
+        resolution::resolve_value_path_in_scope(self, def_map, semantic_ir, body_ref, scope, path)
     }
 
     pub fn ty_for_field(

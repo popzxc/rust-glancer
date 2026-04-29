@@ -23,6 +23,7 @@ use super::{
     ids::{BindingId, BodyFunctionId, BodyImplId, BodyItemId, ExprId, PatId, ScopeId, StmtId},
     item::{BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData, BodyItemKind},
     pat::{PatData, PatKind, RecordPatField},
+    path::BodyPath,
     resolved::BodyResolution,
     stmt::{BindingData, BindingKind, StmtData, StmtKind},
     ty::BodyTy,
@@ -472,11 +473,18 @@ impl<'a> FunctionBodyLowering<'a> {
                     .pat()
                     .map(|pat| self.lower_pat_inner(pat, scope, kind, None, bindings));
                 if is_capitalized_bare_pat(&name, &pat, subpat) {
+                    let name_span = pat
+                        .name()
+                        .map(|name| self.source(name.syntax()).span)
+                        .unwrap_or(source.span);
                     PatKind::Path {
-                        path: Some(Path {
-                            absolute: false,
-                            segments: vec![PathSegment::Name(name)],
-                        }),
+                        path: Some(BodyPath::new(
+                            Path {
+                                absolute: false,
+                                segments: vec![PathSegment::Name(name)],
+                            },
+                            vec![name_span],
+                        )),
                     }
                 } else {
                     let binding = self.push_pat_binding(
@@ -527,7 +535,9 @@ impl<'a> FunctionBodyLowering<'a> {
                     })
                     .collect();
                 PatKind::Record {
-                    path: pat.path().map(path_from_ast),
+                    path: pat
+                        .path()
+                        .map(|path| body_path_from_ast(path, self.line_index)),
                     fields,
                 }
             }
@@ -559,12 +569,16 @@ impl<'a> FunctionBodyLowering<'a> {
                     .map(|inner| self.lower_pat_inner(inner, scope, kind, None, bindings))
                     .collect();
                 PatKind::TupleStruct {
-                    path: pat.path().map(path_from_ast),
+                    path: pat
+                        .path()
+                        .map(|path| body_path_from_ast(path, self.line_index)),
                     fields,
                 }
             }
             ast::Pat::PathPat(pat) => PatKind::Path {
-                path: pat.path().map(path_from_ast),
+                path: pat
+                    .path()
+                    .map(|path| body_path_from_ast(path, self.line_index)),
             },
             ast::Pat::RestPat(_) | ast::Pat::WildcardPat(_) => PatKind::Wildcard,
             unsupported @ (ast::Pat::ConstBlockPat(_)
@@ -806,7 +820,10 @@ impl<'a> FunctionBodyLowering<'a> {
     }
 
     fn lower_path_expr(&mut self, expr: ast::PathExpr, scope: ScopeId) -> ExprId {
-        let Some(path) = expr.path().map(path_from_ast) else {
+        let Some(path) = expr
+            .path()
+            .map(|path| body_path_from_ast(path, self.line_index))
+        else {
             return self.lower_unknown_expr(expr.syntax(), scope);
         };
 
@@ -933,29 +950,41 @@ fn is_capitalized_bare_pat(name: &str, pat: &ast::IdentPat, subpat: Option<PatId
             .is_some_and(|byte| byte.is_ascii_uppercase())
 }
 
-fn path_from_ast(path: ast::Path) -> Path {
+fn body_path_from_ast(path: ast::Path, line_index: &LineIndex) -> BodyPath {
     let absolute = path
         .first_segment()
         .is_some_and(|segment| segment.coloncolon_token().is_some());
     let mut segments = Vec::new();
-    collect_path_segments(&path, &mut segments);
+    let mut segment_spans = Vec::new();
+    collect_path_segments(&path, line_index, &mut segments, &mut segment_spans);
 
-    Path { absolute, segments }
+    BodyPath::new(Path { absolute, segments }, segment_spans)
 }
 
-fn collect_path_segments(path: &ast::Path, segments: &mut Vec<PathSegment>) {
+fn collect_path_segments(
+    path: &ast::Path,
+    line_index: &LineIndex,
+    segments: &mut Vec<PathSegment>,
+    segment_spans: &mut Vec<Span>,
+) {
     if let Some(qualifier) = path.qualifier() {
-        collect_path_segments(&qualifier, segments);
+        collect_path_segments(&qualifier, line_index, segments, segment_spans);
     }
 
     if let Some(segment) = path.segment() {
-        let Some(name) = segment
-            .name_ref()
-            .map(|name| name.syntax().text().to_string())
-        else {
+        let Some(name_ref) = segment.name_ref() else {
             segments.push(PathSegment::Name(normalized_syntax(&segment)));
+            segment_spans.push(Span::from_text_range(
+                segment.syntax().text_range(),
+                line_index,
+            ));
             return;
         };
+        let name = name_ref.syntax().text().to_string();
+        segment_spans.push(Span::from_text_range(
+            name_ref.syntax().text_range(),
+            line_index,
+        ));
 
         segments.push(match name.as_str() {
             "self" => PathSegment::SelfKw,

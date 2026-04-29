@@ -40,12 +40,32 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
             SymbolAt::BodyPath {
                 body, scope, path, ..
             } => Some(self.ty_for_body_type_path(body, scope, &path)),
+            SymbolAt::BodyValuePath {
+                body, scope, path, ..
+            } => {
+                // Value-path type queries should use the same Body IR resolver as the main body
+                // pass, so enum variants and associated functions agree between snapshots and
+                // cursor-driven editor queries.
+                Some(
+                    self.0
+                        .body_ir
+                        .resolve_value_path_in_scope(
+                            self.0.def_map,
+                            self.0.semantic_ir,
+                            body,
+                            scope,
+                            &path,
+                        )
+                        .1,
+                )
+            }
             SymbolAt::Def { def, .. } => self.ty_for_def(def),
             SymbolAt::Field { field, .. } => self.ty_for_field(field),
             SymbolAt::LocalItem { item, .. } => {
                 Some(BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)]))
             }
             SymbolAt::TypePath { context, path, .. } => Some(self.ty_for_type_path(context, &path)),
+            SymbolAt::EnumVariant { variant, .. } => self.ty_for_enum_variant(variant),
             SymbolAt::UsePath { .. } | SymbolAt::Function { .. } => None,
             SymbolAt::Body { .. } => None,
         }
@@ -88,6 +108,11 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         self.0
             .body_ir
             .ty_for_field(self.0.def_map, self.0.semantic_ir, field)
+    }
+
+    fn ty_for_enum_variant(&self, variant: rg_semantic_ir::EnumVariantRef) -> Option<BodyTy> {
+        let data = self.0.semantic_ir.enum_variant_data(variant)?;
+        Some(BodyTy::Nominal(vec![BodyNominalTy::bare(data.owner)]))
     }
 }
 
