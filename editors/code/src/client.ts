@@ -7,6 +7,7 @@ import {
 } from "vscode-languageclient/node";
 
 import { ExtensionConfig, type TraceSetting } from "./config";
+import { hoverMiddleware } from "./hover_actions";
 import { ResolvedServer } from "./server";
 import { StatusView, type StatusDetails } from "./status";
 
@@ -82,6 +83,7 @@ export class ClientManager implements vscode.Disposable {
       initializationOptions: {
         check: config.check,
       },
+      middleware: hoverMiddleware(() => this.client, this.output),
       workspaceFolder,
     };
 
