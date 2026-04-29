@@ -249,17 +249,12 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
 }
 
 fn enum_ty_candidates(ty: &BodyTy) -> Vec<&BodyNominalTy> {
-    match ty {
-        BodyTy::Nominal(types) | BodyTy::SelfTy(types) => types
-            .iter()
-            .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
-            .collect(),
-        BodyTy::Unit
-        | BodyTy::Never
-        | BodyTy::Syntax(_)
-        | BodyTy::LocalNominal(_)
-        | BodyTy::Unknown => Vec::new(),
-    }
+    // `nominal_tys` intentionally peels references for editor usefulness. Pattern-propagated
+    // binding types may therefore omit borrow information until references are modeled precisely.
+    ty.nominal_tys()
+        .iter()
+        .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
+        .collect()
 }
 
 fn variant_field<'a>(fields: &'a FieldList, key: &FieldKey) -> Option<&'a FieldItem> {

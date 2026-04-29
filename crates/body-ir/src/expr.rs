@@ -56,6 +56,10 @@ pub enum ExprKind {
         field: Option<FieldKey>,
         field_span: Option<Span>,
     },
+    Wrapper {
+        kind: ExprWrapperKind,
+        inner: Option<ExprId>,
+    },
     Literal {
         text: String,
         kind: LiteralKind,
@@ -64,6 +68,21 @@ pub enum ExprKind {
         text: String,
         children: Vec<ExprId>,
     },
+}
+
+/// Transparent or nearly-transparent expression wrapper understood by cheap type normalization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+pub enum ExprWrapperKind {
+    #[display("paren")]
+    Paren,
+    #[display("ref")]
+    Ref,
+    #[display("await")]
+    Await,
+    #[display("try")]
+    Try,
+    #[display("return")]
+    Return,
 }
 
 /// One match arm with its pattern scope and lowered arm expression.

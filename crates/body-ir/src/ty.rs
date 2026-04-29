@@ -9,6 +9,7 @@ pub enum BodyTy {
     Unit,
     Never,
     Syntax(TypeRef),
+    Reference(Box<BodyTy>),
     LocalNominal(Vec<BodyLocalNominalTy>),
     Nominal(Vec<BodyNominalTy>),
     SelfTy(Vec<BodyNominalTy>),
@@ -62,12 +63,34 @@ pub enum BodyGenericArg {
 }
 
 impl BodyTy {
-    pub fn local_nominals(&self) -> &[BodyLocalNominalTy] {
+    pub fn reference(inner: BodyTy) -> Self {
+        if matches!(inner, Self::Unknown) {
+            return Self::Unknown;
+        }
+
+        Self::Reference(Box::new(inner))
+    }
+
+    pub fn peel_references(&self) -> &Self {
         match self {
+            Self::Reference(inner) => inner.peel_references(),
+            Self::Unit
+            | Self::Never
+            | Self::Syntax(_)
+            | Self::LocalNominal(_)
+            | Self::Nominal(_)
+            | Self::SelfTy(_)
+            | Self::Unknown => self,
+        }
+    }
+
+    pub fn local_nominals(&self) -> &[BodyLocalNominalTy] {
+        match self.peel_references() {
             Self::LocalNominal(types) => types,
             Self::Unit
             | Self::Never
             | Self::Syntax(_)
+            | Self::Reference(_)
             | Self::Nominal(_)
             | Self::SelfTy(_)
             | Self::Unknown => &[],
@@ -75,11 +98,14 @@ impl BodyTy {
     }
 
     pub fn nominal_tys(&self) -> &[BodyNominalTy] {
-        match self {
+        match self.peel_references() {
             Self::Nominal(types) | Self::SelfTy(types) => types,
-            Self::Unit | Self::Never | Self::Syntax(_) | Self::LocalNominal(_) | Self::Unknown => {
-                &[]
-            }
+            Self::Unit
+            | Self::Never
+            | Self::Syntax(_)
+            | Self::Reference(_)
+            | Self::LocalNominal(_)
+            | Self::Unknown => &[],
         }
     }
 

@@ -90,6 +90,70 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn completes_through_references_try_and_await_wrappers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_wrapper_completion"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+pub struct Error;
+
+pub struct User {
+    profile: Profile,
+}
+
+impl User {
+    pub fn id(&self) {}
+}
+
+pub struct Profile;
+
+pub fn load_user() -> Result<User, Error> {
+    todo!()
+}
+
+pub async fn load_user_async() -> User {
+    User { profile: Profile }
+}
+
+pub async fn use_it(user: User) -> Result<(), Error> {
+    (&user).$reference$;
+    load_user()?.$try$;
+    load_user_async().await.$await$;
+    Result::Ok(())
+}
+"#,
+        &[
+            AnalysisQuery::complete("reference completions", "reference"),
+            AnalysisQuery::complete("try completions", "try"),
+            AnalysisQuery::complete("await completions", "await"),
+        ],
+        expect![[r#"
+            reference completions
+            - inherent_method id
+            - field profile
+
+            try completions
+            - inherent_method id
+            - field profile
+
+            await completions
+            - inherent_method id
+            - field profile
+        "#]],
+    );
+}
+
+#[test]
 fn completes_methods_for_bin_root_library_type() {
     check_analysis_queries(
         r#"

@@ -9,7 +9,7 @@ use rg_semantic_ir::{FunctionRef, SemanticIrDb, TypeDefId, TypePathContext};
 
 use crate::{
     body::BodyData,
-    expr::ExprKind,
+    expr::{ExprKind, ExprWrapperKind},
     ids::{
         BindingId, BodyFieldRef, BodyFunctionRef, BodyImplId, BodyItemRef, BodyRef, ExprId, ScopeId,
     },
@@ -25,6 +25,7 @@ use super::{
         semantic_function_applies_to_receiver, semantic_impl_self_subst,
         semantic_trait_function_candidates_for_receiver,
     },
+    normalize::BodyTyNormalizer,
     pat::PatternTypePropagator,
     push_unique,
     ty::{TypeSubst, subst_from_generics, type_ref_is_self},
@@ -176,6 +177,12 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
                 ..
             } => {
                 let (resolution, ty) = self.resolve_method_call_expr(receiver, &method_name);
+                let data = &mut self.body.exprs[expr.0];
+                data.resolution = resolution;
+                data.ty = ty;
+            }
+            ExprKind::Wrapper { kind, inner } => {
+                let (resolution, ty) = self.resolve_wrapper_expr(kind, inner);
                 let data = &mut self.body.exprs[expr.0];
                 data.resolution = resolution;
                 data.ty = ty;
@@ -333,6 +340,26 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             return_tys.pop().expect("one return type should exist")
         } else {
             BodyTy::Unknown
+        };
+
+        (resolution, ty)
+    }
+
+    fn resolve_wrapper_expr(
+        &self,
+        kind: ExprWrapperKind,
+        inner: Option<ExprId>,
+    ) -> (BodyResolution, BodyTy) {
+        let Some(inner) = inner else {
+            return (BodyResolution::Unknown, BodyTy::Unknown);
+        };
+        let inner_data = &self.body.exprs[inner.0];
+        let ty = BodyTyNormalizer::new(self.semantic_ir, self.body)
+            .ty_for_wrapper(kind, inner_data.ty.clone());
+        let resolution = if matches!(kind, ExprWrapperKind::Paren) {
+            inner_data.resolution.clone()
+        } else {
+            BodyResolution::Unknown
         };
 
         (resolution, ty)

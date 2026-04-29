@@ -21,6 +21,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             BodyTy::Unit => Some("()".to_string()),
             BodyTy::Never => Some("!".to_string()),
             BodyTy::Syntax(ty) => Some(ty.to_string()),
+            BodyTy::Reference(inner) => self.render(inner).map(|inner| format!("&{inner}")),
             BodyTy::LocalNominal(types) => {
                 self.render_joined(types.iter().filter_map(|ty| self.render_local_nominal(ty)))
             }

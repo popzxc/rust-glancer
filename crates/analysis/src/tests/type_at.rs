@@ -33,6 +33,58 @@ pub fn use_it() {
 }
 
 #[test]
+fn returns_types_for_references_try_and_await_wrappers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_wrapper_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+pub struct Error;
+pub struct User;
+
+pub fn load_user() -> Result<User, Error> {
+    todo!()
+}
+
+pub async fn load_user_async() -> User {
+    User
+}
+
+pub async fn use_it(user: User) -> Result<(), Error> {
+    let _borrowed = (&user)$type_ref$;
+    let _loaded = load_user()?$type_try$;
+    let _awaited = load_user_async().await$type_await$;
+    Result::Ok(())
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at reference wrapper", "type_ref"),
+            AnalysisQuery::ty("type at try wrapper", "type_try"),
+            AnalysisQuery::ty("type at await wrapper", "type_await"),
+        ],
+        expect![[r#"
+            type at reference wrapper
+            - &nominal struct analysis_wrapper_type_at[lib]::crate::User
+
+            type at try wrapper
+            - nominal struct analysis_wrapper_type_at[lib]::crate::User
+
+            type at await wrapper
+            - nominal struct analysis_wrapper_type_at[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
 fn returns_binding_declaration_types() {
     check_analysis_queries(
         r#"

@@ -488,7 +488,7 @@ pub fn destructure(
             - v1 param param_right `param_right` => <unknown> @ 9:18-9:29
             - v2 param pair `pair`: (UserId, UserId) => syntax (UserId, UserId) @ 10:5-10:9
             - v3 param record `record`: Pair => nominal struct body_destructure_fixture[lib]::crate::Pair @ 11:5-11:11
-            - v4 param borrowed `borrowed`: &(UserId, UserId) => syntax &(UserId, UserId) @ 12:5-12:13
+            - v4 param borrowed `borrowed`: &(UserId, UserId) => &syntax (UserId, UserId) @ 12:5-12:13
             - v5 let from_param `from_param`: UserId => nominal struct body_destructure_fixture[lib]::crate::UserId @ 14:9-14:19
             - v6 let left `left` => <unknown> @ 15:10-15:14
             - v7 let right `right` => <unknown> @ 15:16-15:21
@@ -509,7 +509,7 @@ pub fn destructure(
                   expr e2 path record -> local v3 => nominal struct body_destructure_fixture[lib]::crate::Pair @ 16:44-16:50
               stmt s3 let v10, v11 @ 17:5-17:53
                 initializer
-                  expr e3 path borrowed -> local v4 => syntax &(UserId, UserId) @ 17:44-17:52
+                  expr e3 path borrowed -> local v4 => &syntax (UserId, UserId) @ 17:44-17:52
               tail
                 expr e4 path left -> local v6 => <unknown> @ 18:5-18:9
         "#]],

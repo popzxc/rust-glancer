@@ -478,6 +478,15 @@ impl SemanticIrDb {
         }
     }
 
+    pub fn type_def_name(&self, ty: TypeDefRef) -> Option<&str> {
+        let target_ir = self.target_ir(ty.target)?;
+        match ty.id {
+            TypeDefId::Struct(id) => Some(target_ir.items().struct_data(id)?.name.as_str()),
+            TypeDefId::Enum(id) => Some(target_ir.items().enum_data(id)?.name.as_str()),
+            TypeDefId::Union(id) => Some(target_ir.items().union_data(id)?.name.as_str()),
+        }
+    }
+
     pub fn enum_data_for_type_def(&self, ty: TypeDefRef) -> Option<&EnumData> {
         let target_ir = self.target_ir(ty.target)?;
         let TypeDefId::Enum(id) = ty.id else {

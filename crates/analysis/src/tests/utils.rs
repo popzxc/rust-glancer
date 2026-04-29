@@ -538,6 +538,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .unwrap_or_else(|| "<missing>".to_string());
                 format!("field {field}")
             }
+            ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
             ExprKind::Literal { kind, text } => format!("literal {kind} {text}"),
             ExprKind::Unknown { text, .. } => format!("unknown {text}"),
         };
@@ -613,6 +614,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             BodyTy::Unit => "()".to_string(),
             BodyTy::Never => "!".to_string(),
             BodyTy::Syntax(ty) => format!("syntax {ty}"),
+            BodyTy::Reference(inner) => format!("&{}", self.render_ty(inner)),
             BodyTy::LocalNominal(items) => {
                 let mut items = items
                     .iter()

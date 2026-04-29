@@ -515,6 +515,13 @@ impl TargetBodyIrSnapshot<'_> {
                     self.render_expr(body, *base, depth + 2, dump);
                 }
             }
+            ExprKind::Wrapper { inner, .. } => {
+                if let Some(inner) = inner {
+                    writeln!(dump, "{}inner", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *inner, depth + 2, dump);
+                }
+            }
             ExprKind::Unknown { children, .. } => {
                 for child in children {
                     writeln!(dump, "{}child", indent(depth + 1))
@@ -542,6 +549,7 @@ impl TargetBodyIrSnapshot<'_> {
                     .unwrap_or_else(|| "<missing>".to_string());
                 format!("field {field}")
             }
+            ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
             ExprKind::Literal { text, kind } => format!("literal {kind} `{text}`"),
             ExprKind::Unknown { text, .. } => format!("unknown `{text}`"),
         }
@@ -603,6 +611,7 @@ impl TargetBodyIrSnapshot<'_> {
             BodyTy::Unit => "()".to_string(),
             BodyTy::Never => "!".to_string(),
             BodyTy::Syntax(ty) => format!("syntax {ty}"),
+            BodyTy::Reference(inner) => format!("&{}", self.render_ty(inner)),
             BodyTy::LocalNominal(items) => {
                 let mut items = items
                     .iter()

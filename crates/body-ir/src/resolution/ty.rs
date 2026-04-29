@@ -51,6 +51,14 @@ pub(super) fn ty_from_type_ref_in_context(
                 args,
             )
         }
+        TypeRef::Reference { inner, .. } => BodyTy::reference(ty_from_type_ref_in_context(
+            def_map,
+            semantic_ir,
+            inner,
+            context,
+            BodyTy::Syntax((**inner).clone()),
+            subst,
+        )),
         TypeRef::Unknown(_) | TypeRef::Infer => BodyTy::Unknown,
         TypeRef::Tuple(types) if types.is_empty() => BodyTy::Unit,
         _ => BodyTy::Syntax(ty.clone()),

@@ -445,7 +445,15 @@ fn impl_header_is_definitely_direct(impl_data: &rg_semantic_ir::ImplData) -> boo
 }
 
 fn type_arg_comparison_is_uncertain(ty: &BodyTy) -> bool {
-    matches!(ty, BodyTy::Syntax(_) | BodyTy::Unknown)
+    match ty {
+        BodyTy::Syntax(_) | BodyTy::Unknown => true,
+        BodyTy::Reference(inner) => type_arg_comparison_is_uncertain(inner),
+        BodyTy::Unit
+        | BodyTy::Never
+        | BodyTy::LocalNominal(_)
+        | BodyTy::Nominal(_)
+        | BodyTy::SelfTy(_) => false,
+    }
 }
 
 fn push_function_candidate(

@@ -19,7 +19,7 @@ use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitRef};
 use super::{
     BodyIrBuildPolicy, BodyIrDb,
     body::{BodyBuilder, BodyData, BodySource, PackageBodies, TargetBodies},
-    expr::{ExprData, ExprKind, LiteralKind, MatchArmData},
+    expr::{ExprData, ExprKind, ExprWrapperKind, LiteralKind, MatchArmData},
     ids::{BindingId, BodyFunctionId, BodyImplId, BodyItemId, ExprId, PatId, ScopeId, StmtId},
     item::{BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData, BodyItemKind},
     pat::{PatData, PatKind, RecordPatField},
@@ -673,9 +673,22 @@ impl<'a> FunctionBodyLowering<'a> {
             ast::Expr::MethodCallExpr(method_call) => {
                 self.lower_method_call_expr(method_call, scope)
             }
+            ast::Expr::AwaitExpr(await_expr) => self.lower_wrapper_expr(
+                await_expr.syntax(),
+                await_expr.expr(),
+                scope,
+                ExprWrapperKind::Await,
+            ),
             ast::Expr::ParenExpr(paren) => match paren.expr() {
-                Some(inner) => self.lower_passthrough_unknown(paren.syntax(), vec![inner], scope),
-                None => self.lower_unknown_expr(paren.syntax(), scope),
+                Some(inner) => self.lower_wrapper_expr(
+                    paren.syntax(),
+                    Some(inner),
+                    scope,
+                    ExprWrapperKind::Paren,
+                ),
+                None => {
+                    self.lower_wrapper_expr(paren.syntax(), None, scope, ExprWrapperKind::Paren)
+                }
             },
             ast::Expr::PathExpr(path) => self.lower_path_expr(path, scope),
             ast::Expr::PrefixExpr(prefix) => match prefix.expr() {
@@ -683,17 +696,36 @@ impl<'a> FunctionBodyLowering<'a> {
                 None => self.lower_unknown_expr(prefix.syntax(), scope),
             },
             ast::Expr::RefExpr(ref_expr) => match ref_expr.expr() {
-                Some(inner) => {
-                    self.lower_passthrough_unknown(ref_expr.syntax(), vec![inner], scope)
+                Some(inner) => self.lower_wrapper_expr(
+                    ref_expr.syntax(),
+                    Some(inner),
+                    scope,
+                    ExprWrapperKind::Ref,
+                ),
+                None => {
+                    self.lower_wrapper_expr(ref_expr.syntax(), None, scope, ExprWrapperKind::Ref)
                 }
-                None => self.lower_unknown_expr(ref_expr.syntax(), scope),
             },
             ast::Expr::ReturnExpr(return_expr) => match return_expr.expr() {
-                Some(inner) => {
-                    self.lower_passthrough_unknown(return_expr.syntax(), vec![inner], scope)
-                }
-                None => self.lower_unknown_expr(return_expr.syntax(), scope),
+                Some(inner) => self.lower_wrapper_expr(
+                    return_expr.syntax(),
+                    Some(inner),
+                    scope,
+                    ExprWrapperKind::Return,
+                ),
+                None => self.lower_wrapper_expr(
+                    return_expr.syntax(),
+                    None,
+                    scope,
+                    ExprWrapperKind::Return,
+                ),
             },
+            ast::Expr::TryExpr(try_expr) => self.lower_wrapper_expr(
+                try_expr.syntax(),
+                try_expr.expr(),
+                scope,
+                ExprWrapperKind::Try,
+            ),
             // Unsupported expressions still lower their direct expression children so cursor and
             // type queries can work inside syntax the IR does not model yet.
             expr => self.lower_unknown_with_direct_children(expr.syntax(), scope),
@@ -828,6 +860,18 @@ impl<'a> FunctionBodyLowering<'a> {
         };
 
         self.alloc_expr(expr.syntax(), scope, ExprKind::Path { path })
+    }
+
+    fn lower_wrapper_expr(
+        &mut self,
+        syntax: &ra_syntax::SyntaxNode,
+        inner: Option<ast::Expr>,
+        scope: ScopeId,
+        kind: ExprWrapperKind,
+    ) -> ExprId {
+        let inner = inner.map(|inner| self.lower_expr(inner, scope));
+
+        self.alloc_expr(syntax, scope, ExprKind::Wrapper { kind, inner })
     }
 
     fn lower_passthrough_unknown(

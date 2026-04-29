@@ -188,17 +188,19 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
     }
 
     fn navigation_targets_for_body_ty(&self, ty: &BodyTy) -> Vec<NavigationTarget> {
-        match ty {
-            BodyTy::LocalNominal(items) => items
-                .iter()
-                .filter_map(|ty| self.navigation_target_for_body_item(ty.item))
-                .collect(),
-            BodyTy::Nominal(types) | BodyTy::SelfTy(types) => types
-                .iter()
-                .filter_map(|ty| self.navigation_target_for_type_def(ty.def))
-                .collect(),
-            BodyTy::Unit | BodyTy::Never | BodyTy::Syntax(_) | BodyTy::Unknown => Vec::new(),
+        let local_targets = ty
+            .local_nominals()
+            .iter()
+            .filter_map(|ty| self.navigation_target_for_body_item(ty.item))
+            .collect::<Vec<_>>();
+        if !local_targets.is_empty() {
+            return local_targets;
         }
+
+        ty.nominal_tys()
+            .iter()
+            .filter_map(|ty| self.navigation_target_for_type_def(ty.def))
+            .collect()
     }
 
     fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
