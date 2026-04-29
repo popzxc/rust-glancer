@@ -61,11 +61,9 @@ pub enum ExprKind {
         inner: Option<ExprId>,
     },
     Literal {
-        text: String,
         kind: LiteralKind,
     },
     Unknown {
-        text: String,
         children: Vec<ExprId>,
     },
 }

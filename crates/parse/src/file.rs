@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ra_syntax::{Edition, SourceFile};
+use ra_syntax::{AstNode as _, Edition, SourceFile};
 
 use crate::{
     error::ParseError,
@@ -67,6 +67,15 @@ impl<'a> ParsedFile<'a> {
     /// Returns the parsed Rust syntax tree.
     pub fn syntax(&self) -> &'a SourceFile {
         &self.data.tree
+    }
+
+    /// Returns source text for a byte span by reading it back from the syntax tree.
+    pub fn text_for_span(&self, span: Span) -> Option<String> {
+        let file_text = self.data.tree.syntax().text().to_string();
+        let start = usize::try_from(span.text.start).ok()?;
+        let end = usize::try_from(span.text.end).ok()?;
+
+        file_text.get(start..end).map(ToString::to_string)
     }
 }
 

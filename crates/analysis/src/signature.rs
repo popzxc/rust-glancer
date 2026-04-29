@@ -148,7 +148,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
     }
 
     pub(super) fn binding_signature(&self, data: &BindingData) -> String {
-        let name = data.name.as_deref().unwrap_or(data.pat.as_str());
+        let name = data.name.as_deref().unwrap_or("<unsupported>");
         let ty = TypeRenderer::new(self.0)
             .render(&data.ty)
             .or_else(|| data.annotation.as_ref().map(ToString::to_string))

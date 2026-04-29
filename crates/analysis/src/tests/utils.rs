@@ -604,8 +604,15 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 format!("field {field}")
             }
             ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
-            ExprKind::Literal { kind, text } => format!("literal {kind} {text}"),
-            ExprKind::Unknown { text, .. } => format!("unknown {text}"),
+            ExprKind::Literal { kind } => {
+                format!(
+                    "literal {kind} {}",
+                    self.render_source_text(package, expr.source)
+                )
+            }
+            ExprKind::Unknown { .. } => {
+                format!("unknown {}", self.render_source_text(package, expr.source))
+            }
         };
 
         format!(
@@ -951,6 +958,23 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             line_column.end.line + 1,
             line_column.end.column + 1,
         )
+    }
+
+    fn render_source_text(&self, package: PackageSlot, source: rg_body_ir::BodySource) -> String {
+        let parsed_file = self
+            .db
+            .parse
+            .package(package.0)
+            .expect("span package should exist while rendering analysis query text")
+            .parsed_file(source.file_id)
+            .expect("span file should exist while rendering analysis query text");
+
+        parsed_file
+            .text_for_span(source.span)
+            .unwrap_or_else(|| "<invalid>".to_string())
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 

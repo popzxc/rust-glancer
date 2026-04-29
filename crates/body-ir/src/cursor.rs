@@ -469,7 +469,7 @@ impl ValuePathCursorScanner<'_> {
                 }
             }
             PatKind::Ref { pat } | PatKind::Box { pat } => self.scan_pat(scope, *pat),
-            PatKind::Wildcard | PatKind::Unsupported { .. } => {}
+            PatKind::Wildcard | PatKind::Unsupported => {}
         }
     }
 

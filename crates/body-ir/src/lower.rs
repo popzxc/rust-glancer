@@ -247,7 +247,6 @@ impl<'a> FunctionBodyLowering<'a> {
             scope,
             kind: BindingKind::SelfParam,
             name: Some("self".to_string()),
-            pat: normalized_syntax(&param),
             annotation,
             ty: BodyTy::Unknown,
         })
@@ -262,7 +261,6 @@ impl<'a> FunctionBodyLowering<'a> {
                 scope,
                 kind: BindingKind::Param,
                 name: None,
-                pat: "<missing>".to_string(),
                 annotation,
                 ty: BodyTy::Unknown,
             })],
@@ -478,7 +476,6 @@ impl<'a> FunctionBodyLowering<'a> {
                         scope,
                         kind,
                         name,
-                        normalized_syntax(&pat),
                         annotation.clone(),
                         bindings,
                     );
@@ -561,12 +558,10 @@ impl<'a> FunctionBodyLowering<'a> {
                 path: pat.path().map(body_path_from_ast),
             },
             ast::Pat::RestPat(_) | ast::Pat::WildcardPat(_) => PatKind::Wildcard,
-            unsupported @ (ast::Pat::ConstBlockPat(_)
+            ast::Pat::ConstBlockPat(_)
             | ast::Pat::LiteralPat(_)
             | ast::Pat::MacroPat(_)
-            | ast::Pat::RangePat(_)) => PatKind::Unsupported {
-                text: normalized_syntax(&unsupported),
-            },
+            | ast::Pat::RangePat(_) => PatKind::Unsupported,
         };
 
         self.builder.alloc_pat(PatData {
@@ -581,7 +576,6 @@ impl<'a> FunctionBodyLowering<'a> {
         scope: ScopeId,
         kind: BindingKind,
         name: String,
-        pat: String,
         annotation: Option<TypeRef>,
         bindings: &mut Vec<BindingId>,
     ) -> Option<BindingId> {
@@ -600,7 +594,6 @@ impl<'a> FunctionBodyLowering<'a> {
             scope,
             kind,
             name: Some(name),
-            pat,
             annotation,
             ty: BodyTy::Unknown,
         });
@@ -616,15 +609,7 @@ impl<'a> FunctionBodyLowering<'a> {
         name: String,
         bindings: &mut Vec<BindingId>,
     ) -> PatId {
-        let binding = self.push_pat_binding(
-            syntax,
-            scope,
-            kind,
-            name,
-            normalized_syntax_node(syntax),
-            None,
-            bindings,
-        );
+        let binding = self.push_pat_binding(syntax, scope, kind, name, None, bindings);
         self.builder.alloc_pat(PatData {
             source: self.source(syntax),
             kind: PatKind::Binding {
@@ -637,9 +622,7 @@ impl<'a> FunctionBodyLowering<'a> {
     fn alloc_unsupported_pat(&mut self, syntax: &ra_syntax::SyntaxNode) -> PatId {
         self.builder.alloc_pat(PatData {
             source: self.source(syntax),
-            kind: PatKind::Unsupported {
-                text: normalized_syntax_node(syntax),
-            },
+            kind: PatKind::Unsupported,
         })
     }
 
@@ -828,7 +811,7 @@ impl<'a> FunctionBodyLowering<'a> {
         let text = normalized_syntax(&literal);
         let kind = LiteralKind::from_text(&text);
 
-        self.alloc_expr(literal.syntax(), scope, ExprKind::Literal { text, kind })
+        self.alloc_expr(literal.syntax(), scope, ExprKind::Literal { kind })
     }
 
     fn lower_path_expr(&mut self, expr: ast::PathExpr, scope: ScopeId) -> ExprId {
@@ -862,14 +845,7 @@ impl<'a> FunctionBodyLowering<'a> {
             .map(|child| self.lower_expr(child, scope))
             .collect();
 
-        self.alloc_expr(
-            syntax,
-            scope,
-            ExprKind::Unknown {
-                text: normalized_syntax_node(syntax),
-                children,
-            },
-        )
+        self.alloc_expr(syntax, scope, ExprKind::Unknown { children })
     }
 
     fn lower_unknown_with_direct_children(
@@ -883,14 +859,7 @@ impl<'a> FunctionBodyLowering<'a> {
             .map(|child| self.lower_expr(child, scope))
             .collect();
 
-        self.alloc_expr(
-            syntax,
-            scope,
-            ExprKind::Unknown {
-                text: normalized_syntax_node(syntax),
-                children,
-            },
-        )
+        self.alloc_expr(syntax, scope, ExprKind::Unknown { children })
     }
 
     fn lower_unknown_expr(&mut self, syntax: &ra_syntax::SyntaxNode, scope: ScopeId) -> ExprId {
@@ -898,7 +867,6 @@ impl<'a> FunctionBodyLowering<'a> {
             syntax,
             scope,
             ExprKind::Unknown {
-                text: normalized_syntax_node(syntax),
                 children: Vec::new(),
             },
         )

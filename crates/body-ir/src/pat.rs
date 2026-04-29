@@ -47,9 +47,7 @@ pub enum PatKind {
         path: Option<BodyPath>,
     },
     Wildcard,
-    Unsupported {
-        text: String,
-    },
+    Unsupported,
 }
 
 /// One field inside a record pattern.

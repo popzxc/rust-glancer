@@ -13,7 +13,6 @@ pub struct BindingData {
     pub scope: ScopeId,
     pub kind: BindingKind,
     pub name: Option<String>,
-    pub pat: String,
     pub annotation: Option<TypeRef>,
     pub ty: BodyTy,
 }

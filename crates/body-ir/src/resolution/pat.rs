@@ -136,7 +136,7 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
             | PatKind::Slice { .. }
             | PatKind::Path { .. }
             | PatKind::Wildcard
-            | PatKind::Unsupported { .. } => false,
+            | PatKind::Unsupported => false,
         }
     }
 

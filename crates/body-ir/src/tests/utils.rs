@@ -335,7 +335,7 @@ impl TargetBodyIrSnapshot<'_> {
             id.0,
             binding.kind,
             name,
-            binding.pat,
+            self.render_source_text(binding.source),
             annotation,
             self.render_ty(&binding.ty),
             self.render_source(binding.source),
@@ -549,8 +549,12 @@ impl TargetBodyIrSnapshot<'_> {
                 format!("field {field}")
             }
             ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
-            ExprKind::Literal { text, kind } => format!("literal {kind} `{text}`"),
-            ExprKind::Unknown { text, .. } => format!("unknown `{text}`"),
+            ExprKind::Literal { kind } => {
+                format!("literal {kind} `{}`", self.render_source_text(data.source))
+            }
+            ExprKind::Unknown { .. } => {
+                format!("unknown `{}`", self.render_source_text(data.source))
+            }
         }
     }
 
@@ -1024,6 +1028,23 @@ impl TargetBodyIrSnapshot<'_> {
             line_column.end.line + 1,
             line_column.end.column + 1,
         )
+    }
+
+    fn render_source_text(&self, source: BodySource) -> String {
+        let parsed_file = self
+            .project
+            .parse_db()
+            .package(self.target_ref.package.0)
+            .expect("source package should exist while rendering body IR text")
+            .parsed_file(source.file_id)
+            .expect("source file should exist while rendering body IR text");
+
+        parsed_file
+            .text_for_span(source.span)
+            .unwrap_or_else(|| "<invalid>".to_string())
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
