@@ -82,6 +82,10 @@ impl LanguageServer for Backend {
         methods::text_document::type_definition::type_definition(&self.ctx, params).await
     }
 
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        methods::text_document::hover::hover(&self.ctx, params).await
+    }
+
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         methods::text_document::completion::completion(&self.ctx, params).await
     }

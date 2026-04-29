@@ -2,7 +2,7 @@
 //!
 //! Analysis owns the user-facing `SymbolAt` enum, but semantic IR owns the shape of item
 //! signatures. Keeping this scan here prevents analysis from knowing how every semantic item stores
-//! generic params, field types, impl headers, and associated function declarations.
+//! generic params, field types, enum variants, impl headers, and associated function declarations.
 
 use rg_def_map::{Path, TargetRef};
 use rg_item_tree::{
@@ -10,7 +10,10 @@ use rg_item_tree::{
 };
 use rg_parse::{FileId, Span};
 
-use crate::{FieldRef, FunctionRef, ItemOwner, SemanticIrDb, TypeDefRef, TypePathContext};
+use crate::{
+    EnumVariantRef, FieldRef, FunctionRef, ItemOwner, SemanticIrDb, TypeDefId, TypeDefRef,
+    TypePathContext,
+};
 
 /// One semantic signature source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +24,10 @@ pub enum SemanticCursorCandidate {
     },
     Function {
         function: FunctionRef,
+        span: Span,
+    },
+    EnumVariant {
+        variant: EnumVariantRef,
         span: Span,
     },
     TypePath {
@@ -35,6 +42,7 @@ impl SemanticCursorCandidate {
         match self {
             Self::Field { span, .. }
             | Self::Function { span, .. }
+            | Self::EnumVariant { span, .. }
             | Self::TypePath { span, .. } => *span,
         }
     }
@@ -114,13 +122,24 @@ impl SignatureCursorScanner<'_> {
     }
 
     fn scan_enums(&mut self) {
-        for (_, data) in self.semantic_ir.enums(self.target) {
+        for (ty, data) in self.semantic_ir.enums(self.target) {
             if data.source.file_id != self.file_id {
                 continue;
             }
             let context = TypePathContext::module(data.owner);
             self.scan_generic_params(context, &data.generics);
-            for variant in &data.variants {
+            let TypeDefId::Enum(enum_id) = ty.id else {
+                continue;
+            };
+            for (variant_idx, variant) in data.variants.iter().enumerate() {
+                self.push_enum_variant(
+                    EnumVariantRef {
+                        target: self.target,
+                        enum_id,
+                        index: variant_idx,
+                    },
+                    variant.name_span,
+                );
                 self.scan_field_list_for_owner(context, &variant.fields);
             }
         }
@@ -322,6 +341,10 @@ impl SignatureCursorScanner<'_> {
 
     fn push_function(&mut self, function: FunctionRef, span: Span) {
         self.push_candidate(SemanticCursorCandidate::Function { function, span });
+    }
+
+    fn push_enum_variant(&mut self, variant: EnumVariantRef, span: Span) {
+        self.push_candidate(SemanticCursorCandidate::EnumVariant { variant, span });
     }
 
     fn push_candidate(&mut self, candidate: SemanticCursorCandidate) {

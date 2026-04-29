@@ -157,6 +157,7 @@ impl<'a> TargetLowering<'a> {
                     owner,
                     name: item.name.clone()?,
                     visibility: item.visibility.clone(),
+                    docs: item.docs.clone(),
                     generics: enum_item.generics.clone(),
                     variants: enum_item.variants.clone(),
                 });
@@ -183,6 +184,7 @@ impl<'a> TargetLowering<'a> {
                     owner,
                     name: item.name.clone()?,
                     visibility: item.visibility.clone(),
+                    docs: item.docs.clone(),
                     generics: struct_item.generics.clone(),
                     fields: struct_item.fields.clone(),
                 });
@@ -205,6 +207,7 @@ impl<'a> TargetLowering<'a> {
                     owner,
                     name: item.name.clone()?,
                     visibility: item.visibility.clone(),
+                    docs: item.docs.clone(),
                     generics: union_item.generics.clone(),
                     fields: union_item.fields.clone(),
                 });
@@ -229,6 +232,7 @@ impl<'a> TargetLowering<'a> {
             owner,
             name: item.name.clone().unwrap_or_else(|| "<missing>".to_string()),
             visibility: item.visibility.clone(),
+            docs: item.docs.clone(),
             generics: trait_item.generics.clone(),
             super_traits: trait_item.super_traits.clone(),
             items: Vec::new(),
@@ -332,6 +336,7 @@ impl<'a> TargetLowering<'a> {
             owner,
             name: item.name.clone().unwrap_or_else(|| "<missing>".to_string()),
             visibility: item.visibility.clone(),
+            docs: item.docs.clone(),
             declaration: declaration.clone(),
         })
     }
@@ -352,6 +357,7 @@ impl<'a> TargetLowering<'a> {
             owner,
             name: item.name.clone().unwrap_or_else(|| "<missing>".to_string()),
             visibility: item.visibility.clone(),
+            docs: item.docs.clone(),
             declaration: declaration.clone(),
         })
     }
@@ -372,6 +378,7 @@ impl<'a> TargetLowering<'a> {
             owner,
             name: item.name.clone().unwrap_or_else(|| "<missing>".to_string()),
             visibility: item.visibility.clone(),
+            docs: item.docs.clone(),
             declaration: declaration.clone(),
         })
     }
@@ -392,6 +399,7 @@ impl<'a> TargetLowering<'a> {
             owner,
             name: item.name.clone().unwrap_or_else(|| "<missing>".to_string()),
             visibility: item.visibility.clone(),
+            docs: item.docs.clone(),
             ty: declaration.ty.clone(),
             mutability: declaration.mutability,
         })

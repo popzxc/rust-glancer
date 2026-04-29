@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use rg_item_tree::{ItemTag, ItemTreeRef, VisibilityLevel};
+use rg_item_tree::{Documentation, ItemTag, ItemTreeRef, VisibilityLevel};
 use rg_parse::{FileId, Span};
 
 use super::{DefId, ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef};
@@ -95,6 +95,7 @@ impl DefMap {
 pub struct ModuleData {
     pub name: Option<String>,
     pub name_span: Option<Span>,
+    pub docs: Option<Documentation>,
     pub parent: Option<ModuleId>,
     pub children: Vec<(String, ModuleId)>,
     pub local_defs: Vec<LocalDefId>,

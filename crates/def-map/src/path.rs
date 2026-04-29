@@ -87,6 +87,10 @@ impl Path {
             && self.segments.len() == 1
             && matches!(self.segments.first(), Some(PathSegment::Name(name)) if name == ident)
     }
+
+    pub fn last_segment_label(&self) -> Option<String> {
+        last_segment_name(&self.segments)
+    }
 }
 
 impl fmt::Display for Path {

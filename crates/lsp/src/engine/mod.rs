@@ -70,6 +70,19 @@ impl EngineHandle {
         .await
     }
 
+    pub(crate) async fn hover(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> anyhow::Result<Option<ls_types::Hover>> {
+        self.request(|respond_to| EngineCommand::Hover {
+            path,
+            position,
+            respond_to,
+        })
+        .await
+    }
+
     pub(crate) async fn completion(
         &self,
         path: PathBuf,

@@ -3,8 +3,8 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    Analysis, CompletionApplicability, CompletionItem, DocumentSymbol, NavigationTarget, SymbolAt,
-    TypeHint, WorkspaceSymbol,
+    Analysis, CompletionApplicability, CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget,
+    SymbolAt, TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{
     BodyGenericArg, BodyIrDb, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyTy, ExprData,
@@ -95,6 +95,10 @@ impl AnalysisQuery {
 
     pub(super) fn complete(title: &'static str, marker: &'static str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::CompletionsAtDot)
+    }
+
+    pub(super) fn hover(title: &'static str, marker: &'static str) -> Self {
+        Self::new(title, marker, AnalysisQueryKind::Hover)
     }
 
     pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
@@ -212,6 +216,7 @@ enum AnalysisQueryKind {
     GotoTypeDefinition,
     TypeAt,
     CompletionsAtDot,
+    Hover,
 }
 
 struct AnalysisFixtureDb {
@@ -380,6 +385,9 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                         .completions_at_dot(target, file_id, offset),
                     &mut dump,
                 );
+            }
+            AnalysisQueryKind::Hover => {
+                self.render_hover(self.db.analysis().hover(target, file_id, offset), &mut dump);
             }
         }
 
@@ -605,6 +613,27 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     completion.kind, completion.label, completion.applicability
                 )
                 .expect("string writes should not fail");
+            }
+        }
+    }
+
+    fn render_hover(&self, hover: Option<HoverInfo>, dump: &mut String) {
+        let Some(hover) = hover else {
+            writeln!(dump, "\n- <none>").expect("string writes should not fail");
+            return;
+        };
+
+        writeln!(dump, "\n- kind: {}", hover.kind).expect("string writes should not fail");
+        if let Some(signature) = hover.signature {
+            writeln!(dump, "- signature: {signature}").expect("string writes should not fail");
+        }
+        if let Some(ty) = hover.ty {
+            writeln!(dump, "- type: {ty}").expect("string writes should not fail");
+        }
+        if let Some(docs) = hover.docs {
+            writeln!(dump, "- docs:").expect("string writes should not fail");
+            for line in docs.lines() {
+                writeln!(dump, "  {line}").expect("string writes should not fail");
             }
         }
     }

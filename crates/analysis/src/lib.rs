@@ -10,8 +10,11 @@ use rg_semantic_ir::SemanticIrDb;
 mod completion;
 mod cursor;
 mod data;
+mod entity;
 mod hints;
+mod hover;
 mod navigation;
+mod signature;
 mod symbol;
 mod symbols;
 mod ty;
@@ -21,8 +24,8 @@ mod type_render;
 mod tests;
 
 pub use self::data::{
-    CompletionApplicability, CompletionItem, DocumentSymbol, NavigationTarget, SymbolAt, TypeHint,
-    WorkspaceSymbol,
+    CompletionApplicability, CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, SymbolAt,
+    TypeHint, WorkspaceSymbol,
 };
 #[allow(unused_imports)]
 pub use self::data::{CompletionKind, CompletionTarget, NavigationTargetKind, SymbolKind};
@@ -90,6 +93,11 @@ impl<'a> Analysis<'a> {
         range: Option<rg_parse::TextSpan>,
     ) -> Vec<TypeHint> {
         hints::TypeHintCollector::new(self).type_hints(target, file_id, range)
+    }
+
+    /// Returns best-effort hover information for the symbol under a source offset.
+    pub fn hover(&self, target: TargetRef, file_id: FileId, offset: u32) -> Option<HoverInfo> {
+        hover::HoverResolver::new(self).hover(target, file_id, offset)
     }
 
     /// Returns field and method completion candidates for a receiver before a dot.

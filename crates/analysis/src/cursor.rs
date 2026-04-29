@@ -90,6 +90,12 @@ impl CursorScanner<'_, '_> {
                         span,
                     });
                 }
+                SemanticCursorCandidate::EnumVariant { variant, span } => {
+                    self.candidates.push(SymbolCandidate {
+                        symbol: SymbolAt::EnumVariant { variant, span },
+                        span,
+                    });
+                }
                 SemanticCursorCandidate::TypePath {
                     context,
                     path,

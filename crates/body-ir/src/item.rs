@@ -1,5 +1,5 @@
 use rg_item_tree::{
-    FieldItem, FieldKey, FieldList, FunctionItem, GenericParams, ParamKind, TypeRef,
+    Documentation, FieldItem, FieldKey, FieldList, FunctionItem, GenericParams, ParamKind, TypeRef,
 };
 
 use crate::{
@@ -15,6 +15,7 @@ pub struct BodyItemData {
     pub scope: ScopeId,
     pub kind: BodyItemKind,
     pub name: String,
+    pub docs: Option<Documentation>,
     pub generics: GenericParams,
     pub fields: FieldList,
 }
@@ -58,6 +59,7 @@ pub struct BodyFunctionData {
     pub name_source: BodySource,
     pub owner: BodyFunctionOwner,
     pub name: String,
+    pub docs: Option<Documentation>,
     pub declaration: FunctionItem,
 }
 

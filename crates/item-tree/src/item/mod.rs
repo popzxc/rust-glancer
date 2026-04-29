@@ -8,6 +8,7 @@ pub use self::{
         GenericParams, ImplItem, ParamItem, ParamKind, StaticItem, StructItem, TraitItem,
         TypeAliasItem, UnionItem, WherePredicate,
     },
+    docs::Documentation,
     import::{
         ExternCrateItem, ImportAlias, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
         UsePathSegmentKind,
@@ -19,6 +20,7 @@ pub use self::{
 };
 
 mod decl;
+mod docs;
 mod import;
 mod kind;
 mod module;
@@ -45,6 +47,8 @@ pub struct ItemNode {
     /// Source span of the declaration name, when the item has one.
     pub name_span: Option<Span>,
     pub visibility: VisibilityLevel,
+    /// User-facing documentation lowered from doc comments or `#[doc = "..."]`.
+    pub docs: Option<Documentation>,
     /// File where this item is declared.
     pub file_id: FileId,
     /// Source span of the declaration.
@@ -58,6 +62,7 @@ impl ItemNode {
         name: Option<String>,
         name_range: Option<TextRange>,
         visibility: VisibilityLevel,
+        docs: Option<Documentation>,
         text_range: TextRange,
         file_id: FileId,
         line_index: &LineIndex,
@@ -67,6 +72,7 @@ impl ItemNode {
             name,
             name_span: name_range.map(|range| Span::from_text_range(range, line_index)),
             visibility,
+            docs,
             file_id,
             span: Span::from_text_range(text_range, line_index),
         }

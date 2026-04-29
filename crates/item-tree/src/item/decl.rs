@@ -12,7 +12,9 @@ use ra_syntax::{
 
 use rg_parse::{LineIndex, Span};
 
-use super::{ItemTreeId, Mutability, TypeBound, TypeRef, VisibilityLevel, normalized_syntax};
+use super::{
+    Documentation, ItemTreeId, Mutability, TypeBound, TypeRef, VisibilityLevel, normalized_syntax,
+};
 
 /// Generic parameter data attached to an item declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -344,6 +346,7 @@ pub struct EnumVariantItem {
     pub name: String,
     pub span: Span,
     pub name_span: Span,
+    pub docs: Option<Documentation>,
     pub fields: FieldList,
 }
 
@@ -362,6 +365,7 @@ impl EnumVariantItem {
                 .unwrap_or_else(|| "<missing>".to_string()),
             span,
             name_span,
+            docs: Documentation::from_ast(&variant),
             fields: FieldList::from_ast(variant.field_list(), line_index),
         }
     }
@@ -402,6 +406,7 @@ pub struct FieldItem {
     pub visibility: VisibilityLevel,
     pub ty: TypeRef,
     pub span: Span,
+    pub docs: Option<Documentation>,
 }
 
 /// User-visible field identity before semantic ownership is known.
@@ -448,6 +453,7 @@ impl FieldItem {
                         .map(|ty| TypeRef::from_ast(ty, line_index))
                         .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
                     span: Span::from_text_range(span, line_index),
+                    docs: Documentation::from_ast(&field),
                 }
             })
             .collect()
@@ -465,6 +471,7 @@ impl FieldItem {
                     .map(|ty| TypeRef::from_ast(ty, line_index))
                     .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
                 span: Span::from_text_range(field.syntax().text_range(), line_index),
+                docs: Documentation::from_ast(&field),
             })
             .collect()
     }

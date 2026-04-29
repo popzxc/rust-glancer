@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 
 use rg_item_tree::{
-    ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef, ModuleSource,
-    Package as ItemTreePackage, UseImport, UseItem,
+    Documentation, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
+    ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem,
 };
 use rg_parse::{Package, Target};
 
@@ -136,23 +136,24 @@ impl<'db> TargetScopeCollector<'db> {
         target: &Target,
         root_file: rg_parse::FileId,
     ) -> anyhow::Result<TargetState> {
-        // Root modules are identified by the target; they do not have a textual name or parent.
-        let root_module = self.alloc_module(
-            None,
-            None,
-            None,
-            ModuleOrigin::Root {
-                file_id: target.root_file,
-            },
-        );
-        self.def_map.set_root_module(root_module);
-
         let root_file_tree = item_tree.file(root_file).with_context(|| {
             format!(
                 "while attempting to fetch root item tree for {:?}",
                 root_file
             )
         })?;
+        // Root modules are identified by the target; they do not have a textual name or parent.
+        let root_module = self.alloc_module(
+            None,
+            None,
+            None,
+            root_file_tree.docs.clone(),
+            ModuleOrigin::Root {
+                file_id: target.root_file,
+            },
+        );
+        self.def_map.set_root_module(root_module);
+
         self.collect_items(item_tree, root_module, root_file, &root_file_tree.top_level)
             .context("while attempting to collect root file items")?;
 
@@ -172,12 +173,14 @@ impl<'db> TargetScopeCollector<'db> {
         parent: Option<ModuleId>,
         name: Option<String>,
         name_span: Option<rg_parse::Span>,
+        docs: Option<rg_item_tree::Documentation>,
         origin: ModuleOrigin,
     ) -> ModuleId {
         let module_id = ModuleId(self.def_map.modules.len());
         self.def_map.modules.push(ModuleData {
             name,
             name_span,
+            docs,
             parent,
             children: Vec::new(),
             local_defs: Vec::new(),
@@ -212,7 +215,7 @@ impl<'db> TargetScopeCollector<'db> {
                     self.collect_extern_crate(module_id, item, extern_crate);
                 }
                 ItemKind::Module(module_item) => {
-                    self.collect_module(item_tree, module_id, item, &module_item.source)
+                    self.collect_module(item_tree, module_id, item, module_item)
                         .with_context(|| {
                             format!(
                                 "while attempting to collect module {}",
@@ -301,12 +304,13 @@ impl<'db> TargetScopeCollector<'db> {
         item_tree: &ItemTreePackage,
         parent_module: ModuleId,
         item: &ItemNode,
-        source: &ModuleSource,
+        module_item: &ModuleItem,
     ) -> anyhow::Result<()> {
         let Some(module_name) = item.name.clone() else {
             return Ok(());
         };
 
+        let source = &module_item.source;
         let origin = match source {
             ModuleSource::Inline { .. } => ModuleOrigin::Inline {
                 declaration_file: item.file_id,
@@ -318,10 +322,30 @@ impl<'db> TargetScopeCollector<'db> {
                 definition_file: *definition_file,
             },
         };
+
+        let inner_docs = match source {
+            ModuleSource::Inline { .. } => module_item.inner_docs.clone(),
+            ModuleSource::OutOfLine {
+                definition_file: Some(definition_file),
+            } => item_tree
+                .file(*definition_file)
+                .with_context(|| {
+                    format!(
+                        "while attempting to fetch out-of-line module docs for {:?}",
+                        definition_file
+                    )
+                })?
+                .docs
+                .clone(),
+            ModuleSource::OutOfLine {
+                definition_file: None,
+            } => None,
+        };
         let child_module = self.alloc_module(
             Some(parent_module),
             Some(module_name.clone()),
             item.name_span,
+            Documentation::concat(item.docs.clone(), inner_docs),
             origin,
         );
         self.link_child_module(

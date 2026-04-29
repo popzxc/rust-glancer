@@ -13,7 +13,6 @@ mod tests;
 use anyhow::Context as _;
 
 use rg_def_map::{DefMapDb, LocalDefRef, ModuleRef, PackageSlot, Path, TargetRef};
-use rg_item_tree::FieldKey;
 use rg_parse::TargetId;
 
 pub use self::{
@@ -31,6 +30,10 @@ pub use self::{
     resolution::{SemanticTypePathResolution, TypePathContext},
     stats::SemanticIrStats,
     target::TargetIr,
+};
+pub use rg_item_tree::{
+    ConstItem, Documentation, FieldItem, FieldKey, FunctionItem, GenericParams, Mutability,
+    ParamItem, TypeAliasItem, TypeBound, TypeRef, VisibilityLevel, WherePredicate,
 };
 
 /// Semantic item graph for all analyzed packages and targets.

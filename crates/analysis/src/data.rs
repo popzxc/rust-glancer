@@ -124,6 +124,15 @@ pub struct TypeHint {
     pub label: String,
 }
 
+/// Markdown-ready hover payload independent from LSP transport types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HoverInfo {
+    pub kind: SymbolKind,
+    pub signature: Option<String>,
+    pub ty: Option<String>,
+    pub docs: Option<String>,
+}
+
 /// LSP-shaped symbol category without depending on LSP transport types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 pub enum SymbolKind {
@@ -155,6 +164,8 @@ pub enum SymbolKind {
     TypeAlias,
     #[display("union")]
     Union,
+    #[display("variable")]
+    Variable,
 }
 
 impl SymbolKind {

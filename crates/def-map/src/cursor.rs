@@ -5,7 +5,7 @@
 
 use rg_parse::{FileId, Span};
 
-use crate::{DefId, DefMapDb, ModuleRef, Path, TargetRef};
+use crate::{DefId, DefMapDb, ModuleOrigin, ModuleRef, Path, TargetRef};
 
 /// One def-map source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,9 +29,43 @@ impl DefMapDb {
         offset: u32,
     ) -> Vec<DefMapCursorCandidate> {
         let mut candidates = Vec::new();
+        self.push_module_candidates(target, file_id, offset, &mut candidates);
         self.push_local_def_candidates(target, file_id, offset, &mut candidates);
         self.push_import_candidates(target, file_id, offset, &mut candidates);
         candidates
+    }
+
+    fn push_module_candidates(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+        candidates: &mut Vec<DefMapCursorCandidate>,
+    ) {
+        for (module_ref, module) in self.modules(target) {
+            let declaration_file = match module.origin {
+                ModuleOrigin::Root { .. } => continue,
+                ModuleOrigin::Inline {
+                    declaration_file, ..
+                }
+                | ModuleOrigin::OutOfLine {
+                    declaration_file, ..
+                } => declaration_file,
+            };
+            if declaration_file != file_id {
+                continue;
+            }
+
+            let Some(span) = module.name_span else {
+                continue;
+            };
+            if span.touches(offset) {
+                candidates.push(DefMapCursorCandidate::Def {
+                    def: DefId::Module(module_ref),
+                    span,
+                });
+            }
+        }
     }
 
     fn push_local_def_candidates(

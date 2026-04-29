@@ -78,5 +78,6 @@ pub(crate) fn symbol_kind(kind: SymbolKind) -> LspSymbolKind {
         SymbolKind::Struct | SymbolKind::Union => LspSymbolKind::STRUCT,
         SymbolKind::Trait => LspSymbolKind::INTERFACE,
         SymbolKind::TypeAlias => LspSymbolKind::CLASS,
+        SymbolKind::Variable => LspSymbolKind::VARIABLE,
     }
 }

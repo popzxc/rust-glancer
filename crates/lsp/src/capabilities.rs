@@ -15,6 +15,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         )),
         definition_provider: Some(OneOf::Left(true)),
         type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(false),
             trigger_characters: Some(vec![".".to_string()]),
@@ -59,6 +60,12 @@ mod tests {
     fn advertises_static_inlay_hint_support() {
         let capabilities = server_capabilities();
         assert!(capabilities.inlay_hint_provider.is_some());
+    }
+
+    #[test]
+    fn advertises_hover_support() {
+        let capabilities = server_capabilities();
+        assert!(capabilities.hover_provider.is_some());
     }
 
     #[test]

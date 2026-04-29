@@ -11,7 +11,8 @@ use ra_syntax::{
 
 use rg_def_map::{ModuleRef, PackageSlot, Path, PathSegment, TargetRef};
 use rg_item_tree::{
-    FieldKey, FieldList, FunctionItem, GenericParams, ImplItem, ItemTreeDb, ItemTreeRef, TypeRef,
+    Documentation, FieldKey, FieldList, FunctionItem, GenericParams, ImplItem, ItemTreeDb,
+    ItemTreeRef, TypeRef,
 };
 use rg_parse::{FileId, LineIndex, ParseDb, Span, TargetId};
 use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitRef};
@@ -361,6 +362,7 @@ impl<'a> FunctionBodyLowering<'a> {
             scope,
             kind: BodyItemKind::Struct,
             name: name.text().to_string(),
+            docs: Documentation::from_ast(&item),
             generics: GenericParams::from_ast(&item, self.line_index),
             fields,
         }))
@@ -404,6 +406,7 @@ impl<'a> FunctionBodyLowering<'a> {
             name_source: self.source(name.syntax()),
             owner: BodyFunctionOwner::LocalImpl(impl_id),
             name: name.text().to_string(),
+            docs: Documentation::from_ast(&function),
             declaration: FunctionItem::from_ast(&function, self.line_index),
         }))
     }

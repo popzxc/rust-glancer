@@ -14,7 +14,7 @@ use tower_lsp_server::ls_types;
 
 use crate::{
     engine::command::EngineCommand,
-    proto::{completion, inlay_hint, navigation, position, symbols},
+    proto::{completion, hover, inlay_hint, navigation, position, symbols},
 };
 
 #[derive(Debug, Default)]
@@ -74,6 +74,19 @@ impl EngineWorker {
                         "engine command started: goto_type_definition"
                     );
                     let _ = respond_to.send(self.goto_type_definition(path, position));
+                }
+                EngineCommand::Hover {
+                    path,
+                    position,
+                    respond_to,
+                } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        line = position.line,
+                        character = position.character,
+                        "engine command started: hover"
+                    );
+                    let _ = respond_to.send(self.hover(path, position));
                 }
                 EngineCommand::Completion {
                     path,
@@ -268,6 +281,43 @@ impl EngineWorker {
         );
 
         Ok(completions)
+    }
+
+    fn hover(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> anyhow::Result<Option<ls_types::Hover>> {
+        let started = Instant::now();
+        let snapshot = self.snapshot()?;
+
+        for (context, target, offset) in self.target_offsets(snapshot, &path, position)? {
+            let Some(info) = snapshot.analysis().hover(target, context.file, offset) else {
+                continue;
+            };
+            let Some(hover) = hover::hover(info) else {
+                continue;
+            };
+            tracing::debug!(
+                path = %path.display(),
+                line = position.line,
+                character = position.character,
+                has_hover = true,
+                elapsed_ms = started.elapsed().as_millis(),
+                "hover query finished"
+            );
+            return Ok(Some(hover));
+        }
+
+        tracing::debug!(
+            path = %path.display(),
+            line = position.line,
+            character = position.character,
+            has_hover = false,
+            elapsed_ms = started.elapsed().as_millis(),
+            "hover query finished"
+        );
+        Ok(None)
     }
 
     fn document_symbol(&self, path: PathBuf) -> anyhow::Result<Vec<ls_types::DocumentSymbol>> {

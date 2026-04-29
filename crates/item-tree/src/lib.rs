@@ -8,9 +8,9 @@ use anyhow::Context as _;
 use rg_parse::{FileId, ParseDb, TargetId};
 
 pub use self::item::{
-    ConstItem, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldKey, FieldList,
-    FunctionItem, GenericArg, GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag,
-    ItemTreeId, ItemTreeRef, ModuleItem, ModuleSource, Mutability, ParamItem, ParamKind,
+    ConstItem, Documentation, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldKey,
+    FieldList, FunctionItem, GenericArg, GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode,
+    ItemTag, ItemTreeId, ItemTreeRef, ModuleItem, ModuleSource, Mutability, ParamItem, ParamKind,
     StaticItem, StructItem, TraitItem, TypeAliasItem, TypeBound, TypePath, TypePathSegment,
     TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
     UsePathSegmentKind, VisibilityLevel, WherePredicate,
@@ -117,6 +117,7 @@ impl Package {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileTree {
     pub file: FileId,
+    pub docs: Option<Documentation>,
     pub top_level: Vec<ItemTreeId>,
     pub items: Vec<ItemNode>,
 }

@@ -26,6 +26,11 @@ pub(super) enum EngineCommand {
         position: ls_types::Position,
         respond_to: EngineResponse<Vec<ls_types::Location>>,
     },
+    Hover {
+        path: PathBuf,
+        position: ls_types::Position,
+        respond_to: EngineResponse<Option<ls_types::Hover>>,
+    },
     Completion {
         path: PathBuf,
         position: ls_types::Position,

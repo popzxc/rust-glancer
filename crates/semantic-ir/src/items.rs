@@ -1,7 +1,7 @@
 use rg_def_map::{LocalDefRef, LocalImplRef, ModuleRef};
 use rg_item_tree::{
-    ConstItem, EnumVariantItem, FieldItem, FieldList, FunctionItem, GenericParams, ItemTreeRef,
-    Mutability, ParamKind, TypeAliasItem, TypeBound, TypeRef, VisibilityLevel,
+    ConstItem, Documentation, EnumVariantItem, FieldItem, FieldList, FunctionItem, GenericParams,
+    ItemTreeRef, Mutability, ParamKind, TypeAliasItem, TypeBound, TypeRef, VisibilityLevel,
 };
 use rg_parse::{FileId, Span};
 
@@ -149,6 +149,7 @@ pub struct StructData {
     pub owner: ModuleRef,
     pub name: String,
     pub visibility: VisibilityLevel,
+    pub docs: Option<Documentation>,
     pub generics: GenericParams,
     pub fields: FieldList,
 }
@@ -161,6 +162,7 @@ pub struct UnionData {
     pub owner: ModuleRef,
     pub name: String,
     pub visibility: VisibilityLevel,
+    pub docs: Option<Documentation>,
     pub generics: GenericParams,
     pub fields: Vec<FieldItem>,
 }
@@ -173,6 +175,7 @@ pub struct EnumData {
     pub owner: ModuleRef,
     pub name: String,
     pub visibility: VisibilityLevel,
+    pub docs: Option<Documentation>,
     pub generics: GenericParams,
     pub variants: Vec<EnumVariantItem>,
 }
@@ -185,6 +188,7 @@ pub struct TraitData {
     pub owner: ModuleRef,
     pub name: String,
     pub visibility: VisibilityLevel,
+    pub docs: Option<Documentation>,
     pub generics: GenericParams,
     pub super_traits: Vec<TypeBound>,
     pub items: Vec<AssocItemId>,
@@ -219,6 +223,7 @@ pub struct FunctionData {
     pub owner: ItemOwner,
     pub name: String,
     pub visibility: VisibilityLevel,
+    pub docs: Option<Documentation>,
     pub declaration: FunctionItem,
 }
 
@@ -241,6 +246,7 @@ pub struct TypeAliasData {
     pub owner: ItemOwner,
     pub name: String,
     pub visibility: VisibilityLevel,
+    pub docs: Option<Documentation>,
     pub declaration: TypeAliasItem,
 }
 
@@ -254,6 +260,7 @@ pub struct ConstData {
     pub owner: ItemOwner,
     pub name: String,
     pub visibility: VisibilityLevel,
+    pub docs: Option<Documentation>,
     pub declaration: ConstItem,
 }
 
@@ -267,6 +274,7 @@ pub struct StaticData {
     pub owner: ModuleRef,
     pub name: String,
     pub visibility: VisibilityLevel,
+    pub docs: Option<Documentation>,
     pub ty: Option<TypeRef>,
     pub mutability: Mutability,
 }

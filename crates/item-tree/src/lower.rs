@@ -12,15 +12,15 @@ use std::{
 use anyhow::Context as _;
 use ra_syntax::{
     AstNode as _,
-    ast::{self, HasModuleItem, HasName, HasVisibility},
+    ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
 
 use rg_parse::{FileId, LineIndex, Package as ParsePackage};
 
 use super::{
-    ConstItem, EnumItem, ExternCrateItem, FileTree, FunctionItem, ImplItem, ItemKind, ItemNode,
-    ItemTreeId, ModuleItem, ModuleSource, Package, StaticItem, StructItem, TargetRoot, TraitItem,
-    TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
+    ConstItem, Documentation, EnumItem, ExternCrateItem, FileTree, FunctionItem, ImplItem,
+    ItemKind, ItemNode, ItemTreeId, ModuleItem, ModuleSource, Package, StaticItem, StructItem,
+    TargetRoot, TraitItem, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
@@ -84,7 +84,7 @@ impl<'db> PackageLowering<'db> {
             return Ok(());
         }
 
-        let (items, line_index, module_file_context) = {
+        let (items, docs, line_index, module_file_context) = {
             let parsed_file = self
                 .parse_package
                 .parsed_file(current_file_id)
@@ -96,6 +96,7 @@ impl<'db> PackageLowering<'db> {
                 })?;
             (
                 parsed_file.syntax().items().collect::<Vec<_>>(),
+                Documentation::inner_from_ast(parsed_file.syntax()),
                 parsed_file.line_index().clone(),
                 ModuleFileContext::from_definition_file(parsed_file.path()),
             )
@@ -113,6 +114,7 @@ impl<'db> PackageLowering<'db> {
 
         self.file_trees[current_file_id.0] = Some(FileTree {
             file: current_file_id,
+            docs,
             top_level,
             items: builder.items,
         });
@@ -171,19 +173,19 @@ impl<'db> PackageLowering<'db> {
                 VisibilityLevel::Private,
                 item.syntax().text_range(),
             )),
-            ast::Item::Const(item) => Some(builder.alloc_item(
+            ast::Item::Const(item) => Some(builder.alloc_documented_item(
                 ItemKind::Const(Box::new(ConstItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
-            ast::Item::Enum(item) => Some(builder.alloc_item(
+            ast::Item::Enum(item) => Some(builder.alloc_documented_item(
                 ItemKind::Enum(Box::new(EnumItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
             ast::Item::ExternBlock(item) => Some(builder.alloc_item(
                 ItemKind::ExternBlock,
@@ -193,7 +195,7 @@ impl<'db> PackageLowering<'db> {
                 item.syntax().text_range(),
             )),
             ast::Item::ExternCrate(item) => Some(
-                builder.alloc_item(
+                builder.alloc_documented_item(
                     ItemKind::ExternCrate(Box::new(ExternCrateItem::from_ast(
                         &item,
                         builder.line_index,
@@ -203,42 +205,42 @@ impl<'db> PackageLowering<'db> {
                     item.name_ref()
                         .map(|name_ref| name_ref.syntax().text_range()),
                     VisibilityLevel::from_ast(item.visibility()),
-                    item.syntax().text_range(),
+                    &item,
                 ),
             ),
-            ast::Item::Fn(item) => Some(builder.alloc_item(
+            ast::Item::Fn(item) => Some(builder.alloc_documented_item(
                 ItemKind::Function(Box::new(FunctionItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
             ast::Item::Impl(item) => {
                 let impl_item = self
                     .lower_impl_item(builder, &item)
                     .context("while attempting to lower impl declaration")?;
-                Some(builder.alloc_item(
+                Some(builder.alloc_documented_item(
                     ItemKind::Impl(Box::new(impl_item)),
                     None,
                     None,
                     VisibilityLevel::from_ast(item.visibility()),
-                    item.syntax().text_range(),
+                    &item,
                 ))
             }
             ast::Item::MacroCall(_) => None,
-            ast::Item::MacroDef(item) => Some(builder.alloc_item(
+            ast::Item::MacroDef(item) => Some(builder.alloc_documented_item(
                 ItemKind::MacroDefinition,
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
-            ast::Item::MacroRules(item) => Some(builder.alloc_item(
+            ast::Item::MacroRules(item) => Some(builder.alloc_documented_item(
                 ItemKind::MacroDefinition,
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
             ast::Item::Module(item) => {
                 let module_name = item.name().map(|name| name.text().to_string());
@@ -251,60 +253,60 @@ impl<'db> PackageLowering<'db> {
                             module_name.as_deref().unwrap_or("<unnamed>")
                         )
                     })?;
-                Some(builder.alloc_item(
+                Some(builder.alloc_documented_item(
                     ItemKind::Module(Box::new(module_item)),
                     module_name,
                     module_name_range,
                     VisibilityLevel::from_ast(item.visibility()),
-                    item.syntax().text_range(),
+                    &item,
                 ))
             }
-            ast::Item::Static(item) => Some(builder.alloc_item(
+            ast::Item::Static(item) => Some(builder.alloc_documented_item(
                 ItemKind::Static(Box::new(StaticItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
-            ast::Item::Struct(item) => Some(builder.alloc_item(
+            ast::Item::Struct(item) => Some(builder.alloc_documented_item(
                 ItemKind::Struct(Box::new(StructItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
             ast::Item::Trait(item) => {
                 let trait_item = self
                     .lower_trait_item(builder, &item)
                     .context("while attempting to lower trait declaration")?;
-                Some(builder.alloc_item(
+                Some(builder.alloc_documented_item(
                     ItemKind::Trait(Box::new(trait_item)),
                     item.name().map(|name| name.text().to_string()),
                     item.name().map(|name| name.syntax().text_range()),
                     VisibilityLevel::from_ast(item.visibility()),
-                    item.syntax().text_range(),
+                    &item,
                 ))
             }
-            ast::Item::TypeAlias(item) => Some(builder.alloc_item(
+            ast::Item::TypeAlias(item) => Some(builder.alloc_documented_item(
                 ItemKind::TypeAlias(Box::new(TypeAliasItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
-            ast::Item::Union(item) => Some(builder.alloc_item(
+            ast::Item::Union(item) => Some(builder.alloc_documented_item(
                 ItemKind::Union(Box::new(UnionItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
-            ast::Item::Use(item) => Some(builder.alloc_item(
+            ast::Item::Use(item) => Some(builder.alloc_documented_item(
                 ItemKind::Use(Box::new(UseItem::from_ast(&item, builder.line_index))),
                 normalized_use_name(&item),
                 None,
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
         };
 
@@ -330,6 +332,7 @@ impl<'db> PackageLowering<'db> {
                 .collect_items(builder, inline_items, &inline_module_context)
                 .context("while attempting to collect inline module items")?;
             return Ok(ModuleItem {
+                inner_docs: Documentation::inner_from_ast(item),
                 source: ModuleSource::Inline { items },
             });
         }
@@ -337,6 +340,7 @@ impl<'db> PackageLowering<'db> {
         // A nameless out-of-line module cannot be resolved to a file path.
         let Some(module_name) = item.name().map(|name| name.text().to_string()) else {
             return Ok(ModuleItem {
+                inner_docs: None,
                 source: ModuleSource::OutOfLine {
                     definition_file: None,
                 },
@@ -345,6 +349,7 @@ impl<'db> PackageLowering<'db> {
         // TODO: support `#[path = "..."]` and other advanced module-resolution rules when needed.
         let Some(module_file_path) = module_file_context.resolve_child_file(&module_name) else {
             return Ok(ModuleItem {
+                inner_docs: None,
                 source: ModuleSource::OutOfLine {
                     definition_file: None,
                 },
@@ -370,6 +375,7 @@ impl<'db> PackageLowering<'db> {
         })?;
 
         Ok(ModuleItem {
+            inner_docs: None,
             source: ModuleSource::OutOfLine {
                 definition_file: Some(module_file_id),
             },
@@ -429,27 +435,27 @@ impl<'db> PackageLowering<'db> {
         item: ast::AssocItem,
     ) -> anyhow::Result<Option<ItemTreeId>> {
         let item_id = match item {
-            ast::AssocItem::Const(item) => Some(builder.alloc_item(
+            ast::AssocItem::Const(item) => Some(builder.alloc_documented_item(
                 ItemKind::Const(Box::new(ConstItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
-            ast::AssocItem::Fn(item) => Some(builder.alloc_item(
+            ast::AssocItem::Fn(item) => Some(builder.alloc_documented_item(
                 ItemKind::Function(Box::new(FunctionItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
             ast::AssocItem::MacroCall(_) => None,
-            ast::AssocItem::TypeAlias(item) => Some(builder.alloc_item(
+            ast::AssocItem::TypeAlias(item) => Some(builder.alloc_documented_item(
                 ItemKind::TypeAlias(Box::new(TypeAliasItem::from_ast(&item, builder.line_index))),
                 item.name().map(|name| name.text().to_string()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
-                item.syntax().text_range(),
+                &item,
             )),
         };
 
@@ -481,12 +487,46 @@ impl<'a> FileTreeBuilder<'a> {
         visibility: VisibilityLevel,
         text_range: ra_syntax::TextRange,
     ) -> ItemTreeId {
+        self.alloc_item_with_docs(kind, name, name_range, visibility, None, text_range)
+    }
+
+    fn alloc_documented_item<T>(
+        &mut self,
+        kind: ItemKind,
+        name: Option<String>,
+        name_range: Option<ra_syntax::TextRange>,
+        visibility: VisibilityLevel,
+        item: &T,
+    ) -> ItemTreeId
+    where
+        T: HasDocComments,
+    {
+        self.alloc_item_with_docs(
+            kind,
+            name,
+            name_range,
+            visibility,
+            Documentation::from_ast(item),
+            item.syntax().text_range(),
+        )
+    }
+
+    fn alloc_item_with_docs(
+        &mut self,
+        kind: ItemKind,
+        name: Option<String>,
+        name_range: Option<ra_syntax::TextRange>,
+        visibility: VisibilityLevel,
+        docs: Option<Documentation>,
+        text_range: ra_syntax::TextRange,
+    ) -> ItemTreeId {
         let item_id = ItemTreeId(self.items.len());
         self.items.push(ItemNode::new(
             kind,
             name,
             name_range,
             visibility,
+            docs,
             text_range,
             self.current_file_id,
             self.line_index,

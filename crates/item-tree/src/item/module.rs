@@ -1,10 +1,11 @@
 use rg_parse::FileId;
 
-use super::ItemTreeId;
+use super::{Documentation, ItemTreeId};
 
 /// Syntactic module facts attached to `ItemKind::Module`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleItem {
+    pub inner_docs: Option<Documentation>,
     pub source: ModuleSource,
 }
 
