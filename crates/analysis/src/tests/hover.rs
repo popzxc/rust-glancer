@@ -42,29 +42,43 @@ fn hovers_over_documented_items_and_usages() {
         ],
         expect![[r#"
             hover function
-            - kind: fn
-            - signature: pub fn make_user() -> User
-            - type: User
-            - docs:
-              Builds a user.
+            - range: 16:16-16:25
+            - block:
+              kind: fn
+              path: analysis_hover::make_user
+              signature:
+                pub fn make_user() -> User
+              docs:
+                Builds a user.
 
             hover field
-            - kind: field
-            - signature: pub name: Profile
-            - type: Profile
-            - docs:
-              Display name shown in the UI.
+            - range: 17:17-17:26
+            - block:
+              kind: field
+              path: analysis_hover::User
+              signature:
+                pub name: Profile
+              docs:
+                Display name shown in the UI.
 
             hover type
-            - kind: struct
-            - signature: pub struct User
-            - docs:
-              User account stored by the service.
+            - range: 18:17-18:21
+            - block:
+              kind: struct
+              path: analysis_hover::User
+              signature:
+                pub struct User {
+                    pub name: Profile,
+                }
+              docs:
+                User account stored by the service.
 
             hover local
-            - kind: variable
-            - signature: let local: Profile
-            - type: Profile
+            - range: 19:9-19:14
+            - block:
+              kind: variable
+              signature:
+                let local: Profile
         "#]],
     );
 }
@@ -115,36 +129,53 @@ fn hovers_over_enum_variants_and_body_local_items() {
         ],
         expect![[r#"
             hover body-local method
-            - kind: method
-            - signature: fn id(&self) -> Event
-            - type: Event
-            - docs:
-              Returns the request id.
+            - range: 21:15-21:27
+            - block:
+              kind: method
+              signature:
+                fn id(&self) -> Event
+              docs:
+                Returns the request id.
 
             hover body-local field
-            - kind: field
-            - signature: id: Event
-            - type: Event
-            - docs:
-              Request identifier.
+            - range: 22:18-22:28
+            - block:
+              kind: field
+              signature:
+                id: Event
+              docs:
+                Request identifier.
 
             hover enum variant declaration
-            - kind: variant
-            - signature: variant Event::Started
-            - docs:
-              Event has started.
+            - range: 3:5-3:12
+            - block:
+              kind: variant
+              path: analysis_hover_locals::Event::Started
+              signature:
+                Started
+              docs:
+                Event has started.
 
             hover enum variant
-            - kind: variant
-            - signature: variant Event::Started
-            - docs:
-              Event has started.
+            - range: 23:25-23:32
+            - block:
+              kind: variant
+              path: analysis_hover_locals::Event::Started
+              signature:
+                Started
+              docs:
+                Event has started.
 
             hover body-local type
-            - kind: struct
-            - signature: struct Request
-            - docs:
-              Request scoped to this function.
+            - range: 24:17-24:24
+            - block:
+              kind: struct
+              signature:
+                struct Request {
+                    id: Event,
+                }
+              docs:
+                Request scoped to this function.
         "#]],
     );
 }
@@ -178,17 +209,25 @@ fn hovers_over_documented_module_declarations() {
         ],
         expect![[r#"
             hover out-of-line module
-            - kind: module
-            - signature: mod api
-            - docs:
-              Public API surface.
+            - range: 1:9-1:12
+            - block:
+              kind: module
+              path: analysis_hover_modules::api
+              signature:
+                mod api
+              docs:
+                Public API surface.
 
             hover inline module
-            - kind: module
-            - signature: mod helpers
-            - docs:
-              Inline helpers.
-              Inline helper internals.
+            - range: 4:9-4:16
+            - block:
+              kind: module
+              path: analysis_hover_modules::helpers
+              signature:
+                mod helpers
+              docs:
+                Inline helpers.
+                Inline helper internals.
         "#]],
     );
 }
@@ -233,16 +272,91 @@ pub fn use_roots(_: cra$crate_root_hover$te::Api, _: de$dep_root_hover$p::Thing)
         ],
         expect![[r#"
             hover crate root path
-            - kind: module
-            - signature: mod crate
-            - docs:
-              Application crate docs.
+            - range: 4:21-4:26
+            - block:
+              kind: module
+              path: app
+              signature:
+                mod crate
+              docs:
+                Application crate docs.
 
             hover dependency root path
-            - kind: module
-            - signature: mod dep
-            - docs:
-              Dependency crate docs.
+            - range: 4:36-4:39
+            - block:
+              kind: module
+              path: dep
+              signature:
+                mod dep
+              docs:
+                Dependency crate docs.
+        "#]],
+    );
+}
+
+#[test]
+fn hovers_with_bounded_item_previews() {
+    check_analysis_queries(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "analysis_hover_previews"
+        version = "0.0.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct Pa$struct_preview$cket {
+            pub first: u8,
+            pub second: u8,
+            pub third: u8,
+            pub fourth: u8,
+            pub fifth: u8,
+            pub sixth: u8,
+        }
+
+        pub enum Ev$enum_preview$ent {
+            Created { id: u64, packet: Packet },
+            Deleted(Packet),
+            Ping,
+            Pong,
+            Ack,
+            Nack,
+        }
+        "#,
+        &[
+            AnalysisQuery::hover("hover struct preview", "struct_preview"),
+            AnalysisQuery::hover("hover enum preview", "enum_preview"),
+        ],
+        expect![[r#"
+            hover struct preview
+            - range: 1:12-1:18
+            - block:
+              kind: struct
+              path: analysis_hover_previews::Packet
+              signature:
+                pub struct Packet {
+                    pub first: u8,
+                    pub second: u8,
+                    pub third: u8,
+                    pub fourth: u8,
+                    pub fifth: u8,
+                    ...,
+                }
+
+            hover enum preview
+            - range: 10:10-10:15
+            - block:
+              kind: enum
+              path: analysis_hover_previews::Event
+              signature:
+                pub enum Event {
+                    Created { id: u64, packet: Packet },
+                    Deleted(Packet),
+                    Ping,
+                    Pong,
+                    Ack,
+                    ...,
+                }
         "#]],
     );
 }

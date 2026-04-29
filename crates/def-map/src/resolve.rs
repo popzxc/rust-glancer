@@ -163,7 +163,13 @@ fn finalize_and_freeze(
 
     Ok(target_states
         .iter()
-        .map(|package_states| super::Package {
+        .zip(packages)
+        .map(|(package_states, package)| super::Package {
+            name: package.package_name().to_string(),
+            target_names: package_states
+                .iter()
+                .map(|state| state.target_name.clone())
+                .collect(),
             targets: package_states
                 .iter()
                 .map(freeze_target_state)
@@ -200,15 +206,21 @@ fn frozen_target_states(old: &DefMapDb) -> Vec<Vec<TargetState>> {
                 .iter()
                 .enumerate()
                 .map(|(target_idx, def_map)| {
+                    let target_id = rg_parse::TargetId(target_idx);
                     let mut env_def_map = def_map.clone();
                     env_def_map.imports.clear();
 
                     TargetState {
                         target: TargetRef {
                             package: PackageSlot(package_idx),
-                            target: rg_parse::TargetId(target_idx),
+                            target: target_id,
                         },
-                        target_name: format!("package {package_idx} target {target_idx}"),
+                        target_name: package
+                            .target_name(target_id)
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| {
+                                format!("package {package_idx} target {target_idx}")
+                            }),
                         base_scopes: def_map
                             .modules
                             .iter()

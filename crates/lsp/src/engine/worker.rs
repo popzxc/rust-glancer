@@ -295,7 +295,13 @@ impl EngineWorker {
             let Some(info) = snapshot.analysis().hover(target, context.file, offset) else {
                 continue;
             };
-            let Some(hover) = hover::hover(info) else {
+            let Some(package) = snapshot.parse_db().package(context.package.0) else {
+                continue;
+            };
+            let Some(file) = package.parsed_file(context.file) else {
+                continue;
+            };
+            let Some(hover) = hover::hover(info, file.line_index()) else {
                 continue;
             };
             tracing::debug!(

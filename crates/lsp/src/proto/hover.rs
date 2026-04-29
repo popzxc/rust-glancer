@@ -1,14 +1,18 @@
 use rg_analysis::HoverInfo;
+use rg_parse::LineIndex;
 use tower_lsp_server::ls_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 
-pub(crate) fn hover(info: HoverInfo) -> Option<Hover> {
+use crate::proto::position;
+
+pub(crate) fn hover(info: HoverInfo, line_index: &LineIndex) -> Option<Hover> {
+    let range = info.range.map(|span| position::range(line_index, span));
     let value = HoverMarkdown::from_info(info).finish()?;
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
             value,
         }),
-        range: None,
+        range,
     })
 }
 
@@ -18,48 +22,65 @@ struct HoverMarkdown {
 
 impl HoverMarkdown {
     fn from_info(info: HoverInfo) -> Self {
-        let mut sections = Vec::new();
+        let sections = info
+            .blocks
+            .into_iter()
+            .filter_map(|block| {
+                let mut block_sections = Vec::new();
 
-        if let Some(signature) = info.signature {
-            sections.push(format!("```rust\n{signature}\n```"));
-        } else if let Some(ty) = info.ty {
-            sections.push(format!("```rust\n{ty}\n```"));
-        }
+                if let Some(path) = block.path {
+                    block_sections.push(format!("```rust\n{path}\n```"));
+                }
 
-        if let Some(docs) = info.docs {
-            let docs = docs.trim();
-            if !docs.is_empty() {
-                sections.push(docs.to_string());
-            }
-        }
+                if let Some(signature) = block.signature {
+                    block_sections.push(format!("```rust\n{signature}\n```"));
+                }
+                if let Some(ty) = block.ty {
+                    block_sections.push(format!("```text\nType: {ty}\n```"));
+                }
+
+                if let Some(docs) = block.docs {
+                    let docs = docs.trim();
+                    if !docs.is_empty() {
+                        block_sections.push(docs.to_string());
+                    }
+                }
+
+                (!block_sections.is_empty()).then(|| block_sections.join("\n\n"))
+            })
+            .collect();
 
         Self { sections }
     }
 
     fn finish(self) -> Option<String> {
-        (!self.sections.is_empty()).then(|| self.sections.join("\n\n"))
+        (!self.sections.is_empty()).then(|| self.sections.join("\n\n---\n\n"))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rg_analysis::{HoverInfo, SymbolKind};
+    use rg_analysis::{HoverBlock, HoverInfo, SymbolKind};
 
     use super::HoverMarkdown;
 
     #[test]
     fn renders_signature_and_docs_as_markdown() {
         let markdown = HoverMarkdown::from_info(HoverInfo {
-            kind: SymbolKind::Struct,
-            signature: Some("pub struct User".to_string()),
-            ty: None,
-            docs: Some("User account.".to_string()),
+            range: None,
+            blocks: vec![HoverBlock {
+                kind: SymbolKind::Struct,
+                path: Some("app::User".to_string()),
+                signature: Some("pub struct User".to_string()),
+                ty: None,
+                docs: Some("User account.".to_string()),
+            }],
         })
         .finish();
 
         assert_eq!(
             markdown.as_deref(),
-            Some("```rust\npub struct User\n```\n\nUser account.")
+            Some("```rust\napp::User\n```\n\n```rust\npub struct User\n```\n\nUser account.")
         );
     }
 }

@@ -240,10 +240,22 @@ pub struct DefMapStats {
 /// Def maps for all targets inside one parsed package.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Package {
+    name: String,
+    target_names: Vec<String>,
     targets: Vec<DefMap>,
 }
 
 impl Package {
+    /// Returns the Cargo package name this def-map package belongs to.
+    pub fn package_name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the crate name for one target, if that target exists.
+    pub fn target_name(&self, target_id: TargetId) -> Option<&str> {
+        self.target_names.get(target_id.0).map(String::as_str)
+    }
+
     /// Returns all target def maps in target-id order.
     pub fn targets(&self) -> &[DefMap] {
         &self.targets

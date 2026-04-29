@@ -623,17 +623,32 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             return;
         };
 
-        writeln!(dump, "\n- kind: {}", hover.kind).expect("string writes should not fail");
-        if let Some(signature) = hover.signature {
-            writeln!(dump, "- signature: {signature}").expect("string writes should not fail");
-        }
-        if let Some(ty) = hover.ty {
-            writeln!(dump, "- type: {ty}").expect("string writes should not fail");
-        }
-        if let Some(docs) = hover.docs {
-            writeln!(dump, "- docs:").expect("string writes should not fail");
-            for line in docs.lines() {
-                writeln!(dump, "  {line}").expect("string writes should not fail");
+        writeln!(
+            dump,
+            "\n- range: {}",
+            self.render_optional_span(hover.range)
+        )
+        .expect("string writes should not fail");
+        for block in hover.blocks {
+            writeln!(dump, "- block:").expect("string writes should not fail");
+            writeln!(dump, "  kind: {}", block.kind).expect("string writes should not fail");
+            if let Some(path) = block.path {
+                writeln!(dump, "  path: {path}").expect("string writes should not fail");
+            }
+            if let Some(signature) = block.signature {
+                writeln!(dump, "  signature:").expect("string writes should not fail");
+                for line in signature.lines() {
+                    writeln!(dump, "    {line}").expect("string writes should not fail");
+                }
+            }
+            if let Some(ty) = block.ty {
+                writeln!(dump, "  type: {ty}").expect("string writes should not fail");
+            }
+            if let Some(docs) = block.docs {
+                writeln!(dump, "  docs:").expect("string writes should not fail");
+                for line in docs.lines() {
+                    writeln!(dump, "    {line}").expect("string writes should not fail");
+                }
             }
         }
     }

@@ -14,6 +14,7 @@ mod entity;
 mod hints;
 mod hover;
 mod navigation;
+mod path_render;
 mod signature;
 mod symbol;
 mod symbols;
@@ -24,8 +25,8 @@ mod type_render;
 mod tests;
 
 pub use self::data::{
-    CompletionApplicability, CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, SymbolAt,
-    TypeHint, WorkspaceSymbol,
+    CompletionApplicability, CompletionItem, DocumentSymbol, HoverBlock, HoverInfo,
+    NavigationTarget, SymbolAt, TypeHint, WorkspaceSymbol,
 };
 #[allow(unused_imports)]
 pub use self::data::{CompletionKind, CompletionTarget, NavigationTargetKind, SymbolKind};

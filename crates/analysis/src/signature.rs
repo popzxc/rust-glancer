@@ -5,12 +5,15 @@
 
 use rg_body_ir::{BindingData, BodyFieldData, BodyFunctionData, BodyItemData, BodyTy};
 use rg_semantic_ir::{
-    ConstData, ConstItem, EnumData, EnumVariantData, FieldData, FieldItem, FieldKey, FunctionData,
-    FunctionItem, GenericParams, Mutability, ParamItem, StaticData, StructData, TraitData,
-    TypeAliasData, TypeAliasItem, TypeBound, TypeRef, UnionData, VisibilityLevel, WherePredicate,
+    ConstData, ConstItem, EnumData, EnumVariantData, EnumVariantItem, FieldData, FieldItem,
+    FieldKey, FieldList, FunctionData, FunctionItem, GenericParams, Mutability, ParamItem,
+    StaticData, StructData, TraitData, TypeAliasData, TypeAliasItem, TypeBound, TypeRef, UnionData,
+    VisibilityLevel, WherePredicate,
 };
 
 use super::{Analysis, type_render::TypeRenderer};
+
+const MEMBER_PREVIEW_LIMIT: usize = 5;
 
 pub(super) struct SignatureRenderer<'a, 'db>(&'a Analysis<'db>);
 
@@ -20,32 +23,44 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
     }
 
     pub(super) fn struct_signature(&self, data: &StructData) -> String {
-        format!(
+        let header = format!(
             "{}struct {}{}{}",
             visibility_prefix(&data.visibility),
             data.name,
             generic_params(&data.generics),
             where_clause(&data.generics)
-        )
+        );
+        item_with_fields(header, &data.fields)
     }
 
     pub(super) fn union_signature(&self, data: &UnionData) -> String {
-        format!(
+        let header = format!(
             "{}union {}{}{}",
             visibility_prefix(&data.visibility),
             data.name,
             generic_params(&data.generics),
             where_clause(&data.generics)
-        )
+        );
+        item_with_record_fields(header, &data.fields)
     }
 
     pub(super) fn enum_signature(&self, data: &EnumData) -> String {
-        format!(
+        let header = format!(
             "{}enum {}{}{}",
             visibility_prefix(&data.visibility),
             data.name,
             generic_params(&data.generics),
             where_clause(&data.generics)
+        );
+        if data.variants.is_empty() {
+            return format!("{header} {{}}");
+        }
+
+        format_block(
+            header,
+            data.variants
+                .iter()
+                .map(|variant| enum_variant_signature(variant)),
         )
     }
 
@@ -110,22 +125,18 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
     }
 
     pub(super) fn enum_variant_signature(&self, data: EnumVariantData<'_>) -> String {
-        let owner = self
-            .0
-            .semantic_ir
-            .type_def_name(data.owner)
-            .unwrap_or("<enum>");
-        format!("variant {owner}::{}", data.variant.name)
+        enum_variant_signature(data.variant)
     }
 
     pub(super) fn local_item_signature(&self, data: &BodyItemData) -> String {
-        format!(
+        let header = format!(
             "{} {}{}{}",
             data.kind,
             data.name,
             generic_params(&data.generics),
             where_clause(&data.generics)
-        )
+        );
+        item_with_fields(header, &data.fields)
     }
 
     pub(super) fn local_function_signature(&self, data: &BodyFunctionData) -> String {
@@ -230,6 +241,90 @@ fn static_signature(name: &str, mutability: Mutability, ty: Option<&TypeRef>) ->
         Some(ty) => format!("static {mut_prefix}{name}: {ty}"),
         None => format!("static {mut_prefix}{name}: _"),
     }
+}
+
+fn item_with_fields(header: String, fields: &FieldList) -> String {
+    match fields {
+        FieldList::Named(fields) => item_with_record_fields(header, fields),
+        FieldList::Tuple(fields) => item_with_tuple_fields(header, fields),
+        FieldList::Unit => header,
+    }
+}
+
+fn item_with_record_fields(header: String, fields: &[FieldItem]) -> String {
+    if fields.is_empty() {
+        return format!("{header} {{}}");
+    }
+
+    format_block(header, fields.iter().map(record_field_signature))
+}
+
+fn item_with_tuple_fields(header: String, fields: &[FieldItem]) -> String {
+    let mut rendered = fields
+        .iter()
+        .take(MEMBER_PREVIEW_LIMIT)
+        .map(tuple_field_signature)
+        .collect::<Vec<_>>();
+    if fields.len() > MEMBER_PREVIEW_LIMIT {
+        rendered.push("...".to_string());
+    }
+
+    format!("{header}({});", rendered.join(", "))
+}
+
+fn enum_variant_signature(variant: &EnumVariantItem) -> String {
+    match &variant.fields {
+        FieldList::Named(fields) if fields.is_empty() => format!("{} {{}}", variant.name),
+        FieldList::Named(fields) => {
+            let rendered =
+                capped_inline_rows(fields.iter().map(record_field_signature), fields.len());
+            format!("{} {{ {} }}", variant.name, rendered.join(", "))
+        }
+        FieldList::Tuple(fields) => {
+            let rendered =
+                capped_inline_rows(fields.iter().map(tuple_field_signature), fields.len());
+            format!("{}({})", variant.name, rendered.join(", "))
+        }
+        FieldList::Unit => variant.name.clone(),
+    }
+}
+
+fn capped_inline_rows(rows: impl Iterator<Item = String>, total_len: usize) -> Vec<String> {
+    let mut rendered = rows.take(MEMBER_PREVIEW_LIMIT).collect::<Vec<_>>();
+    if total_len > MEMBER_PREVIEW_LIMIT {
+        rendered.push("...".to_string());
+    }
+    rendered
+}
+
+fn format_block(header: String, rows: impl Iterator<Item = String>) -> String {
+    let mut rendered = rows.take(MEMBER_PREVIEW_LIMIT + 1).collect::<Vec<_>>();
+    let truncated = rendered.len() > MEMBER_PREVIEW_LIMIT;
+    rendered.truncate(MEMBER_PREVIEW_LIMIT);
+    if truncated {
+        rendered.push("...".to_string());
+    }
+
+    let body = rendered
+        .into_iter()
+        .map(|row| format!("    {row},"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{header} {{\n{body}\n}}")
+}
+
+fn record_field_signature(field: &FieldItem) -> String {
+    field_signature(field).unwrap_or_else(|| {
+        format!(
+            "{}<missing>: {}",
+            visibility_prefix(&field.visibility),
+            field.ty
+        )
+    })
+}
+
+fn tuple_field_signature(field: &FieldItem) -> String {
+    format!("{}{}", visibility_prefix(&field.visibility), field.ty)
 }
 
 fn field_signature(field: &FieldItem) -> Option<String> {

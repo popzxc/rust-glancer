@@ -32,8 +32,9 @@ pub use self::{
     target::TargetIr,
 };
 pub use rg_item_tree::{
-    ConstItem, Documentation, FieldItem, FieldKey, FunctionItem, GenericParams, Mutability,
-    ParamItem, TypeAliasItem, TypeBound, TypeRef, VisibilityLevel, WherePredicate,
+    ConstItem, Documentation, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,
+    GenericParams, Mutability, ParamItem, TypeAliasItem, TypeBound, TypeRef, VisibilityLevel,
+    WherePredicate,
 };
 
 /// Semantic item graph for all analyzed packages and targets.
