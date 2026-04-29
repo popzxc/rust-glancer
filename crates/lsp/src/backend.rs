@@ -7,7 +7,7 @@ use tower_lsp_server::{
     ls_types::{request::*, *},
 };
 
-use crate::{documents::DocumentStore, engine::EngineHandle, methods};
+use crate::{check::CheckHandle, documents::DocumentStore, engine::EngineHandle, methods};
 
 #[derive(Debug)]
 pub(crate) struct Backend {
@@ -16,11 +16,13 @@ pub(crate) struct Backend {
 
 impl Backend {
     pub(crate) fn new(client: Client) -> Self {
+        let documents = Arc::new(Mutex::new(DocumentStore::default()));
         Self {
             ctx: ServerContext {
+                check: CheckHandle::new(client.clone(), Arc::clone(&documents)),
                 client,
                 engine: EngineHandle::spawn(),
-                documents: Arc::new(Mutex::new(DocumentStore::default())),
+                documents,
             },
         }
     }
@@ -29,6 +31,7 @@ impl Backend {
 #[derive(Clone, Debug)]
 pub(crate) struct ServerContext {
     pub(crate) client: Client,
+    pub(crate) check: CheckHandle,
     pub(crate) engine: EngineHandle,
     pub(crate) documents: Arc<Mutex<DocumentStore>>,
 }

@@ -79,6 +79,9 @@ export class ClientManager implements vscode.Disposable {
       diagnosticCollectionName: "rust-glancer",
       outputChannel: this.output,
       traceOutputChannel: this.output,
+      initializationOptions: {
+        check: config.check,
+      },
       workspaceFolder,
     };
 

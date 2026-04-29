@@ -18,7 +18,7 @@ rg_def_map.workspace = true
 rg_parse.workspace = true
 rg_project.workspace = true
 rg_workspace.workspace = true
-tokio = { workspace = true, features = ["io-std", "macros", "rt-multi-thread", "sync"] }
+tokio = { workspace = true, features = ["io-std", "macros", "process", "rt-multi-thread", "sync"] }
 tower-lsp-server.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }

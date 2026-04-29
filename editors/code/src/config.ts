@@ -6,6 +6,13 @@ export interface ExtensionConfig {
   readonly serverPath: string | undefined;
   readonly extraEnv: Record<string, string>;
   readonly traceServer: TraceSetting;
+  readonly check: CheckConfig;
+}
+
+export interface CheckConfig {
+  readonly onSave: boolean;
+  readonly command: string;
+  readonly arguments: string[];
 }
 
 export namespace ExtensionConfig {
@@ -14,11 +21,19 @@ export namespace ExtensionConfig {
     const serverPath = config.get<string | null>("server.path", null);
     const extraEnv = config.get<Record<string, unknown>>("server.extraEnv", {});
     const traceServer = config.get<TraceSetting>("trace.server", "off");
+    const checkOnSave = config.get<boolean>("checkOnSave", false);
+    const checkCommand = config.get<string>("check.command", "check");
+    const checkArguments = config.get<unknown[]>("check.arguments", ["--workspace", "--all-targets"]);
 
     return {
       serverPath: normalizeOptionalString(serverPath),
       extraEnv: normalizeStringRecord(extraEnv),
       traceServer,
+      check: {
+        onSave: checkOnSave,
+        command: normalizeCargoSubcommand(checkCommand),
+        arguments: normalizeStringArray(checkArguments),
+      },
     };
   }
 }
@@ -44,4 +59,13 @@ function normalizeStringRecord(value: Record<string, unknown>): Record<string, s
   }
 
   return result;
+}
+
+function normalizeStringArray(value: unknown[]): string[] {
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function normalizeCargoSubcommand(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : "check";
 }
