@@ -10,6 +10,7 @@ members = [
   "crates/body-ir",
   "crates/analysis",
   "crates/project",
+  "crates/memsize",
   "crates/test-fixture",
 ]
 exclude = [
@@ -38,6 +39,7 @@ clap = "4.5.50"
 cargo_metadata = "0.23"
 derive_more = { version = "2.1.1" }
 expect-test = "1.5.1"
+ls_types = { package = "ls-types", version = "0.0.6" }
 tokio = "1.48"
 tower-lsp-server = "0.23"
 tracing = "0.1"
@@ -54,4 +56,5 @@ rg_semantic_ir = { path = "crates/semantic-ir" }
 rg_body_ir = { path = "crates/body-ir" }
 rg_analysis = { path = "crates/analysis" }
 rg_project = { path = "crates/project" }
+rg_memsize = { path = "crates/memsize" }
 test_fixture = { path = "crates/test-fixture" }

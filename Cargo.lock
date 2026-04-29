@@ -727,6 +727,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_memsize"
+version = "0.1.0"
+dependencies = [
+ "ls-types",
+ "syntax",
+]
+
+[[package]]
 name = "rg_parse"
 version = "0.1.0"
 dependencies = [
