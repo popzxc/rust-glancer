@@ -16,7 +16,7 @@ pub(crate) async fn initialize(
 ) -> Result<InitializeResult> {
     let Some(root) = workspace_root(&params) else {
         return Err(Error::invalid_params(
-            "rust-glimpser requires a filesystem workspace root",
+            "rust-glancer requires a filesystem workspace root",
         ));
     };
 
@@ -25,7 +25,7 @@ pub(crate) async fn initialize(
     Ok(InitializeResult {
         capabilities: capabilities::server_capabilities(),
         server_info: Some(ServerInfo {
-            name: "rust-glimpser".to_string(),
+            name: "rust-glancer".to_string(),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
         }),
         offset_encoding: None,

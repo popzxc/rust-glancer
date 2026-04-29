@@ -13,8 +13,8 @@ export class StatusView implements vscode.Disposable {
 
   public constructor() {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    this.item.name = "Rust Glimpser";
-    this.item.command = "rust-glimpser.restartServer";
+    this.item.name = "Rust Glancer";
+    this.item.command = "rust-glancer.restartServer";
   }
 
   public starting(details: StatusDetails): void {
@@ -23,7 +23,7 @@ export class StatusView implements vscode.Disposable {
     }
 
     this.details = details;
-    this.item.text = "$(sync~spin) Rust Glimpser";
+    this.item.text = "$(sync~spin) Rust Glancer";
     this.item.tooltip = this.tooltip("Starting");
     this.item.backgroundColor = undefined;
     this.item.show();
@@ -35,7 +35,7 @@ export class StatusView implements vscode.Disposable {
     }
 
     this.details = details;
-    this.item.text = "$(check) Rust Glimpser";
+    this.item.text = "$(check) Rust Glancer";
     this.item.tooltip = this.tooltip("Ready");
     this.item.backgroundColor = undefined;
     this.item.show();
@@ -47,7 +47,7 @@ export class StatusView implements vscode.Disposable {
     }
 
     this.details = details;
-    this.item.text = "$(warning) Rust Glimpser";
+    this.item.text = "$(warning) Rust Glancer";
     this.item.tooltip = this.tooltip("Stale: save to update");
     this.item.backgroundColor = undefined;
     this.item.show();
@@ -59,7 +59,7 @@ export class StatusView implements vscode.Disposable {
     }
 
     this.details = details;
-    this.item.text = "$(circle-slash) Rust Glimpser";
+    this.item.text = "$(circle-slash) Rust Glancer";
     this.item.tooltip = this.tooltip(`Stopped: ${reason}`);
     this.item.backgroundColor = undefined;
     this.item.show();
@@ -71,7 +71,7 @@ export class StatusView implements vscode.Disposable {
     }
 
     this.details = details;
-    this.item.text = "$(error) Rust Glimpser";
+    this.item.text = "$(error) Rust Glancer";
     this.item.tooltip = this.tooltip(`Failed: ${reason}`);
     this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
     this.item.show();
@@ -84,7 +84,7 @@ export class StatusView implements vscode.Disposable {
 
   private tooltip(state: string): vscode.MarkdownString {
     const tooltip = new vscode.MarkdownString();
-    tooltip.appendMarkdown(`**Rust Glimpser**\n\n`);
+    tooltip.appendMarkdown(`**Rust Glancer**\n\n`);
     appendTextField(tooltip, "State", state);
 
     if (this.details.workspaceRoot !== undefined) {

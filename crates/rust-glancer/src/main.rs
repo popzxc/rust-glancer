@@ -5,9 +5,9 @@ use clap::{Parser, Subcommand};
 use rg_project::Project;
 use rg_workspace::{SysrootSources, WorkspaceMetadata};
 
-/// Command-line interface for the `rust-glimpser` binary.
+/// Command-line interface for the `rust-glancer` binary.
 #[derive(Debug, Parser)]
-#[command(name = "rust-glimpser")]
+#[command(name = "rust-glancer")]
 #[command(about = "An incomplete-by-design Rust LSP implementation")]
 struct Cli {
     #[command(subcommand)]
@@ -65,7 +65,7 @@ fn print_project_summary(project: &Project) {
     let semantic_ir_stats = project.semantic_ir_db().stats();
     let body_ir_stats = project.body_ir_db().stats();
 
-    println!("rust-glimpser analysis built");
+    println!("rust-glancer analysis built");
     println!("packages: {package_count} ({workspace_package_count} workspace)");
     println!(
         "def maps: {} targets, {} modules, {} unresolved imports",

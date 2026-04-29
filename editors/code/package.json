@@ -1,9 +1,9 @@
 {
-  "name": "rust-glimpser-code",
-  "displayName": "Rust Glimpser",
-  "description": "VS Code client for the rust-glimpser language server.",
+  "name": "rust-glancer-code",
+  "displayName": "Rust Glancer",
+  "description": "VS Code client for the rust-glancer language server.",
   "version": "0.1.0",
-  "publisher": "rust-glimpser",
+  "publisher": "rust-glancer",
   "license": "MIT OR Apache-2.0",
   "engines": {
     "vscode": "^1.88.0"
@@ -15,7 +15,7 @@
   "activationEvents": [
     "onLanguage:rust",
     "workspaceContains:Cargo.toml",
-    "onCommand:rust-glimpser.restartServer"
+    "onCommand:rust-glancer.restartServer"
   ],
   "contributes": {
     "languages": [
@@ -33,33 +33,33 @@
     ],
     "commands": [
       {
-        "command": "rust-glimpser.restartServer",
-        "title": "Rust Glimpser: Restart Server"
+        "command": "rust-glancer.restartServer",
+        "title": "Rust Glancer: Restart Server"
       }
     ],
     "configuration": {
       "type": "object",
-      "title": "Rust Glimpser",
+      "title": "Rust Glancer",
       "properties": {
-        "rust-glimpser.server.path": {
+        "rust-glancer.server.path": {
           "scope": "window",
           "type": [
             "string",
             "null"
           ],
           "default": null,
-          "description": "Path to the rust-glimpser executable. When set, the extension runs this executable with the lsp subcommand."
+          "description": "Path to the rust-glancer executable. When set, the extension runs this executable with the lsp subcommand."
         },
-        "rust-glimpser.server.extraEnv": {
+        "rust-glancer.server.extraEnv": {
           "scope": "window",
           "type": "object",
           "default": {},
           "additionalProperties": {
             "type": "string"
           },
-          "description": "Additional environment variables for the rust-glimpser server process."
+          "description": "Additional environment variables for the rust-glancer server process."
         },
-        "rust-glimpser.trace.server": {
+        "rust-glancer.trace.server": {
           "scope": "window",
           "type": "string",
           "enum": [
@@ -68,7 +68,7 @@
             "verbose"
           ],
           "default": "off",
-          "description": "Controls LSP protocol tracing for the rust-glimpser client."
+          "description": "Controls LSP protocol tracing for the rust-glancer client."
         }
       }
     }

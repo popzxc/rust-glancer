@@ -49,7 +49,7 @@ export class ClientManager implements vscode.Disposable {
 
     const workspaceFolder = await this.workspaceFolder();
     if (workspaceFolder === undefined) {
-      this.output.appendLine("no Cargo workspace folder found; rust-glimpser server was not started");
+      this.output.appendLine("no Cargo workspace folder found; rust-glancer server was not started");
       this.status.stopped("no Cargo workspace folder");
       return;
     }
@@ -76,15 +76,15 @@ export class ClientManager implements vscode.Disposable {
           pattern: `${workspaceFolder.uri.fsPath.replace(/\\/g, "/")}/**/*.rs`,
         },
       ],
-      diagnosticCollectionName: "rust-glimpser",
+      diagnosticCollectionName: "rust-glancer",
       outputChannel: this.output,
       traceOutputChannel: this.output,
       workspaceFolder,
     };
 
     const client = new LanguageClient(
-      "rust-glimpser",
-      "Rust Glimpser",
+      "rust-glancer",
+      "Rust Glancer",
       ResolvedServer.options(server, this.output),
       clientOptions,
     );
@@ -116,22 +116,22 @@ export class ClientManager implements vscode.Disposable {
       this.running = true;
       this.status.ready(statusDetails);
       this.updateDocumentFreshnessStatus();
-      this.output.appendLine("rust-glimpser client started");
+      this.output.appendLine("rust-glancer client started");
     } catch (error) {
       this.client = undefined;
       this.clientState?.dispose();
       this.clientState = undefined;
       this.running = false;
       this.status.failed(String(error), statusDetails);
-      this.output.appendLine(`rust-glimpser client failed to start: ${String(error)}`);
+      this.output.appendLine(`rust-glancer client failed to start: ${String(error)}`);
       void vscode.window.showErrorMessage(
-        "Rust Glimpser failed to start. Check the Rust Glimpser output for details.",
+        "Rust Glancer failed to start. Check the Rust Glancer output for details.",
       );
     }
   }
 
   public async restart(): Promise<void> {
-    this.output.appendLine("restarting rust-glimpser server");
+    this.output.appendLine("restarting rust-glancer server");
     await this.stop();
     await this.start();
   }
@@ -145,7 +145,7 @@ export class ClientManager implements vscode.Disposable {
 
     if (client !== undefined) {
       await client.stop();
-      this.output.appendLine("rust-glimpser client stopped");
+      this.output.appendLine("rust-glancer client stopped");
     }
 
     this.status.stopped("not running");
@@ -198,7 +198,7 @@ export class ClientManager implements vscode.Disposable {
 
     if (folders.length > 1) {
       this.output.appendLine(
-        "multiple workspace folders detected, but none contains Cargo.toml; rust-glimpser server was not started",
+        "multiple workspace folders detected, but none contains Cargo.toml; rust-glancer server was not started",
       );
     }
 

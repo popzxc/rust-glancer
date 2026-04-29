@@ -1,4 +1,4 @@
-# rust-glimpser
+# rust-glancer
 
 Incomplete-by-design LSP that trades completeness for speed and memory.
 `rust-analyzer` is great, but it is just too heavy.

@@ -6,7 +6,7 @@ import type { ServerOptions } from "vscode-languageclient/node";
 
 import type { ExtensionConfig } from "./config";
 
-const SERVER_ENV_OVERRIDE = "__RUST_GLIMPSER_SERVER";
+const SERVER_ENV_OVERRIDE = "__RUST_GLANCER_SERVER";
 
 export interface ResolvedServer {
   readonly command: string;
@@ -25,7 +25,7 @@ export namespace ResolvedServer {
     if (config.serverPath !== undefined) {
       return executableServer(
         config.serverPath,
-        "rust-glimpser.server.path",
+        "rust-glancer.server.path",
         config,
         workspaceFolder,
       );
@@ -40,14 +40,14 @@ export namespace ResolvedServer {
     if (isDevelopmentCheckout(repositoryRoot)) {
       return {
         command: "cargo",
-        args: ["run", "--release", "-p", "rust-glimpser", "--", "lsp"],
+        args: ["run", "--release", "-p", "rust-glancer", "--", "lsp"],
         cwd: repositoryRoot,
         env: buildEnv(config.extraEnv),
         source: "development checkout",
       };
     }
 
-    return executableServer("rust-glimpser", "PATH", config, workspaceFolder);
+    return executableServer("rust-glancer", "PATH", config, workspaceFolder);
   }
 
   export function options(server: ResolvedServer, output: vscode.OutputChannel): ServerOptions {
@@ -69,7 +69,7 @@ export namespace ResolvedServer {
       child.on("error", (error) => {
         output.appendLine(`server failed to start: ${error.message}`);
         void vscode.window.showErrorMessage(
-          `Failed to start rust-glimpser language server: ${error.message}`,
+          `Failed to start rust-glancer language server: ${error.message}`,
         );
       });
 
@@ -121,7 +121,7 @@ function expandEnv(value: string, env: NodeJS.ProcessEnv): string {
 function isDevelopmentCheckout(repositoryRoot: string): boolean {
   return (
     fs.existsSync(path.join(repositoryRoot, "Cargo.toml")) &&
-    fs.existsSync(path.join(repositoryRoot, "crates", "rust-glimpser", "Cargo.toml"))
+    fs.existsSync(path.join(repositoryRoot, "crates", "rust-glancer", "Cargo.toml"))
   );
 }
 

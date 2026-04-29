@@ -4,7 +4,7 @@ use std::{
     process::Command,
 };
 
-/// Sysroot crates that rust-glimpser can model as ordinary library roots.
+/// Sysroot crates that rust-glancer can model as ordinary library roots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SysrootCrate {
     Core,

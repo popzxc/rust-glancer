@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Rust Glimpser Extension",
+      "name": "Run Rust Glancer Extension",
       "type": "extensionHost",
       "request": "launch",
       "args": [

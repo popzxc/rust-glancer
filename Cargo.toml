@@ -1,6 +1,6 @@
 [workspace]
 members = [
-  "crates/rust-glimpser",
+  "crates/rust-glancer",
   "crates/lsp",
   "crates/workspace",
   "crates/parse",
@@ -27,10 +27,10 @@ edition = "2024"
 rust-version = "1.85"
 authors = ["Igor Aleksanov <popzxc@yandex.ru>"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/popzxc/rust-glimpser"
-homepage = "https://github.com/popzxc/rust-glimpser"
+repository = "https://github.com/popzxc/rust-glancer"
+homepage = "https://github.com/popzxc/rust-glancer"
 readme = "README.md"
-description = "A Rust workspace for rust-glimpser."
+description = "A Rust workspace for rust-glancer."
 
 [workspace.dependencies]
 anyhow = "1.0.102"

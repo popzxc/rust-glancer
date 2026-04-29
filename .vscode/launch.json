@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Rust Glimpser Extension",
+      "name": "Run Rust Glancer Extension",
       "type": "extensionHost",
       "request": "launch",
       "args": [
@@ -12,7 +12,7 @@
       "outFiles": [
         "${workspaceFolder}/editors/code/dist/**/*.js"
       ],
-      "preLaunchTask": "rust-glimpser: compile VS Code extension"
+      "preLaunchTask": "rust-glancer: compile VS Code extension"
     }
   ]
 }

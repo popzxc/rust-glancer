@@ -10,7 +10,7 @@ export interface ExtensionConfig {
 
 export namespace ExtensionConfig {
   export function read(): ExtensionConfig {
-    const config = vscode.workspace.getConfiguration("rust-glimpser");
+    const config = vscode.workspace.getConfiguration("rust-glancer");
     const serverPath = config.get<string | null>("server.path", null);
     const extraEnv = config.get<Record<string, unknown>>("server.extraEnv", {});
     const traceServer = config.get<TraceSetting>("trace.server", "off");

@@ -6,7 +6,7 @@ import { StatusView } from "./status";
 let manager: ClientManager | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const output = vscode.window.createOutputChannel("Rust Glimpser");
+  const output = vscode.window.createOutputChannel("Rust Glancer");
   const status = new StatusView();
   manager = new ClientManager(context.extensionPath, output, status);
 
@@ -14,7 +14,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     output,
     status,
     manager,
-    vscode.commands.registerCommand("rust-glimpser.restartServer", async () => {
+    vscode.commands.registerCommand("rust-glancer.restartServer", async () => {
       await manager?.restart();
     }),
   );

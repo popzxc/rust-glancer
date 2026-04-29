@@ -376,7 +376,7 @@ impl CrateFixture {
     fn create_root_directory() -> PathBuf {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-        let base = std::env::temp_dir().join("rust-glimpser-test-fixtures");
+        let base = std::env::temp_dir().join("rust-glancer-test-fixtures");
         fs::create_dir_all(&base).expect("fixture base directory should be created");
 
         for _ in 0..32 {

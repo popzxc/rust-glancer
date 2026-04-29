@@ -197,7 +197,7 @@ impl EngineWorker {
             "processing saved file"
         );
 
-        // Save notifications are the only source-update signal rust-glimpser currently supports.
+        // Save notifications are the only source-update signal rust-glancer currently supports.
         // If the client does not include text, we fall back to the saved file on disk and keep the
         // same committed-save semantics.
         let text = match text {
