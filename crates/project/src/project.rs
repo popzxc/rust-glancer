@@ -14,7 +14,6 @@ pub struct Project {
     workspace: WorkspaceMetadata,
     body_ir_policy: BodyIrBuildPolicy,
     parse: ParseDb,
-    item_tree: ItemTreeDb,
     def_map: DefMapDb,
     semantic_ir: SemanticIrDb,
     body_ir: BodyIrDb,
@@ -31,14 +30,13 @@ impl Project {
         workspace: WorkspaceMetadata,
         body_ir_policy: BodyIrBuildPolicy,
     ) -> anyhow::Result<Self> {
-        let (parse, item_tree, def_map, semantic_ir, body_ir) =
+        let (parse, def_map, semantic_ir, body_ir) =
             Self::build_phases(&workspace, body_ir_policy)?;
 
         Ok(Self {
             workspace,
             body_ir_policy,
             parse,
-            item_tree,
             def_map,
             semantic_ir,
             body_ir,
@@ -51,9 +49,7 @@ impl Project {
         }
 
         let package_indices = packages.iter().map(|package| package.0).collect::<Vec<_>>();
-        let item_tree = self
-            .item_tree
-            .rebuild_packages(&mut self.parse, &package_indices)
+        let item_tree = ItemTreeDb::build_packages(&mut self.parse, &package_indices)
             .context("while attempting to rebuild affected item-tree packages")?;
         let def_map = self
             .def_map
@@ -67,7 +63,6 @@ impl Project {
             .body_ir
             .rebuild_packages(
                 &self.parse,
-                &item_tree,
                 &def_map,
                 &semantic_ir,
                 self.body_ir_policy,
@@ -75,7 +70,6 @@ impl Project {
             )
             .context("while attempting to rebuild affected body IR packages")?;
 
-        self.item_tree = item_tree;
         self.def_map = def_map;
         self.semantic_ir = semantic_ir;
         self.body_ir = body_ir;
@@ -86,7 +80,7 @@ impl Project {
     fn build_phases(
         workspace: &WorkspaceMetadata,
         body_ir_policy: BodyIrBuildPolicy,
-    ) -> anyhow::Result<(ParseDb, ItemTreeDb, DefMapDb, SemanticIrDb, BodyIrDb)> {
+    ) -> anyhow::Result<(ParseDb, DefMapDb, SemanticIrDb, BodyIrDb)> {
         let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
         let item_tree =
             ItemTreeDb::build(&mut parse).context("while attempting to build item tree db")?;
@@ -94,11 +88,10 @@ impl Project {
             .context("while attempting to build def map db")?;
         let semantic_ir = SemanticIrDb::build(&item_tree, &def_map)
             .context("while attempting to build semantic ir db")?;
-        let body_ir =
-            BodyIrDb::build_with_policy(&parse, &item_tree, &def_map, &semantic_ir, body_ir_policy)
-                .context("while attempting to build body ir db")?;
+        let body_ir = BodyIrDb::build_with_policy(&parse, &def_map, &semantic_ir, body_ir_policy)
+            .context("while attempting to build body ir db")?;
 
-        Ok((parse, item_tree, def_map, semantic_ir, body_ir))
+        Ok((parse, def_map, semantic_ir, body_ir))
     }
 
     /// Returns the normalized workspace metadata this project was built from.
@@ -113,11 +106,6 @@ impl Project {
 
     pub(crate) fn parse_db_mut(&mut self) -> &mut ParseDb {
         &mut self.parse
-    }
-
-    /// Returns the item-tree database built for this project.
-    pub fn item_tree_db(&self) -> &ItemTreeDb {
-        &self.item_tree
     }
 
     /// Returns the def-map database built for this project.

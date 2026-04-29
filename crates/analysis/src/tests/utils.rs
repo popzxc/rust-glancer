@@ -221,7 +221,6 @@ enum AnalysisQueryKind {
 
 struct AnalysisFixtureDb {
     parse: ParseDb,
-    item_tree: ItemTreeDb,
     def_map: DefMapDb,
     semantic_ir: SemanticIrDb,
     body_ir: BodyIrDb,
@@ -235,12 +234,11 @@ impl AnalysisFixtureDb {
             .expect("fixture def map db should build");
         let semantic_ir =
             SemanticIrDb::build(&item_tree, &def_map).expect("fixture semantic ir db should build");
-        let body_ir = BodyIrDb::build(&parse, &item_tree, &def_map, &semantic_ir)
+        let body_ir = BodyIrDb::build(&parse, &def_map, &semantic_ir)
             .expect("fixture body ir db should build");
 
         Self {
             parse,
-            item_tree,
             def_map,
             semantic_ir,
             body_ir,

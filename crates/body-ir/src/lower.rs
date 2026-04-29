@@ -11,8 +11,7 @@ use ra_syntax::{
 
 use rg_def_map::{ModuleRef, PackageSlot, Path, PathSegment, TargetRef};
 use rg_item_tree::{
-    Documentation, FieldKey, FieldList, FunctionItem, GenericParams, ImplItem, ItemTreeDb,
-    ItemTreeRef, TypeRef,
+    Documentation, FieldKey, FieldList, FunctionItem, GenericParams, ImplItem, TypeRef,
 };
 use rg_parse::{FileId, LineIndex, ParseDb, Span, TargetId};
 use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitRef};
@@ -32,7 +31,6 @@ use super::{
 
 pub(super) fn build_db(
     parse: &ParseDb,
-    item_tree: &ItemTreeDb,
     semantic_ir: &SemanticIrDb,
     policy: BodyIrBuildPolicy,
 ) -> anyhow::Result<BodyIrDb> {
@@ -41,7 +39,6 @@ pub(super) fn build_db(
     for (package_idx, package_ir) in semantic_ir.packages().iter().enumerate() {
         packages.push(build_package(
             parse,
-            item_tree,
             semantic_ir,
             policy,
             package_idx,
@@ -54,7 +51,6 @@ pub(super) fn build_db(
 
 pub(super) fn build_package(
     parse: &ParseDb,
-    item_tree: &ItemTreeDb,
     semantic_ir: &SemanticIrDb,
     policy: BodyIrBuildPolicy,
     package_idx: usize,
@@ -63,9 +59,6 @@ pub(super) fn build_package(
     let parse_package = parse
         .package(package_idx)
         .with_context(|| format!("while attempting to fetch parse package {package_idx}"))?;
-    let item_tree_package = item_tree
-        .package(package_idx)
-        .with_context(|| format!("while attempting to fetch item tree package {package_idx}"))?;
     let mut targets = Vec::with_capacity(target_count);
 
     for target_idx in 0..target_count {
@@ -82,7 +75,6 @@ pub(super) fn build_package(
         targets.push(
             TargetLowering {
                 parse_package,
-                item_tree_package,
                 semantic_ir,
                 target_ref,
                 target_bodies: TargetBodies::new(function_count),
@@ -99,7 +91,6 @@ pub(super) fn build_package(
 
 struct TargetLowering<'a> {
     parse_package: &'a rg_parse::Package,
-    item_tree_package: &'a rg_item_tree::Package,
     semantic_ir: &'a SemanticIrDb,
     target_ref: TargetRef,
     target_bodies: TargetBodies,
@@ -110,14 +101,14 @@ impl<'a> TargetLowering<'a> {
         let functions = self
             .semantic_ir
             .functions(self.target_ref)
-            .map(|(function_ref, function)| (function_ref, function.source))
+            .map(|(function_ref, function)| (function_ref, function.source.file_id, function.span))
             .collect::<Vec<_>>();
 
-        for (function_ref, function_source) in functions {
+        for (function_ref, file_id, span) in functions {
             let Some(owner_module) = self.owner_module(function_ref) else {
                 continue;
             };
-            let Some(ast_fn) = self.find_function_ast(function_source)? else {
+            let Some(ast_fn) = self.find_function_ast(file_id, span)? else {
                 continue;
             };
             let Some(body_ast) = ast_fn.body() else {
@@ -126,10 +117,10 @@ impl<'a> TargetLowering<'a> {
 
             let line_index = self
                 .parse_package
-                .parsed_file(function_source.file_id)
+                .parsed_file(file_id)
                 .expect("function source file should exist while lowering body")
                 .line_index();
-            let source = source_for(function_source.file_id, ast_fn.syntax());
+            let source = source_for(file_id, ast_fn.syntax());
             let body = FunctionBodyLowering::new(function_ref, owner_module, source, line_index)
                 .lower(ast_fn, body_ast);
             let body_id = self.target_bodies.alloc_body(body);
@@ -161,24 +152,16 @@ impl<'a> TargetLowering<'a> {
         }
     }
 
-    fn find_function_ast(&self, source: ItemTreeRef) -> anyhow::Result<Option<ast::Fn>> {
-        let item = self.item_tree_package.item(source).with_context(|| {
-            format!(
-                "while attempting to fetch item-tree node {:?} in {:?}",
-                source.item, source.file_id
-            )
+    fn find_function_ast(
+        &self,
+        file_id: FileId,
+        expected: Span,
+    ) -> anyhow::Result<Option<ast::Fn>> {
+        let parsed_file = self.parse_package.parsed_file(file_id).with_context(|| {
+            format!("while attempting to fetch parsed source file {:?}", file_id)
         })?;
-        let parsed_file = self
-            .parse_package
-            .parsed_file(source.file_id)
-            .with_context(|| {
-                format!(
-                    "while attempting to fetch parsed source file {:?}",
-                    source.file_id
-                )
-            })?;
 
-        let expected = item.span.text;
+        let expected = expected.text;
         Ok(parsed_file
             .syntax()
             .syntax()

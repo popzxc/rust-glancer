@@ -55,28 +55,20 @@ impl BodyIrDb {
     /// analysis cheaper.
     pub fn build(
         parse: &rg_parse::ParseDb,
-        item_tree: &rg_item_tree::ItemTreeDb,
         def_map: &rg_def_map::DefMapDb,
         semantic_ir: &rg_semantic_ir::SemanticIrDb,
     ) -> anyhow::Result<Self> {
-        Self::build_with_policy(
-            parse,
-            item_tree,
-            def_map,
-            semantic_ir,
-            BodyIrBuildPolicy::default(),
-        )
+        Self::build_with_policy(parse, def_map, semantic_ir, BodyIrBuildPolicy::default())
     }
 
     /// Builds Body IR using an explicit package selection policy.
     pub fn build_with_policy(
         parse: &rg_parse::ParseDb,
-        item_tree: &rg_item_tree::ItemTreeDb,
         def_map: &rg_def_map::DefMapDb,
         semantic_ir: &rg_semantic_ir::SemanticIrDb,
         policy: BodyIrBuildPolicy,
     ) -> anyhow::Result<Self> {
-        let mut db = lower::build_db(parse, item_tree, semantic_ir, policy)?;
+        let mut db = lower::build_db(parse, semantic_ir, policy)?;
         resolution::resolve_bodies(&mut db, def_map, semantic_ir);
         Ok(db)
     }
@@ -85,7 +77,6 @@ impl BodyIrDb {
     pub fn rebuild_packages(
         &self,
         parse: &rg_parse::ParseDb,
-        item_tree: &rg_item_tree::ItemTreeDb,
         def_map: &rg_def_map::DefMapDb,
         semantic_ir: &rg_semantic_ir::SemanticIrDb,
         policy: BodyIrBuildPolicy,
@@ -104,14 +95,8 @@ impl BodyIrDb {
                         package.0
                     )
                 })?;
-            let rebuilt = lower::build_package(
-                parse,
-                item_tree,
-                semantic_ir,
-                policy,
-                package.0,
-                target_count,
-            )?;
+            let rebuilt =
+                lower::build_package(parse, semantic_ir, policy, package.0, target_count)?;
             let slot = next.packages.get_mut(package.0).with_context(|| {
                 format!("while attempting to replace body IR package {}", package.0)
             })?;

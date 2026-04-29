@@ -60,9 +60,8 @@ impl BodyIrFixtureDb {
             .expect("fixture def map db should build");
         let semantic_ir =
             SemanticIrDb::build(&item_tree, &def_map).expect("fixture semantic ir db should build");
-        let body_ir =
-            BodyIrDb::build_with_policy(&parse, &item_tree, &def_map, &semantic_ir, policy)
-                .expect("fixture body ir db should build");
+        let body_ir = BodyIrDb::build_with_policy(&parse, &def_map, &semantic_ir, policy)
+            .expect("fixture body ir db should build");
 
         Self {
             parse,

@@ -5,7 +5,6 @@ use anyhow::Context as _;
 use rg_analysis::Analysis;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
 use rg_def_map::{DefMapDb, PackageSlot, TargetRef};
-use rg_item_tree::ItemTreeDb;
 use rg_parse::{FileId, ParseDb};
 use rg_semantic_ir::SemanticIrDb;
 use rg_workspace::WorkspaceMetadata;
@@ -289,10 +288,6 @@ impl<'a> AnalysisSnapshot<'a> {
 
     pub fn parse_db(&self) -> &'a ParseDb {
         self.project.parse_db()
-    }
-
-    pub fn item_tree_db(&self) -> &'a ItemTreeDb {
-        self.project.item_tree_db()
     }
 
     pub fn def_map_db(&self) -> &'a DefMapDb {
