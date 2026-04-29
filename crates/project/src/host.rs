@@ -71,10 +71,7 @@ impl AnalysisHost {
                         change.path.display()
                     )
                 })?;
-                Ok(SavedFileChange {
-                    path,
-                    text: change.text,
-                })
+                Ok(SavedFileChange { path })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -86,10 +83,10 @@ impl AnalysisHost {
             let changed = self
                 .project
                 .parse_db_mut()
-                .set_saved_file_text(&change.path, &change.text)
+                .reparse_saved_file(&change.path)
                 .with_context(|| {
                     format!(
-                        "while attempting to apply source change for {}",
+                        "while attempting to apply saved file change for {}",
                         change.path.display()
                     )
                 })?;
@@ -233,22 +230,20 @@ impl AnalysisHost {
     }
 }
 
-/// One source file replacement observed at save time.
+/// One source file saved on disk.
 ///
-/// `text` is the saved file contents. Passing text here avoids forcing the caller to reread the
-/// file from disk, but semantically this is still a committed save event rather than live buffer
-/// synchronization.
+/// The analysis host treats the filesystem as the source of truth. This keeps save handling aligned
+/// with the project's rebuild-on-save model and avoids retaining editor buffer text in analysis
+/// caches.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedFileChange {
     pub path: PathBuf,
-    pub text: String,
 }
 
 impl SavedFileChange {
-    pub fn new(path: impl AsRef<Path>, text: impl Into<String>) -> Self {
+    pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
-            text: text.into(),
         }
     }
 }

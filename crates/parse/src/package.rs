@@ -28,9 +28,12 @@ impl Package {
         self.files.get_or_parse_file(file_path)
     }
 
-    /// Records saved text for a package file and reparses it if already known.
-    pub(crate) fn set_saved_file_text(&mut self, file_path: &Path, text: &str) -> Option<FileId> {
-        self.files.set_saved_file_text(file_path, text)
+    /// Reparses a package file from disk when it is already known to this package.
+    pub(crate) fn reparse_saved_file(
+        &mut self,
+        file_path: &Path,
+    ) -> anyhow::Result<Option<FileId>> {
+        self.files.reparse_file_from_disk(file_path)
     }
 
     /// Returns the cached parsed file for a previously known `FileId`.

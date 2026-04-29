@@ -78,7 +78,6 @@ impl<'a> ParsedFile<'a> {
 pub(super) struct FileDb {
     parsed_files: Vec<ParsedFileData>,
     file_ids_by_path: HashMap<PathBuf, FileId>,
-    saved_source_replacements: HashMap<PathBuf, String>,
 }
 
 impl FileDb {
@@ -93,7 +92,7 @@ impl FileDb {
         }
 
         let file_id = FileId(self.parsed_files.len());
-        let source = self.source_for(&canonical_file_path)?;
+        let source = Self::read_source(&canonical_file_path)?;
 
         self.parsed_files.push(Self::parse_source(
             file_id,
@@ -105,18 +104,19 @@ impl FileDb {
         Ok(file_id)
     }
 
-    /// Records saved text for a file and reparses it under the same `FileId` when already known.
-    ///
-    /// This is a rebuild-on-save mechanism, not an arbitrary unsaved-buffer overlay. The saved
-    /// text is retained for files that are not reachable yet so a later module-discovery rebuild in
-    /// the same save batch can parse the committed text without relying on test fixture disk writes.
-    pub(super) fn set_saved_file_text(&mut self, file_path: &Path, text: &str) -> Option<FileId> {
-        self.saved_source_replacements
-            .insert(file_path.to_path_buf(), text.to_string());
+    /// Reparses an already known file from the saved filesystem snapshot.
+    pub(super) fn reparse_file_from_disk(
+        &mut self,
+        file_path: &Path,
+    ) -> anyhow::Result<Option<FileId>> {
+        let Some(file_id) = self.file_ids_by_path.get(file_path).copied() else {
+            return Ok(None);
+        };
 
-        let file_id = self.file_ids_by_path.get(file_path).copied()?;
-        self.parsed_files[file_id.0] = Self::parse_source(file_id, file_path.to_path_buf(), text);
-        Some(file_id)
+        let source = Self::read_source(file_path)?;
+        self.parsed_files[file_id.0] =
+            Self::parse_source(file_id, file_path.to_path_buf(), &source);
+        Ok(Some(file_id))
     }
 
     /// Returns the cached parsed file for a previously known `FileId`.
@@ -141,11 +141,7 @@ impl FileDb {
             .map(|parsed_file| parsed_file.path.as_path())
     }
 
-    fn source_for(&self, file_path: &Path) -> anyhow::Result<String> {
-        if let Some(source) = self.saved_source_replacements.get(file_path) {
-            return Ok(source.clone());
-        }
-
+    fn read_source(file_path: &Path) -> anyhow::Result<String> {
         std::fs::read_to_string(file_path)
             .with_context(|| format!("while attempting to read {}", file_path.display()))
     }

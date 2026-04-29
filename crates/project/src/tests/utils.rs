@@ -53,9 +53,10 @@ impl HostFixture {
 
     fn save(&mut self, spec: &str) -> AnalysisChangeSummary {
         let saved_files = self.fixture.write_fixture_files(spec);
-        let changes = saved_files.files().iter().map(|file| {
-            SavedFileChange::new(self.fixture.path(file.relative_path()), file.contents())
-        });
+        let changes = saved_files
+            .files()
+            .iter()
+            .map(|file| SavedFileChange::new(self.fixture.path(file.relative_path())));
 
         self.host
             .apply_changes(changes)

@@ -199,29 +199,14 @@ impl EngineWorker {
             .as_mut()
             .context("LSP engine is not initialized")?;
 
-        let text_source = if text.is_some() {
-            "notification"
-        } else {
-            "disk"
-        };
         tracing::info!(
             path = %path.display(),
-            text_source,
+            notification_includes_text = text.is_some(),
             "processing saved file"
         );
 
-        // Save notifications are the only source-update signal rust-glancer currently supports.
-        // If the client does not include text, we fall back to the saved file on disk and keep the
-        // same committed-save semantics.
-        let text = match text {
-            Some(text) => text,
-            None => std::fs::read_to_string(&path).with_context(|| {
-                format!("while attempting to read saved file {}", path.display())
-            })?,
-        };
-
         let summary = host
-            .apply_change(SavedFileChange::new(&path, text))
+            .apply_change(SavedFileChange::new(&path))
             .context("while attempting to apply saved file change")?;
         tracing::info!(
             path = %path.display(),

@@ -63,7 +63,7 @@ pub struct Account;
 }
 
 #[test]
-fn uses_saved_change_text_for_modules_discovered_after_the_change() {
+fn reads_saved_disk_text_for_modules_discovered_after_the_change() {
     let mut fixture = HostFixture::build(
         r#"
 //- /Cargo.toml

@@ -29,7 +29,7 @@ pub struct ParseDb {
     packages: Vec<Package>,
 }
 
-/// One package-local file touched by a saved source update.
+/// One package-local file touched by a saved file update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PackageFileRef {
     pub package: usize,
@@ -85,24 +85,19 @@ impl ParseDb {
         self.packages.get_mut(package_slot)
     }
 
-    /// Records saved text for every parsed package that already owns `file_path`.
+    /// Reparses a saved file for every parsed package that already owns `file_path`.
     ///
-    /// This keeps package-local `FileId`s stable. Unknown files do not appear in the returned
-    /// owner list yet, but their saved source is still recorded so later module discovery within
-    /// the same save batch can parse the committed text.
-    pub fn set_saved_file_text(
-        &mut self,
-        file_path: &Path,
-        text: impl AsRef<str>,
-    ) -> anyhow::Result<Vec<PackageFileRef>> {
+    /// This keeps package-local `FileId`s stable. Unknown files do not appear in the returned owner
+    /// list yet; if a package rebuild later discovers them through `mod foo;`, ordinary parsing
+    /// reads the same saved filesystem snapshot from disk.
+    pub fn reparse_saved_file(&mut self, file_path: &Path) -> anyhow::Result<Vec<PackageFileRef>> {
         let canonical_file_path = file_path
             .canonicalize()
             .with_context(|| format!("while attempting to canonicalize {}", file_path.display()))?;
         let mut changed_files = Vec::new();
-        let text = text.as_ref();
 
         for (package_slot, package) in self.packages.iter_mut().enumerate() {
-            let Some(file_id) = package.set_saved_file_text(&canonical_file_path, text) else {
+            let Some(file_id) = package.reparse_saved_file(&canonical_file_path)? else {
                 continue;
             };
 
