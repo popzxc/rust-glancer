@@ -353,10 +353,10 @@ pub struct EnumVariantItem {
 impl EnumVariantItem {
     fn from_ast(variant: ast::Variant, line_index: &LineIndex) -> Self {
         let name = variant.name();
-        let span = Span::from_text_range(variant.syntax().text_range(), line_index);
+        let span = Span::from_text_range(variant.syntax().text_range());
         let name_span = name
             .as_ref()
-            .map(|name| Span::from_text_range(name.syntax().text_range(), line_index))
+            .map(|name| Span::from_text_range(name.syntax().text_range()))
             .unwrap_or(span);
 
         Self {
@@ -452,7 +452,7 @@ impl FieldItem {
                         .ty()
                         .map(|ty| TypeRef::from_ast(ty, line_index))
                         .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
-                    span: Span::from_text_range(span, line_index),
+                    span: Span::from_text_range(span),
                     docs: Documentation::from_ast(&field),
                 }
             })
@@ -470,7 +470,7 @@ impl FieldItem {
                     .ty()
                     .map(|ty| TypeRef::from_ast(ty, line_index))
                     .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
-                span: Span::from_text_range(field.syntax().text_range(), line_index),
+                span: Span::from_text_range(field.syntax().text_range()),
                 docs: Documentation::from_ast(&field),
             })
             .collect()

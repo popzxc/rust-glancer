@@ -157,7 +157,7 @@ mod tests {
     use rg_item_tree::{
         TypePath, TypePathSegment, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind,
     };
-    use rg_parse::{LineColumnSpan, Position, Span, TextSpan};
+    use rg_parse::{Span, TextSpan};
 
     use super::{Path, PathSegment};
 
@@ -372,10 +372,6 @@ mod tests {
     fn span() -> Span {
         Span {
             text: TextSpan { start: 0, end: 0 },
-            line_column: LineColumnSpan {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 0, column: 0 },
-            },
         }
     }
 }

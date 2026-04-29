@@ -180,13 +180,19 @@ impl<'a> PackageItemTreeSnapshot<'a> {
         }
 
         if matches!(self.mode, SnapshotMode::Spans) {
+            let line_column = item.span.line_column(
+                self.package
+                    .parsed_file(item.file_id)
+                    .expect("item file should exist while rendering source span")
+                    .line_index(),
+            );
             line.push_str(&format!(
                 " [{} {}:{}-{}:{} ({}..{})]",
                 self.file_label(item.file_id),
-                item.span.line_column.start.line + 1,
-                item.span.line_column.start.column + 1,
-                item.span.line_column.end.line + 1,
-                item.span.line_column.end.column + 1,
+                line_column.start.line + 1,
+                line_column.start.column + 1,
+                line_column.end.line + 1,
+                line_column.end.column + 1,
                 item.span.text.start,
                 item.span.text.end,
             ));

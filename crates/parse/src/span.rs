@@ -1,26 +1,27 @@
 use ra_syntax::TextRange;
 
-/// Span representation that keeps both byte offsets and line/column coordinates.
+/// Span representation in UTF-8 byte offsets from the beginning of the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
-    /// Span in UTF-8 byte offsets from the beginning of the file.
     pub text: TextSpan,
-    /// Span in zero-based line and column coordinates.
-    pub line_column: LineColumnSpan,
 }
 
 impl Span {
     /// Converts a syntax-level text range into the internal span representation.
-    pub fn from_text_range(text_range: TextRange, line_index: &LineIndex) -> Self {
+    pub fn from_text_range(text_range: TextRange) -> Self {
         let start = u32::from(text_range.start());
         let end = u32::from(text_range.end());
 
         Self {
             text: TextSpan { start, end },
-            line_column: LineColumnSpan {
-                start: line_index.position(start),
-                end: line_index.position(end),
-            },
+        }
+    }
+
+    /// Converts this byte span into zero-based line/column coordinates on demand.
+    pub fn line_column(self, line_index: &LineIndex) -> LineColumnSpan {
+        LineColumnSpan {
+            start: line_index.position(self.text.start),
+            end: line_index.position(self.text.end),
         }
     }
 
@@ -80,8 +81,9 @@ pub struct Position {
 
 #[derive(Debug, Clone)]
 pub struct LineIndex {
-    line_starts: Vec<usize>,
-    line_metrics: Vec<LineMetrics>,
+    line_starts: Vec<u32>,
+    line_byte_lens: Vec<u32>,
+    non_ascii_lines: Vec<LineUtf16Metrics>,
 }
 
 impl LineIndex {
@@ -94,22 +96,35 @@ impl LineIndex {
             }
         }
 
-        let line_metrics = line_starts
+        let mut line_byte_lens = Vec::with_capacity(line_starts.len());
+        let mut non_ascii_lines = Vec::new();
+        for (line_idx, line_start) in line_starts.iter().enumerate() {
+            let next_line_start = line_starts
+                .get(line_idx + 1)
+                .copied()
+                .unwrap_or(source.len());
+            let line_end = Self::line_text_end(source.as_bytes(), *line_start, next_line_start);
+            let line_text = &source[*line_start..line_end];
+
+            line_byte_lens
+                .push(u32::try_from(line_text.len()).expect("line length should fit into u32"));
+            if let Some(metrics) = LineUtf16Metrics::new(
+                u32::try_from(line_idx).expect("line index should fit into u32"),
+                line_text,
+            ) {
+                non_ascii_lines.push(metrics);
+            }
+        }
+
+        let line_starts = line_starts
             .iter()
-            .enumerate()
-            .map(|(line_idx, line_start)| {
-                let next_line_start = line_starts
-                    .get(line_idx + 1)
-                    .copied()
-                    .unwrap_or(source.len());
-                let line_end = Self::line_text_end(source.as_bytes(), *line_start, next_line_start);
-                LineMetrics::new(&source[*line_start..line_end])
-            })
+            .map(|start| u32::try_from(*start).expect("source offsets should fit into u32"))
             .collect();
 
         Self {
             line_starts,
-            line_metrics,
+            line_byte_lens,
+            non_ascii_lines,
         }
     }
 
@@ -117,7 +132,8 @@ impl LineIndex {
     pub fn position(&self, offset: u32) -> Position {
         let offset = usize::try_from(offset).expect("offset should fit into usize");
         let line_index = self.line_for_offset(offset);
-        let line_start = self.line_starts[line_index];
+        let line_start = usize::try_from(self.line_starts[line_index])
+            .expect("line start should fit into usize");
         let column = offset.saturating_sub(line_start);
 
         Position {
@@ -130,12 +146,18 @@ impl LineIndex {
     pub fn utf16_position(&self, offset: u32) -> Position {
         let offset = usize::try_from(offset).expect("offset should fit into usize");
         let line_index = self.line_for_offset(offset);
-        let line_start = self.line_starts[line_index];
+        let line_start = usize::try_from(self.line_starts[line_index])
+            .expect("line start should fit into usize");
         let byte_column = offset.saturating_sub(line_start);
+        let byte_column = u32::try_from(byte_column).unwrap_or(u32::MAX);
+        let line_byte_len = self.line_byte_lens[line_index];
 
         Position {
             line: u32::try_from(line_index).expect("line index should fit into u32"),
-            column: self.line_metrics[line_index].utf16_column_for_byte(byte_column),
+            column: self
+                .utf16_metrics(line_index)
+                .map(|metrics| metrics.utf16_column_for_byte(byte_column))
+                .unwrap_or_else(|| byte_column.min(line_byte_len)),
         }
     }
 
@@ -143,18 +165,30 @@ impl LineIndex {
     pub fn offset_from_utf16_position(&self, position: Position) -> Option<u32> {
         let line_index = usize::try_from(position.line).ok()?;
         let line_start = *self.line_starts.get(line_index)?;
-        let line_metrics = self.line_metrics.get(line_index)?;
-        let byte_column = line_metrics.byte_column_for_utf16(position.column)?;
-        let offset = line_start.checked_add(usize::try_from(byte_column).ok()?)?;
+        let line_byte_len = *self.line_byte_lens.get(line_index)?;
+        let byte_column = match self.utf16_metrics(line_index) {
+            Some(metrics) => metrics.byte_column_for_utf16(position.column)?,
+            None if position.column <= line_byte_len => position.column,
+            None => return None,
+        };
 
-        u32::try_from(offset).ok()
+        line_start.checked_add(byte_column)
     }
 
     fn line_for_offset(&self, offset: usize) -> usize {
+        let offset = u32::try_from(offset).unwrap_or(u32::MAX);
         match self.line_starts.binary_search(&offset) {
             Ok(line) => line,
             Err(line) => line.saturating_sub(1),
         }
+    }
+
+    fn utf16_metrics(&self, line_index: usize) -> Option<&LineUtf16Metrics> {
+        let line_index = u32::try_from(line_index).ok()?;
+        self.non_ascii_lines
+            .binary_search_by_key(&line_index, |metrics| metrics.line)
+            .ok()
+            .map(|idx| &self.non_ascii_lines[idx])
     }
 
     fn line_text_end(bytes: &[u8], start: usize, next_line_start: usize) -> usize {
@@ -170,49 +204,63 @@ impl LineIndex {
     }
 }
 
-/// Per-line mapping between UTF-8 byte columns and UTF-16 code-unit columns.
+/// Sparse per-line mapping between UTF-8 byte columns and UTF-16 code-unit columns.
 #[derive(Debug, Clone)]
-struct LineMetrics {
-    byte_len: u32,
+struct LineUtf16Metrics {
+    line: u32,
     utf16_len: u32,
-    char_offsets: Vec<LineCharOffset>,
+    non_ascii_ranges: Vec<LineCharRange>,
 }
 
-impl LineMetrics {
-    fn new(line_text: &str) -> Self {
+impl LineUtf16Metrics {
+    fn new(line: u32, line_text: &str) -> Option<Self> {
         let mut utf16_offset = 0_u32;
-        let mut char_offsets = Vec::new();
+        let mut non_ascii_ranges = Vec::new();
 
         for (byte_offset, ch) in line_text.char_indices() {
-            char_offsets.push(LineCharOffset {
-                byte: u32::try_from(byte_offset).expect("line byte offset should fit into u32"),
-                utf16: utf16_offset,
-            });
-            utf16_offset +=
+            let byte_start =
+                u32::try_from(byte_offset).expect("line byte offset should fit into u32");
+            let byte_width = u32::try_from(ch.len_utf8()).expect("UTF-8 width should fit into u32");
+            let utf16_width =
                 u32::try_from(ch.len_utf16()).expect("UTF-16 width should fit into u32");
+
+            if byte_width != utf16_width {
+                non_ascii_ranges.push(LineCharRange {
+                    byte_start,
+                    byte_end: byte_start + byte_width,
+                    utf16_start: utf16_offset,
+                    utf16_end: utf16_offset + utf16_width,
+                });
+            }
+
+            utf16_offset += utf16_width;
         }
 
-        Self {
-            byte_len: u32::try_from(line_text.len()).expect("line length should fit into u32"),
+        (!non_ascii_ranges.is_empty()).then_some(Self {
+            line,
             utf16_len: utf16_offset,
-            char_offsets,
-        }
+            non_ascii_ranges,
+        })
     }
 
-    fn utf16_column_for_byte(&self, byte_column: usize) -> u32 {
-        let byte_column = u32::try_from(byte_column).unwrap_or(u32::MAX);
-        if byte_column >= self.byte_len {
+    fn utf16_column_for_byte(&self, byte_column: u32) -> u32 {
+        if byte_column >= self.byte_len() {
             return self.utf16_len;
         }
 
-        match self
-            .char_offsets
-            .binary_search_by_key(&byte_column, |offset| offset.byte)
-        {
-            Ok(idx) => self.char_offsets[idx].utf16,
-            Err(0) => 0,
-            Err(idx) => self.char_offsets[idx - 1].utf16,
+        let mut adjustment = 0;
+        for range in &self.non_ascii_ranges {
+            if byte_column < range.byte_start {
+                return byte_column.saturating_sub(adjustment);
+            }
+            if byte_column < range.byte_end {
+                return range.utf16_start;
+            }
+
+            adjustment += range.byte_width().saturating_sub(range.utf16_width());
         }
+
+        byte_column.saturating_sub(adjustment)
     }
 
     fn byte_column_for_utf16(&self, utf16_column: u32) -> Option<u32> {
@@ -220,20 +268,50 @@ impl LineMetrics {
             return None;
         }
         if utf16_column == self.utf16_len {
-            return Some(self.byte_len);
+            return Some(self.byte_len());
         }
 
-        self.char_offsets
-            .binary_search_by_key(&utf16_column, |offset| offset.utf16)
-            .ok()
-            .map(|idx| self.char_offsets[idx].byte)
+        let mut adjustment = 0;
+        for range in &self.non_ascii_ranges {
+            if utf16_column < range.utf16_start {
+                return Some(utf16_column + adjustment);
+            }
+            if utf16_column < range.utf16_end {
+                return (utf16_column == range.utf16_start).then_some(range.byte_start);
+            }
+
+            adjustment += range.byte_width().saturating_sub(range.utf16_width());
+        }
+
+        Some(utf16_column + adjustment)
+    }
+
+    fn byte_len(&self) -> u32 {
+        let adjustment = self
+            .non_ascii_ranges
+            .iter()
+            .map(|range| range.byte_width().saturating_sub(range.utf16_width()))
+            .sum::<u32>();
+        self.utf16_len + adjustment
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-struct LineCharOffset {
-    byte: u32,
-    utf16: u32,
+struct LineCharRange {
+    byte_start: u32,
+    byte_end: u32,
+    utf16_start: u32,
+    utf16_end: u32,
+}
+
+impl LineCharRange {
+    fn byte_width(self) -> u32 {
+        self.byte_end - self.byte_start
+    }
+
+    fn utf16_width(self) -> u32 {
+        self.utf16_end - self.utf16_start
+    }
 }
 
 #[cfg(test)]
@@ -363,6 +441,20 @@ mod tests {
                 expected,
                 "{label}"
             );
+        }
+    }
+
+    #[test]
+    fn clamps_utf16_positions_inside_line_endings_to_line_end() {
+        let index = LineIndex::new("a\r\nbb\n");
+        let cases = [
+            ("at carriage return", 1, Position { line: 0, column: 1 }),
+            ("at newline", 2, Position { line: 0, column: 1 }),
+            ("at trailing newline", 5, Position { line: 1, column: 2 }),
+        ];
+
+        for (label, offset, expected) in cases {
+            assert_eq!(index.utf16_position(offset), expected, "{label}");
         }
     }
 }

@@ -129,7 +129,7 @@ impl<'a> TargetLowering<'a> {
                 .parsed_file(function_source.file_id)
                 .expect("function source file should exist while lowering body")
                 .line_index();
-            let source = source_for(function_source.file_id, ast_fn.syntax(), line_index);
+            let source = source_for(function_source.file_id, ast_fn.syntax());
             let body = FunctionBodyLowering::new(function_ref, owner_module, source, line_index)
                 .lower(ast_fn, body_ast);
             let body_id = self.target_bodies.alloc_body(body);
@@ -538,9 +538,7 @@ impl<'a> FunctionBodyLowering<'a> {
                     })
                     .collect();
                 PatKind::Record {
-                    path: pat
-                        .path()
-                        .map(|path| body_path_from_ast(path, self.line_index)),
+                    path: pat.path().map(body_path_from_ast),
                     fields,
                 }
             }
@@ -572,16 +570,12 @@ impl<'a> FunctionBodyLowering<'a> {
                     .map(|inner| self.lower_pat_inner(inner, scope, kind, None, bindings))
                     .collect();
                 PatKind::TupleStruct {
-                    path: pat
-                        .path()
-                        .map(|path| body_path_from_ast(path, self.line_index)),
+                    path: pat.path().map(body_path_from_ast),
                     fields,
                 }
             }
             ast::Pat::PathPat(pat) => PatKind::Path {
-                path: pat
-                    .path()
-                    .map(|path| body_path_from_ast(path, self.line_index)),
+                path: pat.path().map(body_path_from_ast),
             },
             ast::Pat::RestPat(_) | ast::Pat::WildcardPat(_) => PatKind::Wildcard,
             unsupported @ (ast::Pat::ConstBlockPat(_)
@@ -786,7 +780,7 @@ impl<'a> FunctionBodyLowering<'a> {
             .map(|receiver| self.lower_expr(receiver, scope));
         let dot_span = method_call
             .dot_token()
-            .map(|dot| Span::from_text_range(dot.text_range(), self.line_index));
+            .map(|dot| Span::from_text_range(dot.text_range()));
         let name_ref = method_call.name_ref();
         let method_name = name_ref
             .as_ref()
@@ -819,11 +813,11 @@ impl<'a> FunctionBodyLowering<'a> {
         let base = field.expr().map(|base| self.lower_expr(base, scope));
         let dot_span = field
             .dot_token()
-            .map(|dot| Span::from_text_range(dot.text_range(), self.line_index));
+            .map(|dot| Span::from_text_range(dot.text_range()));
         let (field_key, field_span) = if let Some(index) = field.index_token() {
             (
                 index.text().parse::<usize>().ok().map(FieldKey::Tuple),
-                Some(Span::from_text_range(index.text_range(), self.line_index)),
+                Some(Span::from_text_range(index.text_range())),
             )
         } else if let Some(name) = field.name_ref() {
             let field_key = name
@@ -855,10 +849,7 @@ impl<'a> FunctionBodyLowering<'a> {
     }
 
     fn lower_path_expr(&mut self, expr: ast::PathExpr, scope: ScopeId) -> ExprId {
-        let Some(path) = expr
-            .path()
-            .map(|path| body_path_from_ast(path, self.line_index))
-        else {
+        let Some(path) = expr.path().map(body_path_from_ast) else {
             return self.lower_unknown_expr(expr.syntax(), scope);
         };
 
@@ -950,7 +941,7 @@ impl<'a> FunctionBodyLowering<'a> {
     }
 
     fn source(&self, syntax: &ra_syntax::SyntaxNode) -> BodySource {
-        source_for(self.function_source.file_id, syntax, self.line_index)
+        source_for(self.function_source.file_id, syntax)
     }
 }
 
@@ -997,41 +988,34 @@ fn is_capitalized_bare_pat(name: &str, pat: &ast::IdentPat, subpat: Option<PatId
             .is_some_and(|byte| byte.is_ascii_uppercase())
 }
 
-fn body_path_from_ast(path: ast::Path, line_index: &LineIndex) -> BodyPath {
+fn body_path_from_ast(path: ast::Path) -> BodyPath {
     let absolute = path
         .first_segment()
         .is_some_and(|segment| segment.coloncolon_token().is_some());
     let mut segments = Vec::new();
     let mut segment_spans = Vec::new();
-    collect_path_segments(&path, line_index, &mut segments, &mut segment_spans);
+    collect_path_segments(&path, &mut segments, &mut segment_spans);
 
     BodyPath::new(Path { absolute, segments }, segment_spans)
 }
 
 fn collect_path_segments(
     path: &ast::Path,
-    line_index: &LineIndex,
     segments: &mut Vec<PathSegment>,
     segment_spans: &mut Vec<Span>,
 ) {
     if let Some(qualifier) = path.qualifier() {
-        collect_path_segments(&qualifier, line_index, segments, segment_spans);
+        collect_path_segments(&qualifier, segments, segment_spans);
     }
 
     if let Some(segment) = path.segment() {
         let Some(name_ref) = segment.name_ref() else {
             segments.push(PathSegment::Name(normalized_syntax(&segment)));
-            segment_spans.push(Span::from_text_range(
-                segment.syntax().text_range(),
-                line_index,
-            ));
+            segment_spans.push(Span::from_text_range(segment.syntax().text_range()));
             return;
         };
         let name = name_ref.syntax().text().to_string();
-        segment_spans.push(Span::from_text_range(
-            name_ref.syntax().text_range(),
-            line_index,
-        ));
+        segment_spans.push(Span::from_text_range(name_ref.syntax().text_range()));
 
         segments.push(match name.as_str() {
             "self" => PathSegment::SelfKw,
@@ -1042,14 +1026,10 @@ fn collect_path_segments(
     }
 }
 
-fn source_for(
-    file_id: FileId,
-    syntax: &ra_syntax::SyntaxNode,
-    line_index: &LineIndex,
-) -> BodySource {
+fn source_for(file_id: FileId, syntax: &ra_syntax::SyntaxNode) -> BodySource {
     BodySource {
         file_id,
-        span: Span::from_text_range(syntax.text_range(), line_index),
+        span: Span::from_text_range(syntax.text_range()),
     }
 }
 

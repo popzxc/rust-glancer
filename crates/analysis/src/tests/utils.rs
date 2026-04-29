@@ -343,6 +343,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             AnalysisQueryKind::SymbolAt => {
                 self.render_symbol(
                     self.db.analysis().symbol_at(target, file_id, offset),
+                    target.package,
+                    file_id,
                     &mut dump,
                 );
             }
@@ -387,7 +389,12 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 );
             }
             AnalysisQueryKind::Hover => {
-                self.render_hover(self.db.analysis().hover(target, file_id, offset), &mut dump);
+                self.render_hover(
+                    self.db.analysis().hover(target, file_id, offset),
+                    target.package,
+                    file_id,
+                    &mut dump,
+                );
             }
         }
 
@@ -403,7 +410,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         (target, file_id, marker.offset)
     }
 
-    fn render_symbol(&self, symbol: Option<SymbolAt>, dump: &mut String) {
+    fn render_symbol(
+        &self,
+        symbol: Option<SymbolAt>,
+        package: PackageSlot,
+        file_id: FileId,
+        dump: &mut String,
+    ) {
         let Some(symbol) = symbol else {
             writeln!(dump, "\n- <none>").expect("string writes should not fail");
             return;
@@ -419,7 +432,11 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 writeln!(
                     dump,
                     "\n- body @ {}",
-                    self.render_source_span(body_data.source.span)
+                    self.render_source_span(
+                        body.target.package,
+                        body_data.source.file_id,
+                        body_data.source.span
+                    )
                 )
                 .expect("string writes should not fail");
             }
@@ -437,23 +454,37 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     "\n- binding {} {} @ {}",
                     binding_data.kind,
                     binding_data.name.as_deref().unwrap_or("<unsupported>"),
-                    self.render_source_span(binding_data.source.span)
+                    self.render_source_span(
+                        body.target.package,
+                        binding_data.source.file_id,
+                        binding_data.source.span,
+                    )
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::BodyPath { ref path, span, .. } => {
+            SymbolAt::BodyPath {
+                body,
+                ref path,
+                span,
+                ..
+            } => {
                 writeln!(
                     dump,
                     "\n- body path {path} @ {}",
-                    self.render_source_span(span)
+                    self.render_source_span(body.target.package, file_id, span)
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::BodyValuePath { ref path, span, .. } => {
+            SymbolAt::BodyValuePath {
+                body,
+                ref path,
+                span,
+                ..
+            } => {
                 writeln!(
                     dump,
                     "\n- body value path {path} @ {}",
-                    self.render_source_span(span)
+                    self.render_source_span(body.target.package, file_id, span)
                 )
                 .expect("string writes should not fail");
             }
@@ -466,8 +497,12 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
                     .unwrap_or_else(|| "def <unresolved>".to_string());
-                writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
-                    .expect("string writes should not fail");
+                writeln!(
+                    dump,
+                    "\n- {label} @ {}",
+                    self.render_source_span(package, file_id, span)
+                )
+                .expect("string writes should not fail");
             }
             SymbolAt::Expr { body, expr } => {
                 let body_data = self
@@ -478,8 +513,12 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 let expr_data = body_data
                     .expr(expr)
                     .expect("expr id should exist while rendering analysis symbol");
-                writeln!(dump, "\n- {}", self.render_expr_symbol(expr_data))
-                    .expect("string writes should not fail");
+                writeln!(
+                    dump,
+                    "\n- {}",
+                    self.render_expr_symbol(body.target.package, expr_data)
+                )
+                .expect("string writes should not fail");
             }
             SymbolAt::Field { field, span } => {
                 let targets = self
@@ -490,8 +529,12 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
                     .unwrap_or_else(|| "field <unresolved>".to_string());
-                writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
-                    .expect("string writes should not fail");
+                writeln!(
+                    dump,
+                    "\n- {label} @ {}",
+                    self.render_source_span(package, file_id, span)
+                )
+                .expect("string writes should not fail");
             }
             SymbolAt::Function { function, span } => {
                 let targets = self
@@ -502,8 +545,12 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
                     .unwrap_or_else(|| "fn <unresolved>".to_string());
-                writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
-                    .expect("string writes should not fail");
+                writeln!(
+                    dump,
+                    "\n- {label} @ {}",
+                    self.render_source_span(package, file_id, span)
+                )
+                .expect("string writes should not fail");
             }
             SymbolAt::EnumVariant { variant, span } => {
                 let targets = self
@@ -514,23 +561,35 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
                     .unwrap_or_else(|| "variant <unresolved>".to_string());
-                writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
-                    .expect("string writes should not fail");
+                writeln!(
+                    dump,
+                    "\n- {label} @ {}",
+                    self.render_source_span(package, file_id, span)
+                )
+                .expect("string writes should not fail");
             }
             SymbolAt::LocalItem { item, span } => {
                 let label = self.render_body_item_ref(item);
-                writeln!(dump, "\n- {label} @ {}", self.render_source_span(span))
-                    .expect("string writes should not fail");
+                writeln!(
+                    dump,
+                    "\n- {label} @ {}",
+                    self.render_source_span(item.body.target.package, file_id, span)
+                )
+                .expect("string writes should not fail");
             }
             SymbolAt::TypePath { ref path, span, .. }
             | SymbolAt::UsePath { ref path, span, .. } => {
-                writeln!(dump, "\n- path {path} @ {}", self.render_source_span(span))
-                    .expect("string writes should not fail");
+                writeln!(
+                    dump,
+                    "\n- path {path} @ {}",
+                    self.render_source_span(package, file_id, span)
+                )
+                .expect("string writes should not fail");
             }
         }
     }
 
-    fn render_expr_symbol(&self, expr: &ExprData) -> String {
+    fn render_expr_symbol(&self, package: PackageSlot, expr: &ExprData) -> String {
         let label = match &expr.kind {
             ExprKind::Block { .. } => "block".to_string(),
             ExprKind::Path { path } => format!("path {path}"),
@@ -553,7 +612,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
         format!(
             "expr {label} @ {}",
-            self.render_source_span(expr.source.span)
+            self.render_source_span(package, expr.source.file_id, expr.source.span)
         )
     }
 
@@ -581,7 +640,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 "- {} {} @ {}",
                 target.kind,
                 target.name,
-                self.render_optional_span(target.span)
+                self.render_optional_span(target.target.package, target.file_id, target.span)
             )
             .expect("string writes should not fail");
         }
@@ -617,7 +676,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         }
     }
 
-    fn render_hover(&self, hover: Option<HoverInfo>, dump: &mut String) {
+    fn render_hover(
+        &self,
+        hover: Option<HoverInfo>,
+        package: PackageSlot,
+        file_id: FileId,
+        dump: &mut String,
+    ) {
         let Some(hover) = hover else {
             writeln!(dump, "\n- <none>").expect("string writes should not fail");
             return;
@@ -626,7 +691,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         writeln!(
             dump,
             "\n- range: {}",
-            self.render_optional_span(hover.range)
+            self.render_optional_span(package, file_id, hover.range)
         )
         .expect("string writes should not fail");
         for block in hover.blocks {
@@ -861,18 +926,32 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         }
     }
 
-    fn render_optional_span(&self, span: Option<Span>) -> String {
-        span.map(|span| self.render_source_span(span))
+    fn render_optional_span(
+        &self,
+        package: PackageSlot,
+        file_id: FileId,
+        span: Option<Span>,
+    ) -> String {
+        span.map(|span| self.render_source_span(package, file_id, span))
             .unwrap_or_else(|| "<root>".to_string())
     }
 
-    fn render_source_span(&self, span: Span) -> String {
+    fn render_source_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {
+        let line_column = span.line_column(
+            self.db
+                .parse
+                .package(package.0)
+                .expect("span package should exist while rendering analysis query")
+                .parsed_file(file_id)
+                .expect("span file should exist while rendering analysis query")
+                .line_index(),
+        );
         format!(
             "{}:{}-{}:{}",
-            span.line_column.start.line + 1,
-            span.line_column.start.column + 1,
-            span.line_column.end.line + 1,
-            span.line_column.end.column + 1,
+            line_column.start.line + 1,
+            line_column.start.column + 1,
+            line_column.end.line + 1,
+            line_column.end.column + 1,
         )
     }
 }
@@ -897,7 +976,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
         }
 
         writeln!(dump).expect("string writes should not fail");
-        self.render_document_symbol_list(&symbols, 0, &mut dump);
+        self.render_document_symbol_list(target.package, &symbols, 0, &mut dump);
         dump
     }
 
@@ -929,30 +1008,37 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
 
         writeln!(dump).expect("string writes should not fail");
         for hint in hints {
-            self.render_type_hint(&hint, &mut dump);
+            self.render_type_hint(target.package, &hint, &mut dump);
         }
         dump
     }
 
     fn render_document_symbol_list(
         &self,
+        package: PackageSlot,
         symbols: &[DocumentSymbol],
         depth: usize,
         dump: &mut String,
     ) {
         for symbol in symbols {
-            self.render_document_symbol(symbol, depth, dump);
+            self.render_document_symbol(package, symbol, depth, dump);
         }
     }
 
-    fn render_document_symbol(&self, symbol: &DocumentSymbol, depth: usize, dump: &mut String) {
+    fn render_document_symbol(
+        &self,
+        package: PackageSlot,
+        symbol: &DocumentSymbol,
+        depth: usize,
+        dump: &mut String,
+    ) {
         let indent = "  ".repeat(depth);
         let selection = if symbol.selection_span == symbol.span {
             String::new()
         } else {
             format!(
                 " selection {}",
-                self.render_source_span(symbol.selection_span)
+                self.render_source_span(package, symbol.file_id, symbol.selection_span)
             )
         };
         let label = if symbol.kind == crate::SymbolKind::Impl {
@@ -964,12 +1050,12 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
         writeln!(
             dump,
             "{indent}- {label} @ {}{}",
-            self.render_source_span(symbol.span),
+            self.render_source_span(package, symbol.file_id, symbol.span),
             selection
         )
         .expect("string writes should not fail");
 
-        self.render_document_symbol_list(&symbol.children, depth + 1, dump);
+        self.render_document_symbol_list(package, &symbol.children, depth + 1, dump);
     }
 
     fn render_workspace_symbol(&self, symbol: &WorkspaceSymbol, dump: &mut String) {
@@ -991,12 +1077,12 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
         .expect("string writes should not fail");
     }
 
-    fn render_type_hint(&self, hint: &TypeHint, dump: &mut String) {
+    fn render_type_hint(&self, package: PackageSlot, hint: &TypeHint, dump: &mut String) {
         writeln!(
             dump,
             "- `{}` @ {}",
             hint.label,
-            self.render_source_span(hint.span)
+            self.render_source_span(package, hint.file_id, hint.span)
         )
         .expect("string writes should not fail");
     }
@@ -1023,7 +1109,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
     ) -> String {
         let file = self.render_file_path(package, file_id);
         match span {
-            Some(span) => format!("{file}:{}", self.render_source_span(span)),
+            Some(span) => format!("{file}:{}", self.render_source_span(package, file_id, span)),
             None => format!("{file}:<root>"),
         }
     }
@@ -1050,13 +1136,22 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
             })
     }
 
-    fn render_source_span(&self, span: Span) -> String {
+    fn render_source_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {
+        let line_column = span.line_column(
+            self.db
+                .parse
+                .package(package.0)
+                .expect("span package should exist while rendering analysis symbol")
+                .parsed_file(file_id)
+                .expect("span file should exist while rendering analysis symbol")
+                .line_index(),
+        );
         format!(
             "{}:{}-{}:{}",
-            span.line_column.start.line + 1,
-            span.line_column.start.column + 1,
-            span.line_column.end.line + 1,
-            span.line_column.end.column + 1,
+            line_column.start.line + 1,
+            line_column.start.column + 1,
+            line_column.end.line + 1,
+            line_column.end.column + 1,
         )
     }
 }

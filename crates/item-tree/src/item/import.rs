@@ -5,7 +5,7 @@ use ra_syntax::{
     ast::{self, HasName},
 };
 
-use rg_parse::{LineIndex, Span};
+use rg_parse::Span;
 
 /// Syntactic `extern crate` facts attached to `ItemKind::ExternCrate`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,10 +15,10 @@ pub struct ExternCrateItem {
 }
 
 impl ExternCrateItem {
-    pub fn from_ast(item: &ast::ExternCrate, line_index: &LineIndex) -> Self {
+    pub fn from_ast(item: &ast::ExternCrate) -> Self {
         Self {
             name: item.name_ref().map(|name_ref| name_ref.text().to_string()),
-            alias: ImportAlias::from_rename(item.rename(), line_index),
+            alias: ImportAlias::from_rename(item.rename()),
         }
     }
 }
@@ -30,25 +30,20 @@ pub struct UseItem {
 }
 
 impl UseItem {
-    pub fn from_ast(item: &ast::Use, line_index: &LineIndex) -> Self {
+    pub fn from_ast(item: &ast::Use) -> Self {
         let mut imports = Vec::new();
 
         if let Some(use_tree) = item.use_tree() {
-            Self::lower_use_tree(&mut imports, &UsePath::empty(), use_tree, line_index);
+            Self::lower_use_tree(&mut imports, &UsePath::empty(), use_tree);
         }
 
         Self { imports }
     }
 
-    fn lower_use_tree(
-        imports: &mut Vec<UseImport>,
-        prefix: &UsePath,
-        use_tree: ast::UseTree,
-        line_index: &LineIndex,
-    ) {
+    fn lower_use_tree(imports: &mut Vec<UseImport>, prefix: &UsePath, use_tree: ast::UseTree) {
         let path = match use_tree.path() {
             Some(path) => {
-                let Some(path) = UsePath::from_ast(&path, line_index) else {
+                let Some(path) = UsePath::from_ast(&path) else {
                     return;
                 };
                 prefix.joined(&path)
@@ -58,7 +53,7 @@ impl UseItem {
 
         if let Some(use_tree_list) = use_tree.use_tree_list() {
             for child_use_tree in use_tree_list.use_trees() {
-                Self::lower_use_tree(imports, &path, child_use_tree, line_index);
+                Self::lower_use_tree(imports, &path, child_use_tree);
             }
             return;
         }
@@ -74,7 +69,7 @@ impl UseItem {
         imports.push(UseImport {
             kind,
             path,
-            alias: ImportAlias::from_rename(use_tree.rename(), line_index),
+            alias: ImportAlias::from_rename(use_tree.rename()),
         });
     }
 }
@@ -107,7 +102,7 @@ pub enum ImportAlias {
 }
 
 impl ImportAlias {
-    pub fn from_rename(rename: Option<ast::Rename>, line_index: &LineIndex) -> Self {
+    pub fn from_rename(rename: Option<ast::Rename>) -> Self {
         let Some(rename) = rename else {
             return Self::Inferred;
         };
@@ -119,7 +114,7 @@ impl ImportAlias {
         rename
             .name()
             .map(|name| Self::Explicit {
-                span: Span::from_text_range(name.syntax().text_range(), line_index),
+                span: Span::from_text_range(name.syntax().text_range()),
                 name: name.text().to_string(),
             })
             .unwrap_or(Self::Inferred)
@@ -151,15 +146,15 @@ impl UsePath {
         }
     }
 
-    fn from_ast(path: &ast::Path, line_index: &LineIndex) -> Option<Self> {
+    fn from_ast(path: &ast::Path) -> Option<Self> {
         let mut segments = Vec::new();
 
         for segment in path.segments() {
-            let span = Span::from_text_range(segment.syntax().text_range(), line_index);
+            let span = Span::from_text_range(segment.syntax().text_range());
             let lowered_segment = match segment.kind()? {
                 ast::PathSegmentKind::Name(name_ref) => UsePathSegment {
                     kind: UsePathSegmentKind::Name(name_ref.text().to_string()),
-                    span: Span::from_text_range(name_ref.syntax().text_range(), line_index),
+                    span: Span::from_text_range(name_ref.syntax().text_range()),
                 },
                 ast::PathSegmentKind::SelfKw => UsePathSegment {
                     kind: UsePathSegmentKind::SelfKw,

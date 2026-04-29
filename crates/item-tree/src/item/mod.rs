@@ -1,6 +1,6 @@
 use ra_syntax::TextRange;
 
-use rg_parse::{FileId, LineIndex, Span};
+use rg_parse::{FileId, Span};
 
 pub use self::{
     decl::{
@@ -65,16 +65,15 @@ impl ItemNode {
         docs: Option<Documentation>,
         text_range: TextRange,
         file_id: FileId,
-        line_index: &LineIndex,
     ) -> Self {
         Self {
             kind,
             name,
-            name_span: name_range.map(|range| Span::from_text_range(range, line_index)),
+            name_span: name_range.map(|range| Span::from_text_range(range)),
             visibility,
             docs,
             file_id,
-            span: Span::from_text_range(text_range, line_index),
+            span: Span::from_text_range(text_range),
         }
     }
 }

@@ -155,7 +155,7 @@ impl FileDb {
             .map(|error| ParseError {
                 file_id,
                 message: error.to_string(),
-                span: Span::from_text_range(error.range(), &line_index),
+                span: Span::from_text_range(error.range()),
             })
             .collect();
 

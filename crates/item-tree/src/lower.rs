@@ -196,10 +196,7 @@ impl<'db> PackageLowering<'db> {
             )),
             ast::Item::ExternCrate(item) => Some(
                 builder.alloc_documented_item(
-                    ItemKind::ExternCrate(Box::new(ExternCrateItem::from_ast(
-                        &item,
-                        builder.line_index,
-                    ))),
+                    ItemKind::ExternCrate(Box::new(ExternCrateItem::from_ast(&item))),
                     item.name_ref()
                         .map(|name_ref| name_ref.syntax().text().to_string()),
                     item.name_ref()
@@ -302,7 +299,7 @@ impl<'db> PackageLowering<'db> {
                 &item,
             )),
             ast::Item::Use(item) => Some(builder.alloc_documented_item(
-                ItemKind::Use(Box::new(UseItem::from_ast(&item, builder.line_index))),
+                ItemKind::Use(Box::new(UseItem::from_ast(&item))),
                 normalized_use_name(&item),
                 None,
                 VisibilityLevel::from_ast(item.visibility()),
@@ -529,7 +526,6 @@ impl<'a> FileTreeBuilder<'a> {
             docs,
             text_range,
             self.current_file_id,
-            self.line_index,
         ));
         item_id
     }

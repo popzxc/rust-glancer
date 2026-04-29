@@ -360,7 +360,7 @@ impl TypePathSegment {
         Self {
             name,
             args,
-            span: Span::from_text_range(span, line_index),
+            span: Span::from_text_range(span),
         }
     }
 }

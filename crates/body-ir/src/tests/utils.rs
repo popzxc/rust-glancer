@@ -1009,12 +1009,21 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_source(&self, source: BodySource) -> String {
+        let line_column = source.span.line_column(
+            self.project
+                .parse_db()
+                .package(self.target_ref.package.0)
+                .expect("source package should exist while rendering body IR source")
+                .parsed_file(source.file_id)
+                .expect("source file should exist while rendering body IR source")
+                .line_index(),
+        );
         format!(
             "{}:{}-{}:{}",
-            source.span.line_column.start.line + 1,
-            source.span.line_column.start.column + 1,
-            source.span.line_column.end.line + 1,
-            source.span.line_column.end.column + 1,
+            line_column.start.line + 1,
+            line_column.start.column + 1,
+            line_column.end.line + 1,
+            line_column.end.column + 1,
         )
     }
 }
