@@ -207,6 +207,24 @@ pub(super) fn resolve_path_to_defs(
     importing_module: ModuleId,
     path: &super::ImportPath,
 ) -> Vec<DefId> {
+    resolve_path_to_defs_with_filter(
+        states,
+        current_scopes,
+        importing_target,
+        importing_module,
+        path,
+        NameResolutionFilter::AllNamespaces,
+    )
+}
+
+fn resolve_path_to_defs_with_filter(
+    states: &[Vec<TargetState>],
+    current_scopes: &[Vec<Vec<ModuleScopeBuilder>>],
+    importing_target: TargetRef,
+    importing_module: ModuleId,
+    path: &super::ImportPath,
+    terminal_filter: NameResolutionFilter,
+) -> Vec<DefId> {
     let env = BuildResolutionEnv::new(states, current_scopes);
     let result = resolve_path_with_env(
         &env,
@@ -216,6 +234,7 @@ pub(super) fn resolve_path_to_defs(
         },
         path.absolute,
         &path.segments,
+        terminal_filter,
     );
 
     result.resolved
@@ -232,12 +251,13 @@ pub(super) fn resolve_path_to_modules(
     importing_module: ModuleId,
     path: &super::ImportPath,
 ) -> Vec<ModuleRef> {
-    let resolved_defs = resolve_path_to_defs(
+    let resolved_defs = resolve_path_to_defs_with_filter(
         states,
         current_scopes,
         importing_target,
         importing_module,
         path,
+        NameResolutionFilter::TypesOnly,
     );
 
     let mut modules = Vec::new();
@@ -259,7 +279,29 @@ pub fn resolve_path_in_db(
     path: &Path,
 ) -> ResolvePathResult {
     let env = FrozenResolutionEnv::new(db);
-    resolve_path_with_env(&env, importing_module, path.absolute, &path.segments)
+    resolve_path_with_env(
+        &env,
+        importing_module,
+        path.absolute,
+        &path.segments,
+        NameResolutionFilter::AllNamespaces,
+    )
+}
+
+/// Resolves a path whose terminal segment is being used in the type namespace.
+pub fn resolve_path_in_type_namespace(
+    db: &DefMapDb,
+    importing_module: ModuleRef,
+    path: &Path,
+) -> ResolvePathResult {
+    let env = FrozenResolutionEnv::new(db);
+    resolve_path_with_env(
+        &env,
+        importing_module,
+        path.absolute,
+        &path.segments,
+        NameResolutionFilter::TypesOnly,
+    )
 }
 
 /// Maps a resolved definition to the namespace bucket it occupies in scope.
@@ -284,6 +326,7 @@ fn resolve_path_with_env(
     importing_module: ModuleRef,
     absolute: bool,
     segments: &[super::PathSegment],
+    terminal_filter: NameResolutionFilter,
 ) -> ResolvePathResult {
     let Some((first_segment, remaining_segments)) = segments.split_first() else {
         return ResolvePathResult {
@@ -297,7 +340,7 @@ fn resolve_path_with_env(
         importing_module,
         absolute,
         first_segment,
-        !remaining_segments.is_empty(),
+        NameResolutionFilter::for_segment(!remaining_segments.is_empty(), terminal_filter),
     );
 
     if current_defs.is_empty() {
@@ -313,7 +356,10 @@ fn resolve_path_with_env(
             importing_module,
             current_defs,
             segment,
-            segment_idx + 1 < remaining_segments.len(),
+            NameResolutionFilter::for_segment(
+                segment_idx + 1 < remaining_segments.len(),
+                terminal_filter,
+            ),
         );
 
         if current_defs.is_empty() {
@@ -339,7 +385,7 @@ fn resolve_first_segment(
     importing_module: ModuleRef,
     absolute: bool,
     segment: &super::PathSegment,
-    path_prefix: bool,
+    filter: NameResolutionFilter,
 ) -> Vec<DefId> {
     if absolute {
         return match segment {
@@ -366,15 +412,10 @@ fn resolve_first_segment(
             .into_iter()
             .collect(),
         super::PathSegment::Name(name) => {
-            // Local type-namespace bindings shadow extern roots for qualified paths. Value and
-            // macro bindings do not, because they cannot be used as a `foo::bar` prefix.
-            let local_defs = resolve_name_in_module(
-                env,
-                importing_module,
-                importing_module,
-                name,
-                NameResolutionFilter::for_path_prefix(path_prefix),
-            );
+            // Shadowing is namespace-specific. Prefixes and type-position terminals walk the
+            // type namespace, so same-spelling value/macro bindings do not block fallback.
+            let local_defs =
+                resolve_name_in_module(env, importing_module, importing_module, name, filter);
             if !local_defs.is_empty() {
                 return local_defs;
             }
@@ -387,13 +428,7 @@ fn resolve_first_segment(
                 return Vec::new();
             };
 
-            resolve_name_in_module(
-                env,
-                importing_module,
-                prelude_module,
-                name,
-                NameResolutionFilter::for_path_prefix(path_prefix),
-            )
+            resolve_name_in_module(env, importing_module, prelude_module, name, filter)
         }
     }
 }
@@ -407,7 +442,7 @@ fn resolve_next_segment(
     importing_module: ModuleRef,
     current_defs: Vec<DefId>,
     segment: &super::PathSegment,
-    path_prefix: bool,
+    filter: NameResolutionFilter,
 ) -> Vec<DefId> {
     let mut next_defs = Vec::new();
 
@@ -431,13 +466,9 @@ fn resolve_next_segment(
                 }
             }
             super::PathSegment::Name(name) => {
-                for resolved_def in resolve_name_in_module(
-                    env,
-                    importing_module,
-                    module_ref,
-                    name,
-                    NameResolutionFilter::for_path_prefix(path_prefix),
-                ) {
+                for resolved_def in
+                    resolve_name_in_module(env, importing_module, module_ref, name, filter)
+                {
                     push_unique_def(&mut next_defs, resolved_def);
                 }
             }
@@ -454,11 +485,11 @@ enum NameResolutionFilter {
 }
 
 impl NameResolutionFilter {
-    fn for_path_prefix(path_prefix: bool) -> Self {
+    fn for_segment(path_prefix: bool, terminal_filter: Self) -> Self {
         if path_prefix {
             Self::TypesOnly
         } else {
-            Self::AllNamespaces
+            terminal_filter
         }
     }
 }
@@ -466,8 +497,8 @@ impl NameResolutionFilter {
 /// Resolves one textual name inside one module scope.
 ///
 /// The result is visibility-filtered from the perspective of the importing target, because
-/// cross-target resolution is allowed to see only public bindings. Qualified path prefixes use only
-/// the type namespace; terminal segments use every namespace.
+/// cross-target resolution is allowed to see only public bindings. The caller decides which
+/// namespace buckets are meaningful for this path segment.
 fn resolve_name_in_module(
     env: &impl PathResolutionEnv,
     importing_module: ModuleRef,

@@ -256,6 +256,15 @@ impl DefMapDb {
         path_resolution::resolve_path_in_db(self, from, path)
     }
 
+    /// Resolves a path whose terminal segment is used in the type namespace.
+    pub fn resolve_path_in_type_namespace(
+        &self,
+        from: ModuleRef,
+        path: &Path,
+    ) -> ResolvePathResult {
+        path_resolution::resolve_path_in_type_namespace(self, from, path)
+    }
+
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
         for package in self.packages.iter_mut() {

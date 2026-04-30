@@ -192,7 +192,7 @@ fn resolve_path<T: PartialEq>(
     map_def: impl Fn(&SemanticIrDb, DefId) -> Option<T>,
 ) -> Vec<T> {
     let mut resolved_items = Vec::new();
-    for def in def_map.resolve_path(owner, path).resolved {
+    for def in def_map.resolve_path_in_type_namespace(owner, path).resolved {
         let Some(item) = map_def(db, def) else {
             continue;
         };

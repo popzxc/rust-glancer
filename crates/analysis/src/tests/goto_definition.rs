@@ -525,6 +525,62 @@ pub mod prelude {
 }
 
 #[test]
+fn resolves_standard_prelude_signature_paths_shadowed_by_non_type_names() {
+    check_analysis_queries_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_prelude_shadow_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+const StdPrelude: u8 = 0;
+
+pub fn value_shadow(_: Std$goto_value_shadow$Prelude) {}
+
+mod macro_shadow {
+    macro_rules! StdPrelude {
+        () => {};
+    }
+
+    pub fn use_it(_: Std$goto_macro_shadow$Prelude) {}
+}
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod marker {
+    pub struct StdPrelude;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::marker::StdPrelude;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto prelude type shadowed by value", "goto_value_shadow")
+                .in_lib("analysis_prelude_shadow_goto"),
+            AnalysisQuery::goto("goto prelude type shadowed by macro", "goto_macro_shadow")
+                .in_lib("analysis_prelude_shadow_goto"),
+        ],
+        expect![[r#"
+            goto prelude type shadowed by value
+            - struct StdPrelude @ 2:16-2:26
+
+            goto prelude type shadowed by macro
+            - struct StdPrelude @ 2:16-2:26
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_cursors_inside_out_of_line_nested_modules() {
     check_analysis_queries(
         r#"
