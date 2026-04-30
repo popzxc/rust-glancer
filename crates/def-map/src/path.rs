@@ -1,6 +1,7 @@
 use std::fmt;
 
 use rg_item_tree::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind};
+use rg_text::Name;
 
 /// Structured path used by def-map path resolution queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +73,7 @@ impl Path {
         }
 
         match self.segments.first()? {
-            PathSegment::Name(name) => Some(name),
+            PathSegment::Name(name) => Some(name.as_str()),
             PathSegment::SelfKw => Some("self"),
             PathSegment::SuperKw | PathSegment::CrateKw => None,
         }
@@ -89,7 +90,7 @@ impl Path {
     }
 
     pub fn last_segment_label(&self) -> Option<String> {
-        last_segment_name(&self.segments)
+        last_segment_name(&self.segments).map(|name| name.to_string())
     }
 
     pub fn shrink_to_fit(&mut self) {
@@ -121,7 +122,7 @@ impl fmt::Display for Path {
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum PathSegment {
     #[display("{_0}")]
-    Name(String),
+    Name(Name),
     #[display("self")]
     SelfKw,
     #[display("super")]
@@ -131,12 +132,12 @@ pub enum PathSegment {
 }
 
 impl PathSegment {
-    fn from_type_segment_name(name: &str) -> Self {
-        match name {
+    fn from_type_segment_name(name: &Name) -> Self {
+        match name.as_str() {
             "self" => Self::SelfKw,
             "super" => Self::SuperKw,
             "crate" => Self::CrateKw,
-            name => Self::Name(name.to_string()),
+            _ => Self::Name(name.clone()),
         }
     }
 
@@ -156,12 +157,12 @@ impl PathSegment {
     }
 }
 
-pub(super) fn last_segment_name(segments: &[PathSegment]) -> Option<String> {
+pub(super) fn last_segment_name(segments: &[PathSegment]) -> Option<Name> {
     match segments.last()? {
         PathSegment::Name(name) => Some(name.clone()),
-        PathSegment::SelfKw => Some("self".to_string()),
-        PathSegment::SuperKw => Some("super".to_string()),
-        PathSegment::CrateKw => Some("crate".to_string()),
+        PathSegment::SelfKw => Some(Name::new("self")),
+        PathSegment::SuperKw => Some(Name::new("super")),
+        PathSegment::CrateKw => Some(Name::new("crate")),
     }
 }
 
@@ -171,6 +172,7 @@ mod tests {
         TypePath, TypePathSegment, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind,
     };
     use rg_parse::{Span, TextSpan};
+    use rg_text::Name;
 
     use super::{Path, PathSegment};
 
@@ -222,7 +224,7 @@ mod tests {
                         UsePathSegmentKind::CrateKw,
                         UsePathSegmentKind::SuperKw,
                         UsePathSegmentKind::SelfKw,
-                        UsePathSegmentKind::Name("User".to_string()),
+                        UsePathSegmentKind::Name(Name::new("User")),
                     ],
                 ),
                 "crate::super::self::User",
@@ -232,8 +234,8 @@ mod tests {
                 use_path(
                     true,
                     &[
-                        UsePathSegmentKind::Name("api".to_string()),
-                        UsePathSegmentKind::Name("User".to_string()),
+                        UsePathSegmentKind::Name(Name::new("api")),
+                        UsePathSegmentKind::Name(Name::new("User")),
                     ],
                 ),
                 "::api::User",
@@ -251,9 +253,9 @@ mod tests {
         let use_path = use_path(
             true,
             &[
-                UsePathSegmentKind::Name("api".to_string()),
-                UsePathSegmentKind::Name("User".to_string()),
-                UsePathSegmentKind::Name("Id".to_string()),
+                UsePathSegmentKind::Name(Name::new("api")),
+                UsePathSegmentKind::Name(Name::new("User")),
+                UsePathSegmentKind::Name(Name::new("Id")),
             ],
         );
 
@@ -272,7 +274,7 @@ mod tests {
         let cases = [
             (
                 "plain name",
-                path(false, vec![PathSegment::Name("User".to_string())]),
+                path(false, vec![PathSegment::Name(Name::new("User"))]),
                 Some("User"),
             ),
             (
@@ -292,7 +294,7 @@ mod tests {
             ),
             (
                 "absolute name",
-                path(true, vec![PathSegment::Name("User".to_string())]),
+                path(true, vec![PathSegment::Name(Name::new("User"))]),
                 None,
             ),
             (
@@ -300,8 +302,8 @@ mod tests {
                 path(
                     false,
                     vec![
-                        PathSegment::Name("api".to_string()),
-                        PathSegment::Name("User".to_string()),
+                        PathSegment::Name(Name::new("api")),
+                        PathSegment::Name(Name::new("User")),
                     ],
                 ),
                 None,
@@ -318,7 +320,7 @@ mod tests {
         let cases = [
             (
                 "Self type",
-                path(false, vec![PathSegment::Name("Self".to_string())]),
+                path(false, vec![PathSegment::Name(Name::new("Self"))]),
                 false,
                 true,
                 true,
@@ -332,14 +334,14 @@ mod tests {
             ),
             (
                 "other plain ident",
-                path(false, vec![PathSegment::Name("User".to_string())]),
+                path(false, vec![PathSegment::Name(Name::new("User"))]),
                 true,
                 false,
                 false,
             ),
             (
                 "absolute Self",
-                path(true, vec![PathSegment::Name("Self".to_string())]),
+                path(true, vec![PathSegment::Name(Name::new("Self"))]),
                 false,
                 false,
                 false,
@@ -359,7 +361,7 @@ mod tests {
             segments: names
                 .iter()
                 .map(|name| TypePathSegment {
-                    name: (*name).to_string(),
+                    name: Name::new(*name),
                     args: Vec::new(),
                     span: span(),
                 })

@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 
 use rg_item_tree::VisibilityLevel;
+use rg_text::Name;
 
 use super::{
     DefId, DefMapDb, ModuleData, ModuleId, ModuleRef, ModuleScope, Path, ScopeBinding, ScopeEntry,
@@ -145,7 +146,7 @@ pub(super) fn visible_module_scope_entry_set(
     current_scopes: &[Vec<Vec<ModuleScope>>],
     importing_module: ModuleRef,
     source_module: ModuleRef,
-) -> HashMap<String, ScopeEntry> {
+) -> HashMap<Name, ScopeEntry> {
     let env = BuildResolutionEnv::new(states, current_scopes);
     let Some(module_scope) = env.module_scope(source_module) else {
         return HashMap::new();

@@ -20,6 +20,7 @@ use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
 use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TraitApplicability};
+use rg_text::NameInterner;
 
 pub use self::{
     body::{
@@ -60,7 +61,14 @@ impl BodyIrDb {
         def_map: &rg_def_map::DefMapDb,
         semantic_ir: &rg_semantic_ir::SemanticIrDb,
     ) -> anyhow::Result<Self> {
-        Self::build_with_policy(parse, def_map, semantic_ir, BodyIrBuildPolicy::default())
+        let mut interner = NameInterner::new();
+        Self::build_with_policy_and_interner(
+            parse,
+            def_map,
+            semantic_ir,
+            BodyIrBuildPolicy::default(),
+            &mut interner,
+        )
     }
 
     /// Builds Body IR using an explicit package selection policy.
@@ -70,7 +78,19 @@ impl BodyIrDb {
         semantic_ir: &rg_semantic_ir::SemanticIrDb,
         policy: BodyIrBuildPolicy,
     ) -> anyhow::Result<Self> {
-        let mut db = lower::build_db(parse, semantic_ir, policy)?;
+        let mut interner = NameInterner::new();
+        Self::build_with_policy_and_interner(parse, def_map, semantic_ir, policy, &mut interner)
+    }
+
+    /// Builds Body IR using an explicit package selection policy and retained name interner.
+    pub fn build_with_policy_and_interner(
+        parse: &rg_parse::ParseDb,
+        def_map: &rg_def_map::DefMapDb,
+        semantic_ir: &rg_semantic_ir::SemanticIrDb,
+        policy: BodyIrBuildPolicy,
+        interner: &mut NameInterner,
+    ) -> anyhow::Result<Self> {
+        let mut db = lower::build_db(parse, semantic_ir, policy, interner)?;
         resolution::resolve_bodies(&mut db, def_map, semantic_ir);
         db.shrink_to_fit();
         Ok(db)
@@ -85,6 +105,27 @@ impl BodyIrDb {
         policy: BodyIrBuildPolicy,
         packages: &[PackageSlot],
     ) -> anyhow::Result<Self> {
+        let mut interner = NameInterner::new();
+        self.rebuild_packages_with_interner(
+            parse,
+            def_map,
+            semantic_ir,
+            policy,
+            packages,
+            &mut interner,
+        )
+    }
+
+    /// Returns a new Body IR snapshot with selected packages rebuilt using retained names.
+    pub fn rebuild_packages_with_interner(
+        &self,
+        parse: &rg_parse::ParseDb,
+        def_map: &rg_def_map::DefMapDb,
+        semantic_ir: &rg_semantic_ir::SemanticIrDb,
+        policy: BodyIrBuildPolicy,
+        packages: &[PackageSlot],
+        interner: &mut NameInterner,
+    ) -> anyhow::Result<Self> {
         let mut next = self.clone();
         let packages = normalized_package_slots(packages);
 
@@ -98,8 +139,14 @@ impl BodyIrDb {
                         package.0
                     )
                 })?;
-            let rebuilt =
-                lower::build_package(parse, semantic_ir, policy, package.0, target_count)?;
+            let rebuilt = lower::build_package(
+                parse,
+                semantic_ir,
+                policy,
+                package.0,
+                target_count,
+                interner,
+            )?;
             let slot = next.packages.get_mut(*package).with_context(|| {
                 format!("while attempting to replace body IR package {}", package.0)
             })?;

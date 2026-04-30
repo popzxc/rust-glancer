@@ -1,4 +1,5 @@
 use rg_item_tree::TypeRef;
+use rg_text::Name;
 
 use crate::{
     body::BodySource,
@@ -12,7 +13,7 @@ pub struct BindingData {
     pub source: BodySource,
     pub scope: ScopeId,
     pub kind: BindingKind,
-    pub name: Option<String>,
+    pub name: Option<Name>,
     pub annotation: Option<TypeRef>,
     pub ty: BodyTy,
 }

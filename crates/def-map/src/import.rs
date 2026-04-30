@@ -2,6 +2,7 @@ use std::fmt;
 
 use rg_item_tree::{ImportAlias, ItemTreeRef, UseImportKind, UsePath, VisibilityLevel};
 use rg_parse::Span;
+use rg_text::{Name, NameInterner};
 use rg_workspace::RustEdition;
 
 use super::{ModuleId, Path, PathSegment, path::last_segment_name};
@@ -22,7 +23,7 @@ pub struct ImportData {
 
 impl ImportData {
     /// Returns the binding name introduced by this import when it is not a glob import.
-    pub(super) fn binding_name(&self) -> Option<String> {
+    pub(super) fn binding_name(&self) -> Option<Name> {
         let inferred_name = match self.kind {
             ImportKind::Named => self.path.last_name(),
             ImportKind::SelfImport => self.path.last_name(),
@@ -45,7 +46,7 @@ pub enum ImportBinding {
     #[display("")]
     Inferred,
     #[display(" as {_0}")]
-    Explicit(String),
+    Explicit(Name),
     #[display(" as _")]
     Hidden,
 }
@@ -59,7 +60,7 @@ impl ImportBinding {
         }
     }
 
-    pub(super) fn resolve(&self, inferred_name: Option<String>) -> Option<String> {
+    pub(super) fn resolve(&self, inferred_name: Option<Name>) -> Option<Name> {
         match self {
             Self::Inferred => inferred_name,
             Self::Explicit(name) => Some(name.clone()),
@@ -108,18 +109,18 @@ impl ImportPath {
         }
     }
 
-    pub(super) fn standard_prelude(edition: RustEdition) -> Self {
+    pub(super) fn standard_prelude(edition: RustEdition, interner: &mut NameInterner) -> Self {
         Self {
             absolute: true,
             segments: vec![
-                PathSegment::Name("std".to_string()),
-                PathSegment::Name("prelude".to_string()),
-                PathSegment::Name(edition.prelude_module().to_string()),
+                PathSegment::Name(interner.intern("std")),
+                PathSegment::Name(interner.intern("prelude")),
+                PathSegment::Name(interner.intern(edition.prelude_module())),
             ],
         }
     }
 
-    pub(super) fn last_name(&self) -> Option<String> {
+    pub(super) fn last_name(&self) -> Option<Name> {
         last_segment_name(&self.segments)
     }
 

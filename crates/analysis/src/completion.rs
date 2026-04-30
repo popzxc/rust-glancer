@@ -193,11 +193,11 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         match function {
             ResolvedFunctionRef::Semantic(function) => {
                 let data = self.0.semantic_ir.function_data(function)?;
-                data.has_self_receiver().then(|| data.name.clone())
+                data.has_self_receiver().then(|| data.name.to_string())
             }
             ResolvedFunctionRef::BodyLocal(function) => {
                 let data = self.0.body_ir.local_function_data(function)?;
-                data.has_self_receiver().then(|| data.name.clone())
+                data.has_self_receiver().then(|| data.name.to_string())
             }
         }
     }

@@ -434,7 +434,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
                 "self" => PathSegment::SelfKw,
                 "super" => PathSegment::SuperKw,
                 "crate" => PathSegment::CrateKw,
-                name => PathSegment::Name(name.to_string()),
+                name => PathSegment::Name(name.to_string().into()),
             })
             .collect::<Vec<_>>();
 
@@ -593,7 +593,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
     fn sorted_scope_names(&self, scope: &crate::ModuleScope) -> Vec<String> {
         let mut names = scope.names.keys().cloned().collect::<Vec<_>>();
         names.sort();
-        names
+        names.into_iter().map(|name| name.to_string()).collect()
     }
 
     fn render_scope_entry(&self, entry: &ScopeEntry) -> String {

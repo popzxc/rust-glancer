@@ -401,7 +401,7 @@ fn nominal_type_names_at(
         .into_iter()
         .filter_map(|ty| snapshot.semantic_ir_db().local_def_for_type_def(ty))
         .filter_map(|local_def| snapshot.def_map_db().local_def(local_def))
-        .map(|local_def| local_def.name.clone())
+        .map(|local_def| local_def.name.to_string())
         .collect()
 }
 

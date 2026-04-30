@@ -10,6 +10,7 @@ members = [
   "crates/body-ir",
   "crates/analysis",
   "crates/project",
+  "crates/text",
   "crates/arena",
   "crates/memsize",
   "crates/test-fixture",
@@ -57,6 +58,7 @@ rg_semantic_ir = { path = "crates/semantic-ir" }
 rg_body_ir = { path = "crates/body-ir" }
 rg_analysis = { path = "crates/analysis" }
 rg_project = { path = "crates/project" }
+rg_text = { path = "crates/text" }
 rg_arena = { path = "crates/arena" }
 rg_memsize = { path = "crates/memsize" }
 test_fixture = { path = "crates/test-fixture" }

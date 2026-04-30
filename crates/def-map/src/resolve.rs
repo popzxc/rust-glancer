@@ -11,6 +11,7 @@ use anyhow::Context as _;
 
 use rg_item_tree::ItemTreeDb;
 use rg_parse::{self, Package};
+use rg_text::{Name, NameInterner};
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
@@ -32,11 +33,12 @@ pub fn build_db(
     workspace: &WorkspaceMetadata,
     parse: &rg_parse::ParseDb,
     item_tree: &ItemTreeDb,
+    interner: &mut NameInterner,
 ) -> anyhow::Result<DefMapDb> {
     // First compute every implicit crate root from the complete package graph. These roots are
     // needed while collecting target states because extern prelude bindings can point across
     // packages and targets.
-    let implicit_roots = build_implicit_roots(workspace, parse.packages())
+    let implicit_roots = build_implicit_roots(workspace, parse.packages(), interner)
         .context("while attempting to build implicit target roots")?;
 
     // A fresh build collects every target from item trees. At this point scopes contain only
@@ -44,7 +46,7 @@ pub fn build_db(
     let mut target_states = collect_target_states(parse.packages(), item_tree, &implicit_roots)
         .context("while attempting to collect target definitions and imports")?;
 
-    let packages = finalize_and_freeze(workspace, parse.packages(), &mut target_states)
+    let packages = finalize_and_freeze(workspace, parse.packages(), &mut target_states, interner)
         .context("while attempting to finish target states")?;
 
     Ok(DefMapDb {
@@ -63,6 +65,7 @@ pub fn rebuild_packages(
     parse: &rg_parse::ParseDb,
     item_tree: &ItemTreeDb,
     packages: &[PackageSlot],
+    interner: &mut NameInterner,
 ) -> anyhow::Result<DefMapDb> {
     let packages = normalized_package_slots(packages);
     if packages.is_empty() {
@@ -71,7 +74,7 @@ pub fn rebuild_packages(
 
     // Implicit roots are still recomputed from metadata even for package-scoped source rebuilds,
     // because the rebuilt targets need the same cross-target root map shape as a clean build.
-    let implicit_roots = build_implicit_roots(workspace, parse.packages())
+    let implicit_roots = build_implicit_roots(workspace, parse.packages(), interner)
         .context("while attempting to rebuild implicit target roots")?;
 
     // Unaffected packages become frozen target states: their final scopes are treated as base
@@ -116,8 +119,9 @@ pub fn rebuild_packages(
         *slot = package_states;
     }
 
-    let finalized_packages = finalize_and_freeze(workspace, parse.packages(), &mut target_states)
-        .context("while attempting to finish rebuilt target states")?;
+    let finalized_packages =
+        finalize_and_freeze(workspace, parse.packages(), &mut target_states, interner)
+            .context("while attempting to finish rebuilt target states")?;
 
     // Preserve the old snapshot shape and swap in only rebuilt package payloads. This keeps the DB
     // immutable from query consumers' point of view while avoiding a whole-workspace replacement.
@@ -153,10 +157,11 @@ fn finalize_and_freeze(
     workspace: &WorkspaceMetadata,
     packages: &[Package],
     target_states: &mut [Vec<TargetState>],
+    interner: &mut NameInterner,
 ) -> anyhow::Result<Vec<super::Package>> {
     // Prelude selection is separated from target collection because it resolves through the
     // package graph and the directly-declared module scopes, not through one target in isolation.
-    select_preludes(workspace, packages, target_states)
+    select_preludes(workspace, packages, target_states, interner)
         .context("while attempting to select target preludes")?;
 
     // Imports can depend on each other across modules and targets. Resolve them to a fixed point
@@ -254,7 +259,8 @@ fn frozen_target_states(old: &DefMapDb) -> Vec<Vec<TargetState>> {
 fn build_implicit_roots(
     workspace: &WorkspaceMetadata,
     packages: &[Package],
-) -> anyhow::Result<Vec<Vec<HashMap<String, ModuleRef>>>> {
+    interner: &mut NameInterner,
+) -> anyhow::Result<Vec<Vec<HashMap<Name, ModuleRef>>>> {
     let lib_targets = packages
         .iter()
         .enumerate()
@@ -298,7 +304,7 @@ fn build_implicit_roots(
                         .name
                         .clone();
                     target_roots.insert(
-                        lib_name,
+                        interner.intern(lib_name),
                         ModuleRef {
                             target: lib_target,
                             module: ModuleId(0),
@@ -317,7 +323,7 @@ fn build_implicit_roots(
                 };
 
                 target_roots.insert(
-                    dependency.name().to_string(),
+                    interner.intern(dependency.name()),
                     ModuleRef {
                         target: lib_target,
                         module: ModuleId(0),
@@ -347,6 +353,7 @@ fn select_preludes(
     workspace: &WorkspaceMetadata,
     packages: &[Package],
     states: &mut [Vec<TargetState>],
+    interner: &mut NameInterner,
 ) -> anyhow::Result<()> {
     let base_scopes = states
         .iter()
@@ -372,7 +379,7 @@ fn select_preludes(
                 package.id()
             )
         })?;
-        let prelude_path = ImportPath::standard_prelude(workspace_package.edition);
+        let prelude_path = ImportPath::standard_prelude(workspace_package.edition, interner);
 
         for (target_slot, state) in package_states.iter().enumerate() {
             let Some(root_module) = state.def_map.root_module() else {

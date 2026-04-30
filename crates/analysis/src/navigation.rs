@@ -53,7 +53,11 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         Some(NavigationTarget {
             target: module_ref.target,
             kind: NavigationTargetKind::Module,
-            name: module.name.clone().unwrap_or_else(|| "crate".to_string()),
+            name: module
+                .name
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "crate".to_string()),
             file_id,
             span,
         })
@@ -65,7 +69,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         Some(NavigationTarget {
             target: local_def.target,
             kind: NavigationTargetKind::from_local_def_kind(local_def_data.kind),
-            name: local_def_data.name.clone(),
+            name: local_def_data.name.to_string(),
             file_id: local_def_data.file_id,
             // Goto should land on the declaration name rather than the whole item. The full item
             // span intentionally includes doc comments, which is useful for outline/hover-like
@@ -80,7 +84,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         Some(NavigationTarget {
             target: item_ref.body.target,
             kind: NavigationTargetKind::from_body_item_kind(item.kind),
-            name: item.name.clone(),
+            name: item.name.to_string(),
             file_id: item.source.file_id,
             span: Some(item.name_source.span),
         })
@@ -133,7 +137,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         Some(NavigationTarget {
             target: function_ref.target,
             kind: NavigationTargetKind::Function,
-            name: function_data.name.clone(),
+            name: function_data.name.to_string(),
             file_id: function_data.source.file_id,
             span: Some(function_data.name_span.unwrap_or(function_data.span)),
         })
@@ -152,7 +156,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
                 Some(NavigationTarget {
                     target: function.body.target,
                     kind: NavigationTargetKind::Function,
-                    name: data.name.clone(),
+                    name: data.name.to_string(),
                     file_id: data.source.file_id,
                     span: Some(data.name_source.span),
                 })
@@ -169,7 +173,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         Some(NavigationTarget {
             target: variant_ref.target,
             kind: NavigationTargetKind::EnumVariant,
-            name: data.variant.name.clone(),
+            name: data.variant.name.to_string(),
             file_id: data.file_id,
             span: Some(data.variant.name_span),
         })

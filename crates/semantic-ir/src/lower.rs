@@ -12,6 +12,7 @@ use rg_item_tree::{
     Package as ItemTreePackage, StaticItem, TraitItem, TypeAliasItem,
 };
 use rg_parse::{FileId, TargetId};
+use rg_text::Name;
 
 use super::{
     ConstData, EnumData, FunctionData, ImplData, PackageIr, SemanticIrDb, StaticData, StructData,
@@ -230,7 +231,7 @@ impl<'a> TargetLowering<'a> {
             local_def,
             source,
             owner,
-            name: item.name.clone().unwrap_or_else(|| "<missing>".to_string()),
+            name: item.name.clone().unwrap_or_else(|| Name::new("<missing>")),
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
             generics: trait_item.generics.clone(),
@@ -334,7 +335,7 @@ impl<'a> TargetLowering<'a> {
             span: item.span,
             name_span: item.name_span,
             owner,
-            name: item.name.clone().unwrap_or_else(|| "<missing>".to_string()),
+            name: item.name.clone().unwrap_or_else(|| Name::new("<missing>")),
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
             declaration: declaration.clone(),
@@ -355,7 +356,7 @@ impl<'a> TargetLowering<'a> {
             span: item.span,
             name_span: item.name_span,
             owner,
-            name: item.name.clone().unwrap_or_else(|| "<missing>".to_string()),
+            name: item.name.clone().unwrap_or_else(|| Name::new("<missing>")),
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
             declaration: declaration.clone(),
@@ -376,7 +377,7 @@ impl<'a> TargetLowering<'a> {
             span: item.span,
             name_span: item.name_span,
             owner,
-            name: item.name.clone().unwrap_or_else(|| "<missing>".to_string()),
+            name: item.name.clone().unwrap_or_else(|| Name::new("<missing>")),
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
             declaration: declaration.clone(),
@@ -397,7 +398,7 @@ impl<'a> TargetLowering<'a> {
             span: item.span,
             name_span: item.name_span,
             owner,
-            name: item.name.clone().unwrap_or_else(|| "<missing>".to_string()),
+            name: item.name.clone().unwrap_or_else(|| Name::new("<missing>")),
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
             ty: declaration.ty.clone(),

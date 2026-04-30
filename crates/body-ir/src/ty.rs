@@ -1,5 +1,6 @@
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::TypeDefRef;
+use rg_text::Name;
 
 use crate::ids::BodyItemRef;
 
@@ -69,10 +70,7 @@ pub enum BodyGenericArg {
     Type(Box<BodyTy>),
     Lifetime(String),
     Const(String),
-    AssocType {
-        name: String,
-        ty: Option<Box<BodyTy>>,
-    },
+    AssocType { name: Name, ty: Option<Box<BodyTy>> },
     Unsupported(String),
 }
 

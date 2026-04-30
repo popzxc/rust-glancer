@@ -17,6 +17,7 @@ use ra_syntax::{
 use rg_arena::Arena;
 
 use rg_parse::{FileId, LineIndex, Package as ParsePackage};
+use rg_text::{Name, NameInterner};
 
 use super::{
     ConstItem, Documentation, EnumItem, ExternCrateItem, FileTree, FunctionItem, ImplItem,
@@ -25,8 +26,11 @@ use super::{
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
-pub(super) fn build_package(parse_package: &mut ParsePackage) -> anyhow::Result<Package> {
-    PackageLowering::new(parse_package).build()
+pub(super) fn build_package(
+    parse_package: &mut ParsePackage,
+    interner: &mut NameInterner,
+) -> anyhow::Result<Package> {
+    PackageLowering::new(parse_package, interner).build()
 }
 
 /// Mutable lowering context shared while walking all target roots in one package.
@@ -35,14 +39,16 @@ pub(super) fn build_package(parse_package: &mut ParsePackage) -> anyhow::Result<
 /// following out-of-line `mod foo;` chains.
 struct PackageLowering<'db> {
     parse_package: &'db mut ParsePackage,
+    interner: &'db mut NameInterner,
     active_stack: HashSet<FileId>,
     file_trees: Arena<FileId, Option<FileTree>>,
 }
 
 impl<'db> PackageLowering<'db> {
-    fn new(parse_package: &'db mut ParsePackage) -> Self {
+    fn new(parse_package: &'db mut ParsePackage, interner: &'db mut NameInterner) -> Self {
         Self {
             parse_package,
+            interner,
             active_stack: HashSet::default(),
             file_trees: Arena::new(),
         }
@@ -143,6 +149,18 @@ impl<'db> PackageLowering<'db> {
         }
     }
 
+    fn intern_name(&mut self, text: impl AsRef<str>) -> Name {
+        self.interner.intern(text)
+    }
+
+    fn intern_ast_name(&mut self, name: Option<ast::Name>) -> Option<Name> {
+        name.map(|name| self.intern_name(name.text().to_string()))
+    }
+
+    fn intern_ast_name_ref(&mut self, name: Option<ast::NameRef>) -> Option<Name> {
+        name.map(|name| self.intern_name(name.syntax().text().to_string()))
+    }
+
     /// Lowers all top-level items from one file into item-tree nodes.
     fn collect_items(
         &mut self,
@@ -187,15 +205,23 @@ impl<'db> PackageLowering<'db> {
                 item.syntax().text_range(),
             )),
             ast::Item::Const(item) => Some(builder.alloc_documented_item(
-                ItemKind::Const(Box::new(ConstItem::from_ast(&item, builder.line_index))),
-                item.name().map(|name| name.text().to_string()),
+                ItemKind::Const(Box::new(ConstItem::from_ast(
+                    &item,
+                    builder.line_index,
+                    self.interner,
+                ))),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::Enum(item) => Some(builder.alloc_documented_item(
-                ItemKind::Enum(Box::new(EnumItem::from_ast(&item, builder.line_index))),
-                item.name().map(|name| name.text().to_string()),
+                ItemKind::Enum(Box::new(EnumItem::from_ast(
+                    &item,
+                    builder.line_index,
+                    self.interner,
+                ))),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
@@ -209,9 +235,11 @@ impl<'db> PackageLowering<'db> {
             )),
             ast::Item::ExternCrate(item) => Some(
                 builder.alloc_documented_item(
-                    ItemKind::ExternCrate(Box::new(ExternCrateItem::from_ast(&item))),
-                    item.name_ref()
-                        .map(|name_ref| name_ref.syntax().text().to_string()),
+                    ItemKind::ExternCrate(Box::new(ExternCrateItem::from_ast(
+                        &item,
+                        self.interner,
+                    ))),
+                    self.intern_ast_name_ref(item.name_ref()),
                     item.name_ref()
                         .map(|name_ref| name_ref.syntax().text_range()),
                     VisibilityLevel::from_ast(item.visibility()),
@@ -219,8 +247,12 @@ impl<'db> PackageLowering<'db> {
                 ),
             ),
             ast::Item::Fn(item) => Some(builder.alloc_documented_item(
-                ItemKind::Function(Box::new(FunctionItem::from_ast(&item, builder.line_index))),
-                item.name().map(|name| name.text().to_string()),
+                ItemKind::Function(Box::new(FunctionItem::from_ast(
+                    &item,
+                    builder.line_index,
+                    self.interner,
+                ))),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
@@ -240,27 +272,30 @@ impl<'db> PackageLowering<'db> {
             ast::Item::MacroCall(_) => None,
             ast::Item::MacroDef(item) => Some(builder.alloc_documented_item(
                 ItemKind::MacroDefinition,
-                item.name().map(|name| name.text().to_string()),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::MacroRules(item) => Some(builder.alloc_documented_item(
                 ItemKind::MacroDefinition,
-                item.name().map(|name| name.text().to_string()),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::Module(item) => {
-                let module_name = item.name().map(|name| name.text().to_string());
+                let module_name = self.intern_ast_name(item.name());
                 let module_name_range = item.name().map(|name| name.syntax().text_range());
                 let module_item = self
                     .collect_module(builder, &item, module_file_context)
                     .with_context(|| {
                         format!(
                             "while attempting to collect module item for {}",
-                            module_name.as_deref().unwrap_or("<unnamed>")
+                            module_name
+                                .as_ref()
+                                .map(Name::as_str)
+                                .unwrap_or("<unnamed>")
                         )
                     })?;
                 Some(builder.alloc_documented_item(
@@ -272,15 +307,23 @@ impl<'db> PackageLowering<'db> {
                 ))
             }
             ast::Item::Static(item) => Some(builder.alloc_documented_item(
-                ItemKind::Static(Box::new(StaticItem::from_ast(&item, builder.line_index))),
-                item.name().map(|name| name.text().to_string()),
+                ItemKind::Static(Box::new(StaticItem::from_ast(
+                    &item,
+                    builder.line_index,
+                    self.interner,
+                ))),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::Struct(item) => Some(builder.alloc_documented_item(
-                ItemKind::Struct(Box::new(StructItem::from_ast(&item, builder.line_index))),
-                item.name().map(|name| name.text().to_string()),
+                ItemKind::Struct(Box::new(StructItem::from_ast(
+                    &item,
+                    builder.line_index,
+                    self.interner,
+                ))),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
@@ -291,29 +334,37 @@ impl<'db> PackageLowering<'db> {
                     .context("while attempting to lower trait declaration")?;
                 Some(builder.alloc_documented_item(
                     ItemKind::Trait(Box::new(trait_item)),
-                    item.name().map(|name| name.text().to_string()),
+                    self.intern_ast_name(item.name()),
                     item.name().map(|name| name.syntax().text_range()),
                     VisibilityLevel::from_ast(item.visibility()),
                     &item,
                 ))
             }
             ast::Item::TypeAlias(item) => Some(builder.alloc_documented_item(
-                ItemKind::TypeAlias(Box::new(TypeAliasItem::from_ast(&item, builder.line_index))),
-                item.name().map(|name| name.text().to_string()),
+                ItemKind::TypeAlias(Box::new(TypeAliasItem::from_ast(
+                    &item,
+                    builder.line_index,
+                    self.interner,
+                ))),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::Union(item) => Some(builder.alloc_documented_item(
-                ItemKind::Union(Box::new(UnionItem::from_ast(&item, builder.line_index))),
-                item.name().map(|name| name.text().to_string()),
+                ItemKind::Union(Box::new(UnionItem::from_ast(
+                    &item,
+                    builder.line_index,
+                    self.interner,
+                ))),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::Use(item) => Some(builder.alloc_documented_item(
-                ItemKind::Use(Box::new(UseItem::from_ast(&item))),
-                normalized_use_name(&item),
+                ItemKind::Use(Box::new(UseItem::from_ast(&item, self.interner))),
+                normalized_use_name(&item).map(|name| self.intern_name(name)),
                 None,
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
@@ -405,7 +456,12 @@ impl<'db> PackageLowering<'db> {
             .collect_assoc_items(builder, assoc_items)
             .context("while attempting to lower trait associated items")?;
 
-        Ok(TraitItem::from_ast(item, items, builder.line_index))
+        Ok(TraitItem::from_ast(
+            item,
+            items,
+            builder.line_index,
+            self.interner,
+        ))
     }
 
     fn lower_impl_item(
@@ -420,7 +476,12 @@ impl<'db> PackageLowering<'db> {
         let items = self
             .collect_assoc_items(builder, assoc_items)
             .context("while attempting to lower impl associated items")?;
-        Ok(ImplItem::from_ast(item, items, builder.line_index))
+        Ok(ImplItem::from_ast(
+            item,
+            items,
+            builder.line_index,
+            self.interner,
+        ))
     }
 
     fn collect_assoc_items(
@@ -446,23 +507,35 @@ impl<'db> PackageLowering<'db> {
     ) -> anyhow::Result<Option<ItemTreeId>> {
         let item_id = match item {
             ast::AssocItem::Const(item) => Some(builder.alloc_documented_item(
-                ItemKind::Const(Box::new(ConstItem::from_ast(&item, builder.line_index))),
-                item.name().map(|name| name.text().to_string()),
+                ItemKind::Const(Box::new(ConstItem::from_ast(
+                    &item,
+                    builder.line_index,
+                    self.interner,
+                ))),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::AssocItem::Fn(item) => Some(builder.alloc_documented_item(
-                ItemKind::Function(Box::new(FunctionItem::from_ast(&item, builder.line_index))),
-                item.name().map(|name| name.text().to_string()),
+                ItemKind::Function(Box::new(FunctionItem::from_ast(
+                    &item,
+                    builder.line_index,
+                    self.interner,
+                ))),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::AssocItem::MacroCall(_) => None,
             ast::AssocItem::TypeAlias(item) => Some(builder.alloc_documented_item(
-                ItemKind::TypeAlias(Box::new(TypeAliasItem::from_ast(&item, builder.line_index))),
-                item.name().map(|name| name.text().to_string()),
+                ItemKind::TypeAlias(Box::new(TypeAliasItem::from_ast(
+                    &item,
+                    builder.line_index,
+                    self.interner,
+                ))),
+                self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
@@ -492,7 +565,7 @@ impl<'a> FileTreeBuilder<'a> {
     fn alloc_item(
         &mut self,
         kind: ItemKind,
-        name: Option<String>,
+        name: Option<Name>,
         name_range: Option<ra_syntax::TextRange>,
         visibility: VisibilityLevel,
         text_range: ra_syntax::TextRange,
@@ -503,7 +576,7 @@ impl<'a> FileTreeBuilder<'a> {
     fn alloc_documented_item<T>(
         &mut self,
         kind: ItemKind,
-        name: Option<String>,
+        name: Option<Name>,
         name_range: Option<ra_syntax::TextRange>,
         visibility: VisibilityLevel,
         item: &T,
@@ -524,7 +597,7 @@ impl<'a> FileTreeBuilder<'a> {
     fn alloc_item_with_docs(
         &mut self,
         kind: ItemKind,
-        name: Option<String>,
+        name: Option<Name>,
         name_range: Option<ra_syntax::TextRange>,
         visibility: VisibilityLevel,
         docs: Option<Documentation>,

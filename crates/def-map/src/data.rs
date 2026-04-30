@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use rg_arena::Arena;
 use rg_item_tree::{Documentation, ItemTag, ItemTreeRef, VisibilityLevel};
 use rg_parse::{FileId, Span};
+use rg_text::Name;
 
 use super::{DefId, ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef};
 
@@ -11,7 +12,7 @@ use super::{DefId, ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, Modu
 pub struct DefMap {
     pub(crate) root_module: Option<ModuleId>,
     // Currently means “implicit roots visible to this target,” including sibling lib roots
-    pub(crate) extern_prelude: HashMap<String, ModuleRef>,
+    pub(crate) extern_prelude: HashMap<Name, ModuleRef>,
     // Standard prelude module selected for this target, if sysroot sources are available.
     pub(crate) prelude: Option<ModuleRef>,
     pub modules: Arena<ModuleId, ModuleData>,
@@ -27,7 +28,7 @@ impl DefMap {
     }
 
     /// Returns the external root names visible from this target.
-    pub fn extern_prelude(&self) -> &HashMap<String, ModuleRef> {
+    pub fn extern_prelude(&self) -> &HashMap<Name, ModuleRef> {
         &self.extern_prelude
     }
 
@@ -82,7 +83,7 @@ impl DefMap {
         self.root_module = Some(root_module);
     }
 
-    pub(super) fn set_extern_prelude(&mut self, extern_prelude: HashMap<String, ModuleRef>) {
+    pub(super) fn set_extern_prelude(&mut self, extern_prelude: HashMap<Name, ModuleRef>) {
         self.extern_prelude = extern_prelude;
     }
 
@@ -111,11 +112,11 @@ impl DefMap {
 /// One module in the frozen namespace graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleData {
-    pub name: Option<String>,
+    pub name: Option<Name>,
     pub name_span: Option<Span>,
     pub docs: Option<Documentation>,
     pub parent: Option<ModuleId>,
-    pub children: Vec<(String, ModuleId)>,
+    pub children: Vec<(Name, ModuleId)>,
     pub local_defs: Vec<LocalDefId>,
     pub impls: Vec<LocalImplId>,
     pub imports: Vec<ImportId>,
@@ -182,7 +183,7 @@ impl ModuleOrigin {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalDefData {
     pub module: ModuleId,
-    pub name: String,
+    pub name: Name,
     pub kind: LocalDefKind,
     pub visibility: VisibilityLevel,
     pub source: ItemTreeRef,
@@ -232,23 +233,23 @@ pub enum LocalDefKind {
 /// Module scope with separate namespaces stored under one textual name map.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ModuleScope {
-    pub names: HashMap<String, ScopeEntry>,
+    pub names: HashMap<Name, ScopeEntry>,
 }
 
 impl ModuleScope {
     pub(super) fn insert_binding(
         &mut self,
-        name: &str,
+        name: &Name,
         namespace: Namespace,
         binding: ScopeBinding,
     ) -> bool {
-        let entry = self.names.entry(name.to_string()).or_default();
+        let entry = self.names.entry(name.clone()).or_default();
         entry.insert_binding(namespace, binding)
     }
 
     pub(super) fn copy_visible_bindings(
         &mut self,
-        name: &str,
+        name: &Name,
         entry: &ScopeEntry,
         visibility: VisibilityLevel,
         owner: ModuleRef,

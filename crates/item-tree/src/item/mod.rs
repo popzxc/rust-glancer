@@ -1,6 +1,7 @@
 use ra_syntax::TextRange;
 
 use rg_parse::{FileId, Span};
+use rg_text::Name;
 
 pub use self::{
     decl::{
@@ -55,7 +56,7 @@ pub struct ItemTreeRef {
 pub struct ItemNode {
     pub kind: ItemKind,
     /// Name (when applicable), e.g. for functions or structs.
-    pub name: Option<String>,
+    pub name: Option<Name>,
     /// Source span of the declaration name, when the item has one.
     pub name_span: Option<Span>,
     pub visibility: VisibilityLevel,
@@ -71,7 +72,7 @@ impl ItemNode {
     /// Creates a fully-populated item node from already-lowered parts.
     pub(super) fn new(
         kind: ItemKind,
-        name: Option<String>,
+        name: Option<Name>,
         name_range: Option<TextRange>,
         visibility: VisibilityLevel,
         docs: Option<Documentation>,

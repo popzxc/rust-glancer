@@ -351,7 +351,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 "self" => PathSegment::SelfKw,
                 "super" => PathSegment::SuperKw,
                 "crate" => PathSegment::CrateKw,
-                name => PathSegment::Name(name.to_string()),
+                name => PathSegment::Name(name.to_string().into()),
             })
             .collect::<Vec<_>>();
 

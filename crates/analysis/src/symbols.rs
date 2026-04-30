@@ -86,7 +86,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         symbols: &mut Vec<DocumentSymbol>,
     ) {
         for (_, data) in self.0.def_map.modules(target) {
-            let Some(name) = data.name.clone() else {
+            let Some(name) = data.name.as_ref().map(ToString::to_string) else {
                 continue;
             };
             let Some(source) = Self::module_declaration_source(data) else {
@@ -133,7 +133,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
     fn struct_document_symbol(&self, data: &StructData, file_id: FileId) -> Option<DocumentSymbol> {
         let def = self.local_def_symbol_source(data.local_def, file_id)?;
         Some(DocumentSymbol {
-            name: data.name.clone(),
+            name: data.name.to_string(),
             kind: SymbolKind::Struct,
             file_id,
             span: def.span,
@@ -156,7 +156,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
     fn union_document_symbol(&self, data: &UnionData, file_id: FileId) -> Option<DocumentSymbol> {
         let def = self.local_def_symbol_source(data.local_def, file_id)?;
         Some(DocumentSymbol {
-            name: data.name.clone(),
+            name: data.name.to_string(),
             kind: SymbolKind::Union,
             file_id,
             span: def.span,
@@ -178,7 +178,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
     fn enum_document_symbol(&self, data: &EnumData, file_id: FileId) -> Option<DocumentSymbol> {
         let def = self.local_def_symbol_source(data.local_def, file_id)?;
         Some(DocumentSymbol {
-            name: data.name.clone(),
+            name: data.name.to_string(),
             kind: SymbolKind::Enum,
             file_id,
             span: def.span,
@@ -187,7 +187,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 .variants
                 .iter()
                 .map(|variant| DocumentSymbol {
-                    name: variant.name.clone(),
+                    name: variant.name.to_string(),
                     kind: SymbolKind::EnumVariant,
                     file_id,
                     span: variant.span,
@@ -223,7 +223,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
             };
 
             symbols.push(DocumentSymbol {
-                name: data.name.clone(),
+                name: data.name.to_string(),
                 kind: SymbolKind::Trait,
                 file_id,
                 span: def.span,
@@ -359,7 +359,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
 
     fn function_document_symbol(&self, data: &FunctionData, kind: SymbolKind) -> DocumentSymbol {
         DocumentSymbol {
-            name: data.name.clone(),
+            name: data.name.to_string(),
             kind,
             file_id: data.source.file_id,
             span: data.span,
@@ -370,7 +370,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
 
     fn type_alias_document_symbol(&self, data: &TypeAliasData) -> DocumentSymbol {
         DocumentSymbol {
-            name: data.name.clone(),
+            name: data.name.to_string(),
             kind: SymbolKind::TypeAlias,
             file_id: data.source.file_id,
             span: data.span,
@@ -381,7 +381,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
 
     fn const_document_symbol(&self, data: &ConstData) -> DocumentSymbol {
         DocumentSymbol {
-            name: data.name.clone(),
+            name: data.name.to_string(),
             kind: SymbolKind::Const,
             file_id: data.source.file_id,
             span: data.span,
@@ -392,7 +392,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
 
     fn static_document_symbol(&self, data: &StaticData) -> DocumentSymbol {
         DocumentSymbol {
-            name: data.name.clone(),
+            name: data.name.to_string(),
             kind: SymbolKind::Static,
             file_id: data.source.file_id,
             span: data.span,
@@ -452,7 +452,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
 
     fn body_item_document_symbol(&self, file_id: FileId, item: &BodyItemData) -> DocumentSymbol {
         DocumentSymbol {
-            name: item.name.clone(),
+            name: item.name.to_string(),
             kind: SymbolKind::from_body_item_kind(item.kind),
             file_id,
             span: item.source.span,
@@ -489,7 +489,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 .filter_map(|function| {
                     let data = body.local_function(*function)?;
                     Some(DocumentSymbol {
-                        name: data.name.clone(),
+                        name: data.name.to_string(),
                         kind: SymbolKind::Method,
                         file_id: data.source.file_id,
                         span: data.source.span,
@@ -508,7 +508,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         // Associated functions may already be nested below traits or impls, so search the outline
         // tree instead of assuming module-level placement.
         for symbol in symbols {
-            if symbol.name == function.name
+            if symbol.name == function.name.as_str()
                 && symbol.span == function.span
                 && matches!(symbol.kind, SymbolKind::Function | SymbolKind::Method)
             {
@@ -568,11 +568,11 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 self.push_workspace_symbol(
                     WorkspaceSymbolInput {
                         target,
-                        name: variant.name.clone(),
+                        name: variant.name.to_string(),
                         kind: SymbolKind::EnumVariant,
                         file_id: data.source.file_id,
                         span: Some(variant.name_span),
-                        container_name: Some(data.name.clone()),
+                        container_name: Some(data.name.to_string()),
                     },
                     query,
                     symbols,
@@ -588,7 +588,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         symbols: &mut Vec<WorkspaceSymbol>,
     ) {
         for (module_ref, data) in self.0.def_map.modules(target) {
-            let Some(name) = data.name.clone() else {
+            let Some(name) = data.name.as_ref().map(ToString::to_string) else {
                 continue;
             };
             let Some(source) = Self::module_declaration_source(data) else {
@@ -666,7 +666,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
             self.push_workspace_symbol(
                 WorkspaceSymbolInput {
                     target,
-                    name: data.name.clone(),
+                    name: data.name.to_string(),
                     kind: SymbolKind::Function,
                     file_id: data.source.file_id,
                     span: Some(data.name_span.unwrap_or(data.span)),
@@ -743,7 +743,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                     self.push_workspace_symbol(
                         WorkspaceSymbolInput {
                             target,
-                            name: data.name.clone(),
+                            name: data.name.to_string(),
                             kind: SymbolKind::Method,
                             file_id: data.source.file_id,
                             span: Some(data.name_span.unwrap_or(data.span)),
@@ -855,7 +855,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         self.push_workspace_symbol(
             WorkspaceSymbolInput {
                 target,
-                name: data.name.clone(),
+                name: data.name.to_string(),
                 kind: SymbolKind::TypeAlias,
                 file_id: data.source.file_id,
                 span: Some(data.name_span.unwrap_or(data.span)),
@@ -877,7 +877,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         self.push_workspace_symbol(
             WorkspaceSymbolInput {
                 target,
-                name: data.name.clone(),
+                name: data.name.to_string(),
                 kind: SymbolKind::Const,
                 file_id: data.source.file_id,
                 span: Some(data.name_span.unwrap_or(data.span)),
@@ -972,12 +972,12 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
             return String::new();
         };
         let Some(parent) = data.parent else {
-            return name.clone();
+            return name.to_string();
         };
 
         let parent_path = self.module_path(target, parent);
         if parent_path.is_empty() {
-            name.clone()
+            name.to_string()
         } else {
             format!("{parent_path}::{name}")
         }

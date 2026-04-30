@@ -6,19 +6,22 @@ use ra_syntax::{
 };
 
 use rg_parse::Span;
+use rg_text::{Name, NameInterner};
 
 /// Syntactic `extern crate` facts attached to `ItemKind::ExternCrate`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternCrateItem {
-    pub name: Option<String>,
+    pub name: Option<Name>,
     pub alias: ImportAlias,
 }
 
 impl ExternCrateItem {
-    pub fn from_ast(item: &ast::ExternCrate) -> Self {
+    pub fn from_ast(item: &ast::ExternCrate, interner: &mut NameInterner) -> Self {
         Self {
-            name: item.name_ref().map(|name_ref| name_ref.text().to_string()),
-            alias: ImportAlias::from_rename(item.rename()),
+            name: item
+                .name_ref()
+                .map(|name_ref| interner.intern(name_ref.text().to_string())),
+            alias: ImportAlias::from_rename(item.rename(), interner),
         }
     }
 }
@@ -30,20 +33,25 @@ pub struct UseItem {
 }
 
 impl UseItem {
-    pub fn from_ast(item: &ast::Use) -> Self {
+    pub fn from_ast(item: &ast::Use, interner: &mut NameInterner) -> Self {
         let mut imports = Vec::new();
 
         if let Some(use_tree) = item.use_tree() {
-            Self::lower_use_tree(&mut imports, &UsePath::empty(), use_tree);
+            Self::lower_use_tree(&mut imports, &UsePath::empty(), use_tree, interner);
         }
 
         Self { imports }
     }
 
-    fn lower_use_tree(imports: &mut Vec<UseImport>, prefix: &UsePath, use_tree: ast::UseTree) {
+    fn lower_use_tree(
+        imports: &mut Vec<UseImport>,
+        prefix: &UsePath,
+        use_tree: ast::UseTree,
+        interner: &mut NameInterner,
+    ) {
         let path = match use_tree.path() {
             Some(path) => {
-                let Some(path) = UsePath::from_ast(&path) else {
+                let Some(path) = UsePath::from_ast(&path, interner) else {
                     return;
                 };
                 prefix.joined(&path)
@@ -53,7 +61,7 @@ impl UseItem {
 
         if let Some(use_tree_list) = use_tree.use_tree_list() {
             for child_use_tree in use_tree_list.use_trees() {
-                Self::lower_use_tree(imports, &path, child_use_tree);
+                Self::lower_use_tree(imports, &path, child_use_tree, interner);
             }
             return;
         }
@@ -69,7 +77,7 @@ impl UseItem {
         imports.push(UseImport {
             kind,
             path,
-            alias: ImportAlias::from_rename(use_tree.rename()),
+            alias: ImportAlias::from_rename(use_tree.rename(), interner),
         });
     }
 }
@@ -97,12 +105,12 @@ pub enum UseImportKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImportAlias {
     Inferred,
-    Explicit { name: String, span: Span },
+    Explicit { name: Name, span: Span },
     Hidden,
 }
 
 impl ImportAlias {
-    pub fn from_rename(rename: Option<ast::Rename>) -> Self {
+    pub fn from_rename(rename: Option<ast::Rename>, interner: &mut NameInterner) -> Self {
         let Some(rename) = rename else {
             return Self::Inferred;
         };
@@ -115,7 +123,7 @@ impl ImportAlias {
             .name()
             .map(|name| Self::Explicit {
                 span: Span::from_text_range(name.syntax().text_range()),
-                name: name.text().to_string(),
+                name: interner.intern(name.text().to_string()),
             })
             .unwrap_or(Self::Inferred)
     }
@@ -146,14 +154,14 @@ impl UsePath {
         }
     }
 
-    fn from_ast(path: &ast::Path) -> Option<Self> {
+    fn from_ast(path: &ast::Path, interner: &mut NameInterner) -> Option<Self> {
         let mut segments = Vec::new();
 
         for segment in path.segments() {
             let span = Span::from_text_range(segment.syntax().text_range());
             let lowered_segment = match segment.kind()? {
                 ast::PathSegmentKind::Name(name_ref) => UsePathSegment {
-                    kind: UsePathSegmentKind::Name(name_ref.text().to_string()),
+                    kind: UsePathSegmentKind::Name(interner.intern(name_ref.text().to_string())),
                     span: Span::from_text_range(name_ref.syntax().text_range()),
                 },
                 ast::PathSegmentKind::SelfKw => UsePathSegment {
@@ -247,7 +255,7 @@ impl fmt::Display for UsePathSegment {
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum UsePathSegmentKind {
     #[display("{_0}")]
-    Name(String),
+    Name(Name),
     #[display("self")]
     SelfKw,
     #[display("super")]

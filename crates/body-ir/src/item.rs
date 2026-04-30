@@ -1,6 +1,7 @@
 use rg_item_tree::{
     Documentation, FieldItem, FieldKey, FieldList, FunctionItem, GenericParams, ParamKind, TypeRef,
 };
+use rg_text::Name;
 
 use crate::{
     body::BodySource,
@@ -14,7 +15,7 @@ pub struct BodyItemData {
     pub name_source: BodySource,
     pub scope: ScopeId,
     pub kind: BodyItemKind,
-    pub name: String,
+    pub name: Name,
     pub docs: Option<Documentation>,
     pub generics: GenericParams,
     pub fields: FieldList,
@@ -78,7 +79,7 @@ pub struct BodyFunctionData {
     pub source: BodySource,
     pub name_source: BodySource,
     pub owner: BodyFunctionOwner,
-    pub name: String,
+    pub name: Name,
     pub docs: Option<Documentation>,
     pub declaration: FunctionItem,
 }

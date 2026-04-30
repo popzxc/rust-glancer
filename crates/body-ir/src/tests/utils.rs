@@ -683,7 +683,7 @@ impl TargetBodyIrSnapshot<'_> {
             BodyGenericArg::Const(value) => value.clone(),
             BodyGenericArg::AssocType { name, ty } => match ty {
                 Some(ty) => format!("{name} = {}", self.render_ty(ty)),
-                None => name.clone(),
+                None => name.to_string(),
             },
             BodyGenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
         }

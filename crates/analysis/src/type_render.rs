@@ -83,7 +83,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                     "{name} = {}",
                     self.render(ty).unwrap_or_else(|| "_".to_string())
                 ),
-                None => name.clone(),
+                None => name.to_string(),
             },
             BodyGenericArg::Unsupported(text) => text.clone(),
         }

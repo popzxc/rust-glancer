@@ -6,6 +6,7 @@
 use rg_def_map::{DefMapDb, Path};
 use rg_item_tree::{GenericArg, GenericParams, TypeRef};
 use rg_semantic_ir::{SemanticIrDb, TypePathContext};
+use rg_text::Name;
 
 use crate::{
     resolved::BodyTypePathResolution,
@@ -17,7 +18,7 @@ use super::type_path::resolve_type_path_in_context;
 /// Mapping from a generic type parameter name to the concrete Body IR type known at a use site.
 ///
 /// For example, `Wrapper<User>` against `struct Wrapper<T>` records `T -> User`.
-pub(super) type TypeSubst = Vec<(String, BodyTy)>;
+pub(super) type TypeSubst = Vec<(Name, BodyTy)>;
 
 /// Converts syntax-level type data into the small Body IR type vocabulary in one module/impl
 /// context, applying direct generic substitutions where they are already known.
@@ -132,14 +133,19 @@ pub(super) fn generic_arg_type_ref(arg: &GenericArg) -> Option<&TypeRef> {
     }
 }
 
-pub(super) fn type_param_name_from_type_ref(ty: &TypeRef) -> Option<String> {
+pub(super) fn type_param_name_from_type_ref(ty: &TypeRef) -> Option<Name> {
     let TypeRef::Path(path) = ty else {
         return None;
     };
 
-    Path::from_type_path(path)
-        .single_name()
-        .map(ToString::to_string)
+    let path = Path::from_type_path(path);
+    let name = path.single_name()?;
+    path.segments.iter().find_map(|segment| match segment {
+        rg_def_map::PathSegment::Name(segment_name) if segment_name.as_str() == name => {
+            Some(segment_name.clone())
+        }
+        _ => None,
+    })
 }
 
 pub(super) fn substitute_type_param(path: &Path, subst: &TypeSubst) -> Option<BodyTy> {
@@ -149,7 +155,7 @@ pub(super) fn substitute_type_param(path: &Path, subst: &TypeSubst) -> Option<Bo
     subst
         .iter()
         .rev()
-        .find_map(|(param, ty)| (param == name).then(|| ty.clone()))
+        .find_map(|(param, ty)| (param.as_str() == name).then(|| ty.clone()))
 }
 
 pub(super) fn type_ref_is_self(ty: &TypeRef) -> bool {

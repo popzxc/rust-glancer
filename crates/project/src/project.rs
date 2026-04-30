@@ -6,6 +6,7 @@ use rg_def_map::{DefMapDb, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
+use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{BuildProfile, BuildProfileOptions, profile::BuildProfiler};
@@ -15,6 +16,7 @@ use crate::{BuildProfile, BuildProfileOptions, profile::BuildProfiler};
 pub struct Project {
     pub(crate) workspace: WorkspaceMetadata,
     pub(crate) body_ir_policy: BodyIrBuildPolicy,
+    pub(crate) names: NameInterner,
     pub(crate) parse: ParseDb,
     pub(crate) def_map: DefMapDb,
     pub(crate) semantic_ir: SemanticIrDb,
@@ -33,12 +35,13 @@ impl Project {
         body_ir_policy: BodyIrBuildPolicy,
     ) -> anyhow::Result<Self> {
         let mut profiler = BuildProfiler::disabled();
-        let (parse, def_map, semantic_ir, body_ir) =
+        let (names, parse, def_map, semantic_ir, body_ir) =
             Self::build_phases(&workspace, body_ir_policy, &mut profiler)?;
 
         Ok(Self {
             workspace,
             body_ir_policy,
+            names,
             parse,
             def_map,
             semantic_ir,
@@ -61,12 +64,13 @@ impl Project {
         options: BuildProfileOptions,
     ) -> anyhow::Result<(Self, BuildProfile)> {
         let mut profiler = BuildProfiler::new(options);
-        let (parse, def_map, semantic_ir, body_ir) =
+        let (names, parse, def_map, semantic_ir, body_ir) =
             Self::build_phases(&workspace, body_ir_policy, &mut profiler)?;
 
         let project = Self {
             workspace,
             body_ir_policy,
+            names,
             parse,
             def_map,
             semantic_ir,
@@ -85,11 +89,21 @@ impl Project {
         }
 
         let package_indices = packages.iter().map(|package| package.0).collect::<Vec<_>>();
-        let item_tree = ItemTreeDb::build_packages(&mut self.parse, &package_indices)
-            .context("while attempting to rebuild affected item-tree packages")?;
+        let item_tree = ItemTreeDb::build_packages_with_interner(
+            &mut self.parse,
+            &package_indices,
+            &mut self.names,
+        )
+        .context("while attempting to rebuild affected item-tree packages")?;
         let def_map = self
             .def_map
-            .rebuild_packages(&self.workspace, &self.parse, &item_tree, packages)
+            .rebuild_packages_with_interner(
+                &self.workspace,
+                &self.parse,
+                &item_tree,
+                packages,
+                &mut self.names,
+            )
             .context("while attempting to rebuild affected def-map packages")?;
         let semantic_ir = self
             .semantic_ir
@@ -97,20 +111,26 @@ impl Project {
             .context("while attempting to rebuild affected semantic IR packages")?;
         let body_ir = self
             .body_ir
-            .rebuild_packages(
+            .rebuild_packages_with_interner(
                 &self.parse,
                 &def_map,
                 &semantic_ir,
                 self.body_ir_policy,
                 packages,
+                &mut self.names,
             )
             .context("while attempting to rebuild affected body IR packages")?;
+
+        // ItemTree is a transient rebuild input. Drop it before pruning the weak interner so names
+        // that did not survive into retained DBs are no longer treated as live.
+        drop(item_tree);
 
         self.parse.evict_syntax_trees();
         self.parse.shrink_to_fit();
         self.def_map = def_map;
         self.semantic_ir = semantic_ir;
         self.body_ir = body_ir;
+        self.names.shrink_to_fit();
 
         Ok(())
     }
@@ -119,43 +139,48 @@ impl Project {
         workspace: &WorkspaceMetadata,
         body_ir_policy: BodyIrBuildPolicy,
         profiler: &mut BuildProfiler,
-    ) -> anyhow::Result<(ParseDb, DefMapDb, SemanticIrDb, BodyIrDb)> {
+    ) -> anyhow::Result<(NameInterner, ParseDb, DefMapDb, SemanticIrDb, BodyIrDb)> {
+        let mut names = NameInterner::new();
         let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
         let rss_bytes = profiler.sample_rss();
         let parse_bytes = profiler.measure(&parse);
         profiler.record("after parse", parse_bytes, parse_bytes, rss_bytes);
 
-        let item_tree =
-            ItemTreeDb::build(&mut parse).context("while attempting to build item tree db")?;
+        let item_tree = ItemTreeDb::build_with_interner(&mut parse, &mut names)
+            .context("while attempting to build item tree db")?;
         let rss_bytes = profiler.sample_rss();
+        let names_bytes = profiler.measure(&names);
         let parse_bytes = profiler.measure(&parse);
         let item_tree_bytes = profiler.measure(&item_tree);
         profiler.record(
             "after item-tree",
             item_tree_bytes,
-            profiler.sum_retained(&[parse_bytes, item_tree_bytes]),
+            profiler.sum_retained(&[names_bytes, parse_bytes, item_tree_bytes]),
             rss_bytes,
         );
 
-        let def_map = DefMapDb::build(workspace, &parse, &item_tree)
+        let def_map = DefMapDb::build_with_interner(workspace, &parse, &item_tree, &mut names)
             .context("while attempting to build def map db")?;
         let rss_bytes = profiler.sample_rss();
+        let names_bytes = profiler.measure(&names);
         let def_map_bytes = profiler.measure(&def_map);
         profiler.record(
             "after def-map",
             def_map_bytes,
-            profiler.sum_retained(&[parse_bytes, item_tree_bytes, def_map_bytes]),
+            profiler.sum_retained(&[names_bytes, parse_bytes, item_tree_bytes, def_map_bytes]),
             rss_bytes,
         );
 
         let semantic_ir = SemanticIrDb::build(&item_tree, &def_map)
             .context("while attempting to build semantic ir db")?;
         let rss_bytes = profiler.sample_rss();
+        let names_bytes = profiler.measure(&names);
         let semantic_ir_bytes = profiler.measure(&semantic_ir);
         profiler.record(
             "after semantic-ir",
             semantic_ir_bytes,
             profiler.sum_retained(&[
+                names_bytes,
                 parse_bytes,
                 item_tree_bytes,
                 def_map_bytes,
@@ -169,36 +194,58 @@ impl Project {
         // final retained memory.
         drop(item_tree);
         let rss_bytes = profiler.sample_rss();
+        let names_bytes = profiler.measure(&names);
         profiler.record(
             "after item-tree drop",
             None,
-            profiler.sum_retained(&[parse_bytes, def_map_bytes, semantic_ir_bytes]),
+            profiler.sum_retained(&[names_bytes, parse_bytes, def_map_bytes, semantic_ir_bytes]),
             rss_bytes,
         );
 
-        let body_ir = BodyIrDb::build_with_policy(&parse, &def_map, &semantic_ir, body_ir_policy)
-            .context("while attempting to build body ir db")?;
+        let body_ir = BodyIrDb::build_with_policy_and_interner(
+            &parse,
+            &def_map,
+            &semantic_ir,
+            body_ir_policy,
+            &mut names,
+        )
+        .context("while attempting to build body ir db")?;
         let rss_bytes = profiler.sample_rss();
+        let names_bytes = profiler.measure(&names);
         let body_ir_bytes = profiler.measure(&body_ir);
         profiler.record(
             "after body-ir",
             body_ir_bytes,
-            profiler.sum_retained(&[parse_bytes, def_map_bytes, semantic_ir_bytes, body_ir_bytes]),
+            profiler.sum_retained(&[
+                names_bytes,
+                parse_bytes,
+                def_map_bytes,
+                semantic_ir_bytes,
+                body_ir_bytes,
+            ]),
             rss_bytes,
         );
 
         parse.evict_syntax_trees();
         parse.shrink_to_fit();
         let rss_bytes = profiler.sample_rss();
+        names.shrink_to_fit();
+        let names_bytes = profiler.measure(&names);
         let parse_bytes = profiler.measure(&parse);
         profiler.record(
             "after parse syntax eviction",
             parse_bytes,
-            profiler.sum_retained(&[parse_bytes, def_map_bytes, semantic_ir_bytes, body_ir_bytes]),
+            profiler.sum_retained(&[
+                names_bytes,
+                parse_bytes,
+                def_map_bytes,
+                semantic_ir_bytes,
+                body_ir_bytes,
+            ]),
             rss_bytes,
         );
 
-        Ok((parse, def_map, semantic_ir, body_ir))
+        Ok((names, parse, def_map, semantic_ir, body_ir))
     }
 
     /// Returns the normalized workspace metadata this project was built from.

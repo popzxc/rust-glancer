@@ -18,6 +18,7 @@ use rg_item_tree::{
     ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem,
 };
 use rg_parse::{Package, Target};
+use rg_text::Name;
 
 use super::{
     DefId, DefMap, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
@@ -34,7 +35,7 @@ pub(super) struct TargetState {
     pub(super) target_name: String,
     pub(super) def_map: DefMap,
     pub(super) base_scopes: Vec<ModuleScope>,
-    pub(super) implicit_roots: HashMap<String, ModuleRef>,
+    pub(super) implicit_roots: HashMap<Name, ModuleRef>,
     pub(super) prelude: Option<ModuleRef>,
 }
 
@@ -45,7 +46,7 @@ pub(super) struct TargetState {
 pub(super) fn collect_target_states(
     packages: &[Package],
     item_tree: &ItemTreeDb,
-    implicit_roots: &[Vec<HashMap<String, ModuleRef>>],
+    implicit_roots: &[Vec<HashMap<Name, ModuleRef>>],
 ) -> anyhow::Result<Vec<Vec<TargetState>>> {
     let mut states = Vec::with_capacity(packages.len());
 
@@ -71,7 +72,7 @@ pub(super) fn collect_package_target_states(
     package_slot: usize,
     package: &Package,
     item_tree_package: &ItemTreePackage,
-    implicit_roots: &[Vec<HashMap<String, ModuleRef>>],
+    implicit_roots: &[Vec<HashMap<Name, ModuleRef>>],
 ) -> anyhow::Result<Vec<TargetState>> {
     let mut package_states = Vec::with_capacity(package.targets().len());
 
@@ -113,13 +114,13 @@ pub(super) fn collect_package_target_states(
 /// - `base_scopes`, which starts with only directly known bindings and is enriched later
 struct TargetScopeCollector<'db> {
     target: TargetRef,
-    implicit_roots: &'db HashMap<String, ModuleRef>,
+    implicit_roots: &'db HashMap<Name, ModuleRef>,
     def_map: DefMap,
     base_scopes: Vec<ModuleScope>,
 }
 
 impl<'db> TargetScopeCollector<'db> {
-    fn new(target: TargetRef, implicit_roots: &'db HashMap<String, ModuleRef>) -> Self {
+    fn new(target: TargetRef, implicit_roots: &'db HashMap<Name, ModuleRef>) -> Self {
         Self {
             target,
             implicit_roots,
@@ -170,7 +171,7 @@ impl<'db> TargetScopeCollector<'db> {
     fn alloc_module(
         &mut self,
         parent: Option<ModuleId>,
-        name: Option<String>,
+        name: Option<Name>,
         name_span: Option<rg_parse::Span>,
         docs: Option<rg_item_tree::Documentation>,
         origin: ModuleOrigin,
@@ -388,7 +389,7 @@ impl<'db> TargetScopeCollector<'db> {
         &mut self,
         parent_module: ModuleId,
         child_module: ModuleId,
-        module_name: &str,
+        module_name: &Name,
         visibility: rg_item_tree::VisibilityLevel,
     ) {
         self.def_map
@@ -396,7 +397,7 @@ impl<'db> TargetScopeCollector<'db> {
             .get_mut(parent_module)
             .expect("parent module should exist for child link")
             .children
-            .push((module_name.to_string(), child_module));
+            .push((module_name.clone(), child_module));
         self.base_scopes
             .get_mut(parent_module.0)
             .expect("base scope should exist for child link")

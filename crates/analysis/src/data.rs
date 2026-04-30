@@ -86,7 +86,8 @@ impl NavigationTarget {
             kind: NavigationTargetKind::LocalBinding,
             name: binding
                 .name
-                .clone()
+                .as_ref()
+                .map(ToString::to_string)
                 .unwrap_or_else(|| "<unsupported>".to_string()),
             file_id: binding.source.file_id,
             span: Some(binding.source.span),

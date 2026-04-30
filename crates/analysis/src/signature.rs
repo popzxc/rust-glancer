@@ -285,7 +285,7 @@ fn enum_variant_signature(variant: &EnumVariantItem) -> String {
                 capped_inline_rows(fields.iter().map(tuple_field_signature), fields.len());
             format!("{}({})", variant.name, rendered.join(", "))
         }
-        FieldList::Unit => variant.name.clone(),
+        FieldList::Unit => variant.name.to_string(),
     }
 }
 
@@ -330,7 +330,7 @@ fn tuple_field_signature(field: &FieldItem) -> String {
 fn field_signature(field: &FieldItem) -> Option<String> {
     let key = field.key.as_ref()?;
     let label = match key {
-        FieldKey::Named(name) => name.clone(),
+        FieldKey::Named(name) => name.to_string(),
         FieldKey::Tuple(index) => index.to_string(),
     };
     Some(format!(
@@ -346,13 +346,13 @@ fn generic_params(generics: &GenericParams) -> String {
 
     params.extend(generics.lifetimes.iter().map(|param| {
         if param.bounds.is_empty() {
-            param.name.clone()
+            param.name.to_string()
         } else {
             format!("{}: {}", param.name, param.bounds.join(" + "))
         }
     }));
     params.extend(generics.types.iter().map(|param| {
-        let mut text = param.name.clone();
+        let mut text = param.name.to_string();
         if !param.bounds.is_empty() {
             text.push_str(": ");
             text.push_str(&type_bounds(&param.bounds));

@@ -15,6 +15,7 @@ use rg_item_tree::{
 };
 use rg_parse::{FileId, LineIndex, ParseDb, Span, TargetId};
 use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitRef};
+use rg_text::{Name, NameInterner};
 
 use super::{
     BodyIrBuildPolicy, BodyIrDb,
@@ -33,6 +34,7 @@ pub(super) fn build_db(
     parse: &ParseDb,
     semantic_ir: &SemanticIrDb,
     policy: BodyIrBuildPolicy,
+    interner: &mut NameInterner,
 ) -> anyhow::Result<BodyIrDb> {
     let mut packages = Vec::with_capacity(semantic_ir.packages().len());
 
@@ -43,6 +45,7 @@ pub(super) fn build_db(
             policy,
             package_idx,
             package_ir.targets().len(),
+            interner,
         )?);
     }
 
@@ -55,6 +58,7 @@ pub(super) fn build_package(
     policy: BodyIrBuildPolicy,
     package_idx: usize,
     target_count: usize,
+    interner: &mut NameInterner,
 ) -> anyhow::Result<PackageBodies> {
     let parse_package = parse
         .package(package_idx)
@@ -78,6 +82,7 @@ pub(super) fn build_package(
                 semantic_ir,
                 target_ref,
                 target_bodies: TargetBodies::new(function_count),
+                interner,
             }
             .lower()
             .with_context(|| {
@@ -94,6 +99,7 @@ struct TargetLowering<'a> {
     semantic_ir: &'a SemanticIrDb,
     target_ref: TargetRef,
     target_bodies: TargetBodies,
+    interner: &'a mut NameInterner,
 }
 
 impl<'a> TargetLowering<'a> {
@@ -121,8 +127,14 @@ impl<'a> TargetLowering<'a> {
                 .expect("function source file should exist while lowering body")
                 .line_index();
             let source = source_for(file_id, ast_fn.syntax());
-            let body = FunctionBodyLowering::new(function_ref, owner_module, source, line_index)
-                .lower(ast_fn, body_ast);
+            let body = FunctionBodyLowering::new(
+                function_ref,
+                owner_module,
+                source,
+                line_index,
+                self.interner,
+            )
+            .lower(ast_fn, body_ast);
             let body_id = self.target_bodies.alloc_body(body);
             self.target_bodies
                 .set_function_body(function_ref.id, body_id);
@@ -184,6 +196,7 @@ struct FunctionBodyLowering<'a> {
     owner_module: ModuleRef,
     function_source: BodySource,
     line_index: &'a LineIndex,
+    interner: &'a mut NameInterner,
     builder: BodyBuilder,
 }
 
@@ -193,12 +206,14 @@ impl<'a> FunctionBodyLowering<'a> {
         owner_module: ModuleRef,
         function_source: BodySource,
         line_index: &'a LineIndex,
+        interner: &'a mut NameInterner,
     ) -> Self {
         Self {
             owner,
             owner_module,
             function_source,
             line_index,
+            interner,
             builder: BodyBuilder::default(),
         }
     }
@@ -246,19 +261,23 @@ impl<'a> FunctionBodyLowering<'a> {
 
     fn lower_self_param(&mut self, param: ast::SelfParam, scope: ScopeId) -> BindingId {
         let source = self.source(param.syntax());
-        let annotation = param.ty().map(|ty| TypeRef::from_ast(ty, self.line_index));
+        let annotation = param
+            .ty()
+            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
         self.builder.alloc_binding(BindingData {
             source,
             scope,
             kind: BindingKind::SelfParam,
-            name: Some("self".to_string()),
+            name: Some(self.interner.intern("self")),
             annotation,
             ty: BodyTy::Unknown,
         })
     }
 
     fn lower_param(&mut self, param: ast::Param, scope: ScopeId) -> Vec<BindingId> {
-        let annotation = param.ty().map(|ty| TypeRef::from_ast(ty, self.line_index));
+        let annotation = param
+            .ty()
+            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
         match param.pat() {
             Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation).1,
             None => vec![self.builder.alloc_binding(BindingData {
@@ -340,22 +359,22 @@ impl<'a> FunctionBodyLowering<'a> {
 
     fn lower_local_struct_item(&mut self, item: ast::Struct, scope: ScopeId) -> Option<BodyItemId> {
         let name = item.name()?;
-        let fields = FieldList::from_ast(item.field_list(), self.line_index);
+        let fields = FieldList::from_ast(item.field_list(), self.line_index, self.interner);
 
         Some(self.builder.alloc_local_item(BodyItemData {
             source: self.source(item.syntax()),
             name_source: self.source(name.syntax()),
             scope,
             kind: BodyItemKind::Struct,
-            name: name.text().to_string(),
+            name: self.interner.intern(name.text().to_string()),
             docs: Documentation::from_ast(&item),
-            generics: GenericParams::from_ast(&item, self.line_index),
+            generics: GenericParams::from_ast(&item, self.line_index, self.interner),
             fields,
         }))
     }
 
     fn lower_local_impl_item(&mut self, item: ast::Impl, scope: ScopeId) -> Option<BodyImplId> {
-        let impl_item = ImplItem::from_ast(&item, Vec::new(), self.line_index);
+        let impl_item = ImplItem::from_ast(&item, Vec::new(), self.line_index, self.interner);
         let impl_id = self.builder.alloc_local_impl(BodyImplData {
             source: self.source(item.syntax()),
             scope,
@@ -391,9 +410,9 @@ impl<'a> FunctionBodyLowering<'a> {
             source: self.source(function.syntax()),
             name_source: self.source(name.syntax()),
             owner: BodyFunctionOwner::LocalImpl(impl_id),
-            name: name.text().to_string(),
+            name: self.interner.intern(name.text().to_string()),
             docs: Documentation::from_ast(&function),
-            declaration: FunctionItem::from_ast(&function, self.line_index),
+            declaration: FunctionItem::from_ast(&function, self.line_index, self.interner),
         }))
     }
 
@@ -405,7 +424,7 @@ impl<'a> FunctionBodyLowering<'a> {
             .map(|initializer| self.lower_expr(initializer, scope));
         let annotation = statement
             .ty()
-            .map(|ty| TypeRef::from_ast(ty, self.line_index));
+            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
         let bindings = statement
             .pat()
             .map(|pat| self.lower_pat(pat, scope, BindingKind::Let, annotation.clone()))
@@ -455,13 +474,13 @@ impl<'a> FunctionBodyLowering<'a> {
                 }
             }
             ast::Pat::IdentPat(pat) => {
-                let Some(name) = pat.name().map(|name| name.text().to_string()) else {
+                let Some(name_text) = pat.name().map(|name| name.text().to_string()) else {
                     return self.alloc_unsupported_pat(pat.syntax());
                 };
                 let subpat = pat
                     .pat()
                     .map(|pat| self.lower_pat_inner(pat, scope, kind, None, bindings));
-                if is_capitalized_bare_pat(&name, &pat, subpat) {
+                if is_capitalized_bare_pat(&name_text, &pat, subpat) {
                     let name_span = pat
                         .name()
                         .map(|name| self.source(name.syntax()).span)
@@ -470,12 +489,13 @@ impl<'a> FunctionBodyLowering<'a> {
                         path: Some(BodyPath::new(
                             Path {
                                 absolute: false,
-                                segments: vec![PathSegment::Name(name)],
+                                segments: vec![PathSegment::Name(self.interner.intern(&name_text))],
                             },
                             vec![name_span],
                         )),
                     }
                 } else {
+                    let name = self.interner.intern(&name_text);
                     let binding = self.push_pat_binding(
                         pat.syntax(),
                         scope,
@@ -506,7 +526,7 @@ impl<'a> FunctionBodyLowering<'a> {
                     .into_iter()
                     .flat_map(|field_list| field_list.fields())
                     .filter_map(|field| {
-                        let name = field.field_name()?.text().to_string();
+                        let name = self.interner.intern(field.field_name()?.text().to_string());
                         let key = FieldKey::Named(name.clone());
                         let pat = if let Some(inner) = field.pat() {
                             self.lower_pat_inner(inner, scope, kind, None, bindings)
@@ -523,7 +543,9 @@ impl<'a> FunctionBodyLowering<'a> {
                     })
                     .collect();
                 PatKind::Record {
-                    path: pat.path().map(body_path_from_ast),
+                    path: pat
+                        .path()
+                        .map(|path| body_path_from_ast(path, self.interner)),
                     fields,
                 }
             }
@@ -555,12 +577,16 @@ impl<'a> FunctionBodyLowering<'a> {
                     .map(|inner| self.lower_pat_inner(inner, scope, kind, None, bindings))
                     .collect();
                 PatKind::TupleStruct {
-                    path: pat.path().map(body_path_from_ast),
+                    path: pat
+                        .path()
+                        .map(|path| body_path_from_ast(path, self.interner)),
                     fields,
                 }
             }
             ast::Pat::PathPat(pat) => PatKind::Path {
-                path: pat.path().map(body_path_from_ast),
+                path: pat
+                    .path()
+                    .map(|path| body_path_from_ast(path, self.interner)),
             },
             ast::Pat::RestPat(_) | ast::Pat::WildcardPat(_) => PatKind::Wildcard,
             ast::Pat::ConstBlockPat(_)
@@ -580,7 +606,7 @@ impl<'a> FunctionBodyLowering<'a> {
         syntax: &ra_syntax::SyntaxNode,
         scope: ScopeId,
         kind: BindingKind,
-        name: String,
+        name: Name,
         annotation: Option<TypeRef>,
         bindings: &mut Vec<BindingId>,
     ) -> Option<BindingId> {
@@ -589,7 +615,12 @@ impl<'a> FunctionBodyLowering<'a> {
         if bindings
             .iter()
             .filter_map(|binding| self.builder.bindings.get(*binding))
-            .any(|binding| binding.name.as_deref() == Some(name.as_str()))
+            .any(|binding| {
+                binding
+                    .name
+                    .as_ref()
+                    .is_some_and(|binding_name| binding_name == name.as_str())
+            })
         {
             return None;
         }
@@ -611,7 +642,7 @@ impl<'a> FunctionBodyLowering<'a> {
         syntax: &ra_syntax::SyntaxNode,
         scope: ScopeId,
         kind: BindingKind,
-        name: String,
+        name: Name,
         bindings: &mut Vec<BindingId>,
     ) -> PatId {
         let binding = self.push_pat_binding(syntax, scope, kind, name, None, bindings);
@@ -755,8 +786,8 @@ impl<'a> FunctionBodyLowering<'a> {
         let name_ref = method_call.name_ref();
         let method_name = name_ref
             .as_ref()
-            .map(|name| name.syntax().text().to_string())
-            .unwrap_or_else(|| "<missing>".to_string());
+            .map(|name| self.interner.intern(name.syntax().text().to_string()))
+            .unwrap_or_else(|| self.interner.intern("<missing>"));
         let method_name_span = name_ref
             .as_ref()
             .map(|name| self.source(name.syntax()).span);
@@ -794,7 +825,9 @@ impl<'a> FunctionBodyLowering<'a> {
             let field_key = name
                 .as_tuple_field()
                 .map(FieldKey::Tuple)
-                .unwrap_or_else(|| FieldKey::Named(name.syntax().text().to_string()));
+                .unwrap_or_else(|| {
+                    FieldKey::Named(self.interner.intern(name.syntax().text().to_string()))
+                });
             (Some(field_key), Some(self.source(name.syntax()).span))
         } else {
             (None, None)
@@ -820,7 +853,10 @@ impl<'a> FunctionBodyLowering<'a> {
     }
 
     fn lower_path_expr(&mut self, expr: ast::PathExpr, scope: ScopeId) -> ExprId {
-        let Some(path) = expr.path().map(body_path_from_ast) else {
+        let Some(path) = expr
+            .path()
+            .map(|path| body_path_from_ast(path, self.interner))
+        else {
             return self.lower_unknown_expr(expr.syntax(), scope);
         };
 
@@ -944,29 +980,32 @@ fn is_capitalized_bare_pat(name: &str, pat: &ast::IdentPat, subpat: Option<PatId
             .is_some_and(|byte| byte.is_ascii_uppercase())
 }
 
-fn body_path_from_ast(path: ast::Path) -> BodyPath {
+fn body_path_from_ast(path: ast::Path, interner: &mut NameInterner) -> BodyPath {
     let absolute = path
         .first_segment()
         .is_some_and(|segment| segment.coloncolon_token().is_some());
     let mut segments = Vec::new();
     let mut segment_spans = Vec::new();
-    collect_path_segments(&path, &mut segments, &mut segment_spans);
+    collect_path_segments(&path, interner, &mut segments, &mut segment_spans);
 
     BodyPath::new(Path { absolute, segments }, segment_spans)
 }
 
 fn collect_path_segments(
     path: &ast::Path,
+    interner: &mut NameInterner,
     segments: &mut Vec<PathSegment>,
     segment_spans: &mut Vec<Span>,
 ) {
     if let Some(qualifier) = path.qualifier() {
-        collect_path_segments(&qualifier, segments, segment_spans);
+        collect_path_segments(&qualifier, interner, segments, segment_spans);
     }
 
     if let Some(segment) = path.segment() {
         let Some(name_ref) = segment.name_ref() else {
-            segments.push(PathSegment::Name(normalized_syntax(&segment)));
+            segments.push(PathSegment::Name(
+                interner.intern(normalized_syntax(&segment)),
+            ));
             segment_spans.push(Span::from_text_range(segment.syntax().text_range()));
             return;
         };
@@ -977,7 +1016,7 @@ fn collect_path_segments(
             "self" => PathSegment::SelfKw,
             "super" => PathSegment::SuperKw,
             "crate" => PathSegment::CrateKw,
-            name => PathSegment::Name(name.to_string()),
+            name => PathSegment::Name(interner.intern(name)),
         });
     }
 }

@@ -21,6 +21,7 @@ impl MemorySize for Project {
             self,
             workspace,
             body_ir_policy,
+            names,
             parse,
             def_map,
             semantic_ir,

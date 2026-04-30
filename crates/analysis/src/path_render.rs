@@ -30,7 +30,7 @@ impl<'a, 'db> PathRenderer<'a, 'db> {
         loop {
             let module = def_map.module(current)?;
             if let Some(name) = &module.name {
-                names.push(name.clone());
+                names.push(name.to_string());
             }
 
             let Some(parent) = module.parent else {

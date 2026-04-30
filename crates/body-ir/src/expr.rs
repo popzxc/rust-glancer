@@ -1,5 +1,6 @@
 use rg_item_tree::FieldKey;
 use rg_parse::Span;
+use rg_text::Name;
 
 use crate::{
     body::BodySource,
@@ -54,7 +55,7 @@ pub enum ExprKind {
     MethodCall {
         receiver: Option<ExprId>,
         dot_span: Option<Span>,
-        method_name: String,
+        method_name: Name,
         method_name_span: Option<Span>,
         args: Vec<ExprId>,
     },

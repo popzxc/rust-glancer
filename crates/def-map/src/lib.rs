@@ -11,6 +11,7 @@ mod resolve;
 use rg_arena::Arena;
 use rg_item_tree::ItemTreeDb;
 use rg_parse::{self, TargetId};
+use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
 pub use self::cursor::DefMapCursorCandidate;
@@ -42,7 +43,18 @@ impl DefMapDb {
         parse: &rg_parse::ParseDb,
         item_tree: &ItemTreeDb,
     ) -> anyhow::Result<Self> {
-        let mut db = resolve::build_db(workspace, parse, item_tree)?;
+        let mut interner = NameInterner::new();
+        Self::build_with_interner(workspace, parse, item_tree, &mut interner)
+    }
+
+    /// Builds target-local def maps using a caller-retained name interner.
+    pub fn build_with_interner(
+        workspace: &WorkspaceMetadata,
+        parse: &rg_parse::ParseDb,
+        item_tree: &ItemTreeDb,
+        interner: &mut NameInterner,
+    ) -> anyhow::Result<Self> {
+        let mut db = resolve::build_db(workspace, parse, item_tree, interner)?;
         db.shrink_to_fit();
         Ok(db)
     }
@@ -55,7 +67,21 @@ impl DefMapDb {
         item_tree: &ItemTreeDb,
         packages: &[PackageSlot],
     ) -> anyhow::Result<Self> {
-        let mut db = resolve::rebuild_packages(self, workspace, parse, item_tree, packages)?;
+        let mut interner = NameInterner::new();
+        self.rebuild_packages_with_interner(workspace, parse, item_tree, packages, &mut interner)
+    }
+
+    /// Returns a new def-map snapshot with selected packages rebuilt using retained names.
+    pub fn rebuild_packages_with_interner(
+        &self,
+        workspace: &WorkspaceMetadata,
+        parse: &rg_parse::ParseDb,
+        item_tree: &ItemTreeDb,
+        packages: &[PackageSlot],
+        interner: &mut NameInterner,
+    ) -> anyhow::Result<Self> {
+        let mut db =
+            resolve::rebuild_packages(self, workspace, parse, item_tree, packages, interner)?;
         db.shrink_packages(packages);
         Ok(db)
     }
