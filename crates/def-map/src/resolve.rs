@@ -15,13 +15,14 @@ use rg_text::{Name, NameInterner};
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
-    DefMapDb, ImportData, ImportId, ImportPath, ModuleId, ModuleRef, ModuleScope, PackageSlot,
-    ScopeBinding, TargetRef,
+    DefMapDb, ImportData, ImportId, ImportPath, ModuleId, ModuleRef, PackageSlot, ScopeBinding,
+    TargetRef,
     collect::{TargetState, collect_package_target_states, collect_target_states},
     path_resolution::{
         namespace_for_def, resolve_path_to_defs, resolve_path_to_modules,
         visible_module_scope_entry_set,
     },
+    scope::ModuleScopeBuilder,
 };
 
 /// Builds the final `DefMapDb` from collected per-target states.
@@ -235,7 +236,7 @@ fn frozen_target_states(old: &DefMapDb) -> Vec<Vec<TargetState>> {
                         base_scopes: def_map
                             .modules
                             .iter()
-                            .map(|module| module.scope.clone())
+                            .map(|module| module.scope.to_builder())
                             .collect(),
                         implicit_roots: def_map.extern_prelude().clone(),
                         prelude: def_map.prelude(),
@@ -475,7 +476,7 @@ fn finalize_scopes(states: &mut [Vec<TargetState>]) -> anyhow::Result<()> {
                             .modules
                             .get_mut(ModuleId(module_idx))
                             .expect("module should exist for every final scope");
-                        module.scope = scope.clone();
+                        module.scope = scope.freeze();
                         module.unresolved_imports = final_unresolved_imports
                             .get(module_idx)
                             .expect("unresolved imports should exist for every module")
@@ -494,7 +495,7 @@ fn finalize_scopes(states: &mut [Vec<TargetState>]) -> anyhow::Result<()> {
 /// Computes imports that still have no resolution after the fixed-point loop has stabilized.
 fn collect_unresolved_imports(
     states: &[Vec<TargetState>],
-    final_scopes: &[Vec<Vec<ModuleScope>>],
+    final_scopes: &[Vec<Vec<ModuleScopeBuilder>>],
 ) -> Vec<Vec<Vec<Vec<ImportId>>>> {
     states
         .iter()
@@ -524,7 +525,7 @@ fn collect_unresolved_imports(
 fn import_is_unresolved(
     state: &TargetState,
     states: &[Vec<TargetState>],
-    final_scopes: &[Vec<Vec<ModuleScope>>],
+    final_scopes: &[Vec<Vec<ModuleScopeBuilder>>],
     import: &ImportData,
 ) -> bool {
     match import.kind {
@@ -554,8 +555,8 @@ fn import_is_unresolved(
 fn apply_imports(
     state: &TargetState,
     states: &[Vec<TargetState>],
-    current_scopes: &[Vec<Vec<ModuleScope>>],
-    next_scopes: &mut [Vec<Vec<ModuleScope>>],
+    current_scopes: &[Vec<Vec<ModuleScopeBuilder>>],
+    next_scopes: &mut [Vec<Vec<ModuleScopeBuilder>>],
 ) -> anyhow::Result<()> {
     for import in state.def_map.imports.iter() {
         match import.kind {
@@ -587,10 +588,10 @@ fn apply_imports(
 
                     // Visibility is attached to the binding introduced by the glob import, not to
                     // the original definition.
-                    for (name, entry) in source_scope {
+                    for (name, entry) in source_scope.entries() {
                         target_scope.copy_visible_bindings(
-                            &name,
-                            &entry,
+                            name,
+                            entry,
                             import.visibility.clone(),
                             import_owner,
                         );

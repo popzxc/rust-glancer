@@ -7,6 +7,7 @@ mod memsize;
 mod path;
 mod path_resolution;
 mod resolve;
+mod scope;
 
 use rg_arena::Arena;
 use rg_item_tree::ItemTreeDb;
@@ -17,10 +18,7 @@ use rg_workspace::WorkspaceMetadata;
 pub use self::cursor::DefMapCursorCandidate;
 
 pub use self::{
-    data::{
-        DefMap, LocalDefData, LocalDefKind, LocalImplData, ModuleData, ModuleOrigin, ModuleScope,
-        ScopeBinding, ScopeEntry,
-    },
+    data::{DefMap, LocalDefData, LocalDefKind, LocalImplData, ModuleData, ModuleOrigin},
     ids::{
         DefId, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
         ModuleRef, PackageSlot, TargetRef,
@@ -28,6 +26,7 @@ pub use self::{
     import::{ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath},
     path::{Path, PathSegment},
     path_resolution::ResolvePathResult,
+    scope::{ModuleScope, ScopeBinding, ScopeEntry},
 };
 
 /// Frozen def maps for all parsed packages and targets.

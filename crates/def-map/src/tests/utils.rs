@@ -202,7 +202,7 @@ impl<'a> FixtureEntry<'a> {
     /// Asserts that the entry has at least one visible type binding.
     pub(super) fn assert_type_exists(&self, reason: &str) -> &Self {
         assert!(
-            !self.scope_entry().types.is_empty(),
+            !self.scope_entry().types().is_empty(),
             "{reason}: expected {} to have a type binding",
             self.context(),
         );
@@ -212,7 +212,7 @@ impl<'a> FixtureEntry<'a> {
     /// Asserts that the entry has at least one visible value binding.
     pub(super) fn assert_value_exists(&self, reason: &str) -> &Self {
         assert!(
-            !self.scope_entry().values.is_empty(),
+            !self.scope_entry().values().is_empty(),
             "{reason}: expected {} to have a value binding",
             self.context(),
         );
@@ -223,7 +223,7 @@ impl<'a> FixtureEntry<'a> {
     pub(super) fn assert_module_named(&self, module_name: &str, reason: &str) -> &Self {
         assert!(
             self.scope_entry()
-                .types
+                .types()
                 .iter()
                 .filter_map(|binding| self.binding_origin(binding))
                 .any(|origin| origin.module_name() == Some(module_name)),
@@ -591,7 +591,10 @@ impl<'a> TargetDefMapSnapshot<'a> {
     }
 
     fn sorted_scope_names(&self, scope: &crate::ModuleScope) -> Vec<String> {
-        let mut names = scope.names.keys().cloned().collect::<Vec<_>>();
+        let mut names = scope
+            .entries()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
         names.sort();
         names.into_iter().map(|name| name.to_string()).collect()
     }
@@ -599,24 +602,24 @@ impl<'a> TargetDefMapSnapshot<'a> {
     fn render_scope_entry(&self, entry: &ScopeEntry) -> String {
         let mut parts = Vec::new();
 
-        if !entry.types.is_empty() {
+        if !entry.types().is_empty() {
             parts.push(format!(
                 "type [{}]",
-                self.render_namespace_bindings(&entry.types)
+                self.render_namespace_bindings(entry.types())
             ));
         }
 
-        if !entry.values.is_empty() {
+        if !entry.values().is_empty() {
             parts.push(format!(
                 "value [{}]",
-                self.render_namespace_bindings(&entry.values)
+                self.render_namespace_bindings(entry.values())
             ));
         }
 
-        if !entry.macros.is_empty() {
+        if !entry.macros().is_empty() {
             parts.push(format!(
                 "macro [{}]",
-                self.render_namespace_bindings(&entry.macros)
+                self.render_namespace_bindings(entry.macros())
             ));
         }
 

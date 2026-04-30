@@ -23,7 +23,8 @@ use rg_text::Name;
 use super::{
     DefId, DefMap, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
     LocalDefData, LocalDefKind, LocalDefRef, LocalImplData, ModuleData, ModuleId, ModuleOrigin,
-    ModuleRef, ModuleScope, PackageSlot, ScopeBinding, TargetRef, data::Namespace,
+    ModuleRef, ModuleScope, PackageSlot, ScopeBinding, TargetRef,
+    scope::{ModuleScopeBuilder, Namespace},
 };
 
 /// Collected state for one target before fixed-point import resolution.
@@ -34,7 +35,7 @@ pub(super) struct TargetState {
     pub(super) target: TargetRef,
     pub(super) target_name: String,
     pub(super) def_map: DefMap,
-    pub(super) base_scopes: Vec<ModuleScope>,
+    pub(super) base_scopes: Vec<ModuleScopeBuilder>,
     pub(super) implicit_roots: HashMap<Name, ModuleRef>,
     pub(super) prelude: Option<ModuleRef>,
 }
@@ -116,7 +117,7 @@ struct TargetScopeCollector<'db> {
     target: TargetRef,
     implicit_roots: &'db HashMap<Name, ModuleRef>,
     def_map: DefMap,
-    base_scopes: Vec<ModuleScope>,
+    base_scopes: Vec<ModuleScopeBuilder>,
 }
 
 impl<'db> TargetScopeCollector<'db> {
@@ -189,7 +190,7 @@ impl<'db> TargetScopeCollector<'db> {
             scope: ModuleScope::default(),
             origin,
         });
-        self.base_scopes.push(ModuleScope::default());
+        self.base_scopes.push(ModuleScopeBuilder::default());
         module_id
     }
 

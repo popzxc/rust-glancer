@@ -5,7 +5,8 @@ use rg_item_tree::{Documentation, ItemTag, ItemTreeRef, VisibilityLevel};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
-use super::{DefId, ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef};
+use super::{ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef, ModuleScope};
+use crate::scope::Namespace;
 
 /// Frozen namespace map for one analyzed target.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -228,126 +229,6 @@ pub enum LocalDefKind {
     TypeAlias,
     #[display("union")]
     Union,
-}
-
-/// Module scope with separate namespaces stored under one textual name map.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ModuleScope {
-    pub names: HashMap<Name, ScopeEntry>,
-}
-
-impl ModuleScope {
-    pub(super) fn insert_binding(
-        &mut self,
-        name: &Name,
-        namespace: Namespace,
-        binding: ScopeBinding,
-    ) -> bool {
-        let entry = self.names.entry(name.clone()).or_default();
-        entry.insert_binding(namespace, binding)
-    }
-
-    pub(super) fn copy_visible_bindings(
-        &mut self,
-        name: &Name,
-        entry: &ScopeEntry,
-        visibility: VisibilityLevel,
-        owner: ModuleRef,
-    ) {
-        for binding in &entry.types {
-            self.insert_binding(
-                name,
-                Namespace::Types,
-                ScopeBinding {
-                    def: binding.def,
-                    visibility: visibility.clone(),
-                    owner,
-                },
-            );
-        }
-
-        for binding in &entry.values {
-            self.insert_binding(
-                name,
-                Namespace::Values,
-                ScopeBinding {
-                    def: binding.def,
-                    visibility: visibility.clone(),
-                    owner,
-                },
-            );
-        }
-
-        for binding in &entry.macros {
-            self.insert_binding(
-                name,
-                Namespace::Macros,
-                ScopeBinding {
-                    def: binding.def,
-                    visibility: visibility.clone(),
-                    owner,
-                },
-            );
-        }
-    }
-
-    /// Returns the scope entry for one textual name, if present.
-    pub fn entry(&self, name: &str) -> Option<&ScopeEntry> {
-        self.names.get(name)
-    }
-
-    fn shrink_to_fit(&mut self) {
-        self.names.shrink_to_fit();
-        for entry in self.names.values_mut() {
-            entry.shrink_to_fit();
-        }
-    }
-}
-
-/// All namespace slots for one textual name.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ScopeEntry {
-    pub types: Vec<ScopeBinding>,
-    pub values: Vec<ScopeBinding>,
-    pub macros: Vec<ScopeBinding>,
-}
-
-impl ScopeEntry {
-    pub(super) fn insert_binding(&mut self, namespace: Namespace, binding: ScopeBinding) -> bool {
-        let bucket = match namespace {
-            Namespace::Types => &mut self.types,
-            Namespace::Values => &mut self.values,
-            Namespace::Macros => &mut self.macros,
-        };
-
-        if bucket.contains(&binding) {
-            return false;
-        }
-
-        bucket.push(binding);
-        true
-    }
-
-    fn shrink_to_fit(&mut self) {
-        self.types.shrink_to_fit();
-        self.values.shrink_to_fit();
-        self.macros.shrink_to_fit();
-    }
-}
-
-/// One definition together with the visibility of the binding that introduced it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScopeBinding {
-    pub def: DefId,
-    pub visibility: VisibilityLevel,
-    pub owner: ModuleRef,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Namespace {
-    Types,
-    Values,
-    Macros,
 }
 
 impl LocalDefKind {

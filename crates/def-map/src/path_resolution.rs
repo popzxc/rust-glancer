@@ -8,15 +8,12 @@
 //! During def-map construction this module reads from the fixed-point scope snapshot. After
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
-use std::collections::HashMap;
-
-use rg_item_tree::VisibilityLevel;
-use rg_text::Name;
-
 use super::{
-    DefId, DefMapDb, ModuleData, ModuleId, ModuleRef, ModuleScope, Path, ScopeBinding, ScopeEntry,
-    TargetRef, collect::TargetState, data::Namespace,
+    DefId, DefMapDb, ModuleData, ModuleId, ModuleRef, Path, ScopeBinding, TargetRef,
+    collect::TargetState,
+    scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
 };
+use rg_item_tree::VisibilityLevel;
 
 /// Result of resolving a path against the frozen def-map graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +32,11 @@ trait PathResolutionEnv {
 
     fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData>;
 
-    fn module_scope(&self, module_ref: ModuleRef) -> Option<&ModuleScope>;
+    fn module_scope_entry<'a>(
+        &'a self,
+        module_ref: ModuleRef,
+        name: &str,
+    ) -> Option<ScopeEntryRef<'a>>;
 
     fn parent_module(&self, target: TargetRef, module_id: ModuleId) -> Option<ModuleRef> {
         let module = self.module_data(ModuleRef {
@@ -53,11 +54,14 @@ trait PathResolutionEnv {
 /// Resolution environment used while imports are being fixed up.
 struct BuildResolutionEnv<'a> {
     states: &'a [Vec<TargetState>],
-    current_scopes: &'a [Vec<Vec<ModuleScope>>],
+    current_scopes: &'a [Vec<Vec<ModuleScopeBuilder>>],
 }
 
 impl<'a> BuildResolutionEnv<'a> {
-    fn new(states: &'a [Vec<TargetState>], current_scopes: &'a [Vec<Vec<ModuleScope>>]) -> Self {
+    fn new(
+        states: &'a [Vec<TargetState>],
+        current_scopes: &'a [Vec<Vec<ModuleScopeBuilder>>],
+    ) -> Self {
         Self {
             states,
             current_scopes,
@@ -91,11 +95,16 @@ impl PathResolutionEnv for BuildResolutionEnv<'_> {
             .module(module_ref.module)
     }
 
-    fn module_scope(&self, module_ref: ModuleRef) -> Option<&ModuleScope> {
+    fn module_scope_entry<'a>(
+        &'a self,
+        module_ref: ModuleRef,
+        name: &str,
+    ) -> Option<ScopeEntryRef<'a>> {
         self.current_scopes
             .get(module_ref.target.package.0)?
             .get(module_ref.target.target.0)?
             .get(module_ref.module.0)
+            .and_then(|scope| scope.entry(name))
     }
 }
 
@@ -132,58 +141,59 @@ impl PathResolutionEnv for FrozenResolutionEnv<'_> {
             .module(module_ref.module)
     }
 
-    fn module_scope(&self, module_ref: ModuleRef) -> Option<&ModuleScope> {
-        self.module_data(module_ref).map(|module| &module.scope)
+    fn module_scope_entry<'a>(
+        &'a self,
+        module_ref: ModuleRef,
+        name: &str,
+    ) -> Option<ScopeEntryRef<'a>> {
+        self.module_data(module_ref)?
+            .scope
+            .entry(name)
+            .map(|entry| entry.as_ref())
     }
 }
 
 /// Returns the subset of one module scope that is visible to the importing target.
 ///
-/// The result keeps the same textual-name-to-`ScopeEntry` shape as `ModuleScope`, but filters out
-/// bindings that are not visible from the caller's target.
+/// Glob imports need a mutable scope-shaped result because they copy every visible namespace
+/// bucket from the source module into the importing module under the same textual names.
 pub(super) fn visible_module_scope_entry_set(
     states: &[Vec<TargetState>],
-    current_scopes: &[Vec<Vec<ModuleScope>>],
+    current_scopes: &[Vec<Vec<ModuleScopeBuilder>>],
     importing_module: ModuleRef,
     source_module: ModuleRef,
-) -> HashMap<Name, ScopeEntry> {
+) -> ModuleScopeBuilder {
     let env = BuildResolutionEnv::new(states, current_scopes);
-    let Some(module_scope) = env.module_scope(source_module) else {
-        return HashMap::new();
+    let Some(module_scope) = current_scopes
+        .get(source_module.target.package.0)
+        .and_then(|package_scopes| package_scopes.get(source_module.target.target.0))
+        .and_then(|target_scopes| target_scopes.get(source_module.module.0))
+    else {
+        return ModuleScopeBuilder::default();
     };
 
-    let mut names = HashMap::new();
-
-    for (name, entry) in &module_scope.names {
-        let mut visible_entry = ScopeEntry::default();
-
-        for binding in &entry.types {
+    let mut visible_scope = ModuleScopeBuilder::default();
+    for (name, entry) in module_scope.entries() {
+        for binding in entry.types() {
             if binding_is_visible(&env, importing_module, binding) {
-                visible_entry.insert_binding(Namespace::Types, binding.clone());
+                visible_scope.insert_binding(name, Namespace::Types, binding.clone());
             }
         }
 
-        for binding in &entry.values {
+        for binding in entry.values() {
             if binding_is_visible(&env, importing_module, binding) {
-                visible_entry.insert_binding(Namespace::Values, binding.clone());
+                visible_scope.insert_binding(name, Namespace::Values, binding.clone());
             }
         }
 
-        for binding in &entry.macros {
+        for binding in entry.macros() {
             if binding_is_visible(&env, importing_module, binding) {
-                visible_entry.insert_binding(Namespace::Macros, binding.clone());
+                visible_scope.insert_binding(name, Namespace::Macros, binding.clone());
             }
-        }
-
-        if !visible_entry.types.is_empty()
-            || !visible_entry.values.is_empty()
-            || !visible_entry.macros.is_empty()
-        {
-            names.insert(name.clone(), visible_entry);
         }
     }
 
-    names
+    visible_scope
 }
 
 /// Resolves a path to the definitions it denotes in the current scope snapshot.
@@ -192,7 +202,7 @@ pub(super) fn visible_module_scope_entry_set(
 /// multiple namespaces at once.
 pub(super) fn resolve_path_to_defs(
     states: &[Vec<TargetState>],
-    current_scopes: &[Vec<Vec<ModuleScope>>],
+    current_scopes: &[Vec<Vec<ModuleScopeBuilder>>],
     importing_target: TargetRef,
     importing_module: ModuleId,
     path: &super::ImportPath,
@@ -217,7 +227,7 @@ pub(super) fn resolve_path_to_defs(
 /// contents will be copied into the importing scope.
 pub(super) fn resolve_path_to_modules(
     states: &[Vec<TargetState>],
-    current_scopes: &[Vec<Vec<ModuleScope>>],
+    current_scopes: &[Vec<Vec<ModuleScopeBuilder>>],
     importing_target: TargetRef,
     importing_module: ModuleId,
     path: &super::ImportPath,
@@ -465,10 +475,7 @@ fn resolve_name_in_module(
     name: &str,
     filter: NameResolutionFilter,
 ) -> Vec<DefId> {
-    let Some(scope_entry) = env
-        .module_scope(module_ref)
-        .and_then(|scope| scope.entry(name))
-    else {
+    let Some(scope_entry) = env.module_scope_entry(module_ref, name) else {
         return Vec::new();
     };
 
@@ -476,7 +483,7 @@ fn resolve_name_in_module(
 
     // One textual name can contribute bindings from several namespaces, so we collect them all
     // into a deduplicated result set.
-    for binding in &scope_entry.types {
+    for binding in scope_entry.types() {
         if binding_is_visible(env, importing_module, binding) {
             push_unique_def(&mut defs, binding.def);
         }
@@ -486,13 +493,13 @@ fn resolve_name_in_module(
         return defs;
     }
 
-    for binding in &scope_entry.values {
+    for binding in scope_entry.values() {
         if binding_is_visible(env, importing_module, binding) {
             push_unique_def(&mut defs, binding.def);
         }
     }
 
-    for binding in &scope_entry.macros {
+    for binding in scope_entry.macros() {
         if binding_is_visible(env, importing_module, binding) {
             push_unique_def(&mut defs, binding.def);
         }

@@ -5,7 +5,7 @@ use crate::{
     ImportPath, ImportRef, ImportSourcePath, LocalDefData, LocalDefId, LocalDefKind, LocalDefRef,
     LocalImplData, LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleOrigin, ModuleRef,
     ModuleScope, Package, PackageSlot, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
-    import::ImportSourcePathSegment,
+    import::ImportSourcePathSegment, scope::ScopeNameEntry,
 };
 
 macro_rules! record_fields {
@@ -122,9 +122,15 @@ impl MemorySize for LocalDefKind {
 
 impl MemorySize for ModuleScope {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.scope("names", |recorder| {
-            self.names.record_memory_children(recorder);
+        recorder.scope("entries", |recorder| {
+            self.entries.record_memory_children(recorder);
         });
+    }
+}
+
+impl MemorySize for ScopeNameEntry {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        record_fields!(recorder, self, name, entry);
     }
 }
 
