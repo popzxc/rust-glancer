@@ -14,6 +14,7 @@ description.workspace = true
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
 cargo_metadata.workspace = true
+rg_memsize.workspace = true
 rg_project.workspace = true
 rg_workspace.workspace = true
 rg_lsp.workspace = true

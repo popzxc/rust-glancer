@@ -676,6 +676,7 @@ dependencies = [
  "expect-test",
  "rg_def_map",
  "rg_item_tree",
+ "rg_memsize",
  "rg_parse",
  "rg_semantic_ir",
  "rg_workspace",
@@ -691,6 +692,7 @@ dependencies = [
  "derive_more",
  "expect-test",
  "rg_item_tree",
+ "rg_memsize",
  "rg_parse",
  "rg_workspace",
  "test_fixture",
@@ -703,6 +705,7 @@ dependencies = [
  "anyhow",
  "derive_more",
  "expect-test",
+ "rg_memsize",
  "rg_parse",
  "rg_workspace",
  "syntax",
@@ -740,6 +743,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "expect-test",
+ "rg_memsize",
  "rg_workspace",
  "syntax",
  "test_fixture",
@@ -755,6 +759,7 @@ dependencies = [
  "rg_body_ir",
  "rg_def_map",
  "rg_item_tree",
+ "rg_memsize",
  "rg_parse",
  "rg_semantic_ir",
  "rg_workspace",
@@ -769,6 +774,7 @@ dependencies = [
  "expect-test",
  "rg_def_map",
  "rg_item_tree",
+ "rg_memsize",
  "rg_parse",
  "rg_workspace",
  "test_fixture",
@@ -781,6 +787,7 @@ dependencies = [
  "cargo_metadata",
  "derive_more",
  "expect-test",
+ "rg_memsize",
  "test_fixture",
 ]
 
@@ -805,6 +812,7 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "rg_lsp",
+ "rg_memsize",
  "rg_project",
  "rg_workspace",
 ]

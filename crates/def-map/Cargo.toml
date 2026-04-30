@@ -13,6 +13,7 @@ description.workspace = true
 [dependencies]
 anyhow.workspace = true
 derive_more = { workspace = true, features = ["display"] }
+rg_memsize.workspace = true
 rg_item_tree.workspace = true
 rg_parse.workspace = true
 rg_workspace.workspace = true

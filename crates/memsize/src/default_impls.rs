@@ -112,6 +112,45 @@ where
     }
 }
 
+impl<A, B> MemorySize for (A, B)
+where
+    A: MemorySize,
+    B: MemorySize,
+{
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        recorder.scope("0", |recorder| self.0.record_memory_children(recorder));
+        recorder.scope("1", |recorder| self.1.record_memory_children(recorder));
+    }
+}
+
+impl<A, B, C> MemorySize for (A, B, C)
+where
+    A: MemorySize,
+    B: MemorySize,
+    C: MemorySize,
+{
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        recorder.scope("0", |recorder| self.0.record_memory_children(recorder));
+        recorder.scope("1", |recorder| self.1.record_memory_children(recorder));
+        recorder.scope("2", |recorder| self.2.record_memory_children(recorder));
+    }
+}
+
+impl<A, B, C, D> MemorySize for (A, B, C, D)
+where
+    A: MemorySize,
+    B: MemorySize,
+    C: MemorySize,
+    D: MemorySize,
+{
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        recorder.scope("0", |recorder| self.0.record_memory_children(recorder));
+        recorder.scope("1", |recorder| self.1.record_memory_children(recorder));
+        recorder.scope("2", |recorder| self.2.record_memory_children(recorder));
+        recorder.scope("3", |recorder| self.3.record_memory_children(recorder));
+    }
+}
+
 impl MemorySize for String {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         recorder.record_heap::<String>(self.capacity());
@@ -345,6 +384,23 @@ mod tests {
             totals.get(any::type_name::<u32>()),
             Some(&(3 * mem::size_of::<u32>()))
         );
+    }
+
+    #[test]
+    fn tuple_records_owned_children() {
+        let mut text = String::with_capacity(9);
+        text.push_str("module");
+        let value = (7_u32, text);
+
+        let mut recorder = MemoryRecorder::new("tuple");
+        value.record_memory_size(&mut recorder);
+
+        let totals = recorder.totals_by_kind();
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Shallow),
+            Some(&mem::size_of::<(u32, String)>())
+        );
+        assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&9));
     }
 
     #[test]

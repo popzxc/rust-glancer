@@ -8,15 +8,17 @@ use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
 use rg_workspace::WorkspaceMetadata;
 
+use crate::{BuildProfile, BuildProfileOptions, profile::BuildProfiler};
+
 /// Fully built project pipeline state.
 #[derive(Debug, Clone)]
 pub struct Project {
-    workspace: WorkspaceMetadata,
-    body_ir_policy: BodyIrBuildPolicy,
-    parse: ParseDb,
-    def_map: DefMapDb,
-    semantic_ir: SemanticIrDb,
-    body_ir: BodyIrDb,
+    pub(crate) workspace: WorkspaceMetadata,
+    pub(crate) body_ir_policy: BodyIrBuildPolicy,
+    pub(crate) parse: ParseDb,
+    pub(crate) def_map: DefMapDb,
+    pub(crate) semantic_ir: SemanticIrDb,
+    pub(crate) body_ir: BodyIrDb,
 }
 
 impl Project {
@@ -30,8 +32,9 @@ impl Project {
         workspace: WorkspaceMetadata,
         body_ir_policy: BodyIrBuildPolicy,
     ) -> anyhow::Result<Self> {
+        let mut profiler = BuildProfiler::disabled();
         let (parse, def_map, semantic_ir, body_ir) =
-            Self::build_phases(&workspace, body_ir_policy)?;
+            Self::build_phases(&workspace, body_ir_policy, &mut profiler)?;
 
         Ok(Self {
             workspace,
@@ -41,6 +44,38 @@ impl Project {
             semantic_ir,
             body_ir,
         })
+    }
+
+    /// Builds every analysis phase and returns coarse build-time profiling checkpoints.
+    pub fn build_profiled(
+        workspace: WorkspaceMetadata,
+        options: BuildProfileOptions,
+    ) -> anyhow::Result<(Self, BuildProfile)> {
+        Self::build_profiled_with_body_ir_policy(workspace, BodyIrBuildPolicy::default(), options)
+    }
+
+    /// Builds every analysis phase with explicit Body IR policy and profiling options.
+    pub fn build_profiled_with_body_ir_policy(
+        workspace: WorkspaceMetadata,
+        body_ir_policy: BodyIrBuildPolicy,
+        options: BuildProfileOptions,
+    ) -> anyhow::Result<(Self, BuildProfile)> {
+        let mut profiler = BuildProfiler::new(options);
+        let (parse, def_map, semantic_ir, body_ir) =
+            Self::build_phases(&workspace, body_ir_policy, &mut profiler)?;
+
+        let project = Self {
+            workspace,
+            body_ir_policy,
+            parse,
+            def_map,
+            semantic_ir,
+            body_ir,
+        };
+        let project_bytes = profiler.measure(&project);
+        profiler.record("after project", project_bytes, project_bytes);
+
+        Ok((project, profiler.finish()))
     }
 
     pub(crate) fn rebuild_packages(&mut self, packages: &[PackageSlot]) -> anyhow::Result<()> {
@@ -80,16 +115,63 @@ impl Project {
     fn build_phases(
         workspace: &WorkspaceMetadata,
         body_ir_policy: BodyIrBuildPolicy,
+        profiler: &mut BuildProfiler,
     ) -> anyhow::Result<(ParseDb, DefMapDb, SemanticIrDb, BodyIrDb)> {
         let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
+        let parse_bytes = profiler.measure(&parse);
+        profiler.record("after parse", parse_bytes, parse_bytes);
+
         let item_tree =
             ItemTreeDb::build(&mut parse).context("while attempting to build item tree db")?;
+        let parse_bytes = profiler.measure(&parse);
+        let item_tree_bytes = profiler.measure(&item_tree);
+        profiler.record(
+            "after item-tree",
+            item_tree_bytes,
+            profiler.sum_retained(&[parse_bytes, item_tree_bytes]),
+        );
+
         let def_map = DefMapDb::build(workspace, &parse, &item_tree)
             .context("while attempting to build def map db")?;
+        let def_map_bytes = profiler.measure(&def_map);
+        profiler.record(
+            "after def-map",
+            def_map_bytes,
+            profiler.sum_retained(&[parse_bytes, item_tree_bytes, def_map_bytes]),
+        );
+
         let semantic_ir = SemanticIrDb::build(&item_tree, &def_map)
             .context("while attempting to build semantic ir db")?;
+        let semantic_ir_bytes = profiler.measure(&semantic_ir);
+        profiler.record(
+            "after semantic-ir",
+            semantic_ir_bytes,
+            profiler.sum_retained(&[
+                parse_bytes,
+                item_tree_bytes,
+                def_map_bytes,
+                semantic_ir_bytes,
+            ]),
+        );
+
+        // ItemTree is a lowering input, not retained project state. Dropping it here makes the
+        // following process-only checkpoint useful for separating transient build pressure from
+        // final retained memory.
+        drop(item_tree);
+        profiler.record(
+            "after item-tree drop",
+            None,
+            profiler.sum_retained(&[parse_bytes, def_map_bytes, semantic_ir_bytes]),
+        );
+
         let body_ir = BodyIrDb::build_with_policy(&parse, &def_map, &semantic_ir, body_ir_policy)
             .context("while attempting to build body ir db")?;
+        let body_ir_bytes = profiler.measure(&body_ir);
+        profiler.record(
+            "after body-ir",
+            body_ir_bytes,
+            profiler.sum_retained(&[parse_bytes, def_map_bytes, semantic_ir_bytes, body_ir_bytes]),
+        );
 
         Ok((parse, def_map, semantic_ir, body_ir))
     }

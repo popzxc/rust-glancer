@@ -13,6 +13,7 @@ description.workspace = true
 [dependencies]
 cargo_metadata.workspace = true
 derive_more = { workspace = true, features = ["display"] }
+rg_memsize.workspace = true
 
 [dev-dependencies]
 test_fixture.workspace = true

@@ -9,9 +9,9 @@ use crate::{ImplId, ItemId, ItemStore};
 /// later phases move from name resolution into semantic signatures without re-lowering source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetIr {
-    local_items: Vec<Option<ItemId>>,
-    local_impls: Vec<ImplId>,
-    items: ItemStore,
+    pub(crate) local_items: Vec<Option<ItemId>>,
+    pub(crate) local_impls: Vec<ImplId>,
+    pub(crate) items: ItemStore,
 }
 
 impl TargetIr {

@@ -3,6 +3,7 @@ mod cursor;
 mod data;
 mod ids;
 mod import;
+mod memsize;
 mod path;
 mod path_resolution;
 mod resolve;

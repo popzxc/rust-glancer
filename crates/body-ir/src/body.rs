@@ -31,7 +31,7 @@ pub struct BodyIrStats {
 /// Lowered bodies for all targets inside one parsed package.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PackageBodies {
-    targets: Vec<TargetBodies>,
+    pub(crate) targets: Vec<TargetBodies>,
 }
 
 impl PackageBodies {
@@ -57,9 +57,9 @@ impl PackageBodies {
 /// Lowered bodies for one target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetBodies {
-    status: TargetBodiesStatus,
-    function_bodies: Vec<Option<BodyId>>,
-    bodies: Vec<BodyData>,
+    pub(crate) status: TargetBodiesStatus,
+    pub(crate) function_bodies: Vec<Option<BodyId>>,
+    pub(crate) bodies: Vec<BodyData>,
 }
 
 impl TargetBodies {

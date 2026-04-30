@@ -7,6 +7,7 @@ use anyhow::Context as _;
 
 mod error;
 mod file;
+mod memsize;
 mod package;
 mod span;
 mod target;

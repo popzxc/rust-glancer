@@ -16,6 +16,7 @@ rg_analysis.workspace = true
 rg_body_ir.workspace = true
 rg_def_map.workspace = true
 rg_item_tree.workspace = true
+rg_memsize.workspace = true
 rg_parse.workspace = true
 rg_semantic_ir.workspace = true
 rg_workspace.workspace = true

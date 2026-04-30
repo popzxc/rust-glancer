@@ -81,9 +81,9 @@ pub struct Position {
 
 #[derive(Debug, Clone)]
 pub struct LineIndex {
-    line_starts: Vec<u32>,
-    line_byte_lens: Vec<u32>,
-    non_ascii_lines: Vec<LineUtf16Metrics>,
+    pub(crate) line_starts: Vec<u32>,
+    pub(crate) line_byte_lens: Vec<u32>,
+    pub(crate) non_ascii_lines: Vec<LineUtf16Metrics>,
 }
 
 impl LineIndex {
@@ -206,10 +206,10 @@ impl LineIndex {
 
 /// Sparse per-line mapping between UTF-8 byte columns and UTF-16 code-unit columns.
 #[derive(Debug, Clone)]
-struct LineUtf16Metrics {
-    line: u32,
-    utf16_len: u32,
-    non_ascii_ranges: Vec<LineCharRange>,
+pub(crate) struct LineUtf16Metrics {
+    pub(crate) line: u32,
+    pub(crate) utf16_len: u32,
+    pub(crate) non_ascii_ranges: Vec<LineCharRange>,
 }
 
 impl LineUtf16Metrics {
@@ -297,11 +297,11 @@ impl LineUtf16Metrics {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct LineCharRange {
-    byte_start: u32,
-    byte_end: u32,
-    utf16_start: u32,
-    utf16_end: u32,
+pub(crate) struct LineCharRange {
+    pub(crate) byte_start: u32,
+    pub(crate) byte_end: u32,
+    pub(crate) utf16_start: u32,
+    pub(crate) utf16_end: u32,
 }
 
 impl LineCharRange {

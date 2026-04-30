@@ -19,6 +19,8 @@ pub use self::{
     visibility::VisibilityLevel,
 };
 
+pub(crate) use self::decl::{ConstParamData, FunctionQualifiers, LifetimeParamData, TypeParamData};
+
 mod decl;
 mod docs;
 mod import;

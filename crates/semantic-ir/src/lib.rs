@@ -2,6 +2,7 @@ mod cursor;
 mod ids;
 mod items;
 mod lower;
+mod memsize;
 mod package;
 mod resolution;
 mod stats;

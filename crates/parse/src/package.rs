@@ -9,17 +9,17 @@ use rg_workspace::{PackageId, PackageOrigin, TargetKind};
 #[derive(Debug, Clone)]
 pub struct Package {
     /// Stable package id from workspace metadata.
-    id: PackageId,
+    pub(crate) id: PackageId,
     /// Package name from `Cargo.toml`.
-    package_name: String,
+    pub(crate) package_name: String,
     /// Whether this package belongs to the analyzed workspace.
-    is_workspace_member: bool,
+    pub(crate) is_workspace_member: bool,
     /// Where this package came from in the normalized workspace graph.
-    origin: PackageOrigin,
+    pub(crate) origin: PackageOrigin,
     /// All parsed files known to this package.
-    files: FileDb,
+    pub(crate) files: FileDb,
     /// Parsed targets rooted in this package.
-    targets: Vec<Target>,
+    pub(crate) targets: Vec<Target>,
 }
 
 impl Package {

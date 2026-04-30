@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod memsize;
 mod sysroot;
 
 #[cfg(test)]

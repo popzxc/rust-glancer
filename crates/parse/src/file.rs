@@ -17,15 +17,15 @@ pub struct FileId(pub usize);
 
 /// Internal parsed representation used by the parser cache.
 #[derive(Debug, Clone)]
-struct ParsedFileData {
+pub(crate) struct ParsedFileData {
     /// Canonical filesystem path for this source file.
-    path: PathBuf,
+    pub(crate) path: PathBuf,
     /// Parse diagnostics produced while parsing the file.
-    parse_errors: Vec<ParseError>,
+    pub(crate) parse_errors: Vec<ParseError>,
     /// Line-start index used to convert byte offsets into line/column coordinates.
-    line_index: LineIndex,
+    pub(crate) line_index: LineIndex,
     /// Parsed Rust syntax tree produced by `ra_syntax`.
-    tree: SourceFile,
+    pub(crate) tree: SourceFile,
 }
 
 /// Borrowed view over one cached source file.
@@ -85,8 +85,8 @@ impl<'a> ParsedFile<'a> {
 /// and reused during multiple target traversals.
 #[derive(Default, Debug, Clone)]
 pub(super) struct FileDb {
-    parsed_files: Vec<ParsedFileData>,
-    file_ids_by_path: HashMap<PathBuf, FileId>,
+    pub(crate) parsed_files: Vec<ParsedFileData>,
+    pub(crate) file_ids_by_path: HashMap<PathBuf, FileId>,
 }
 
 impl FileDb {

@@ -1,8 +1,83 @@
 mod utils;
 
 use expect_test::expect;
+use rg_workspace::WorkspaceMetadata;
+use test_fixture::fixture_crate;
 
 use self::utils::{HostFixture, HostObservation};
+use crate::{BuildProfileOptions, Project};
+
+#[test]
+fn profiled_build_reports_phase_checkpoints_without_exposing_phase_dbs() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "profile_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+"#,
+    );
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+    let (_project, profile) = Project::build_profiled(
+        workspace,
+        BuildProfileOptions {
+            retained_memory: true,
+            rss_sampler: None,
+        },
+    )
+    .expect("profiled project build should succeed");
+
+    let labels = profile
+        .checkpoints()
+        .iter()
+        .map(|checkpoint| checkpoint.label)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        labels,
+        [
+            "after parse",
+            "after item-tree",
+            "after def-map",
+            "after semantic-ir",
+            "after item-tree drop",
+            "after body-ir",
+            "after project",
+        ]
+    );
+
+    assert!(
+        profile
+            .checkpoints()
+            .iter()
+            .filter(|checkpoint| checkpoint.retained_bytes.is_some())
+            .all(|checkpoint| checkpoint
+                .retained_bytes
+                .expect("retained bytes should exist")
+                > 0),
+        "retained checkpoints should record non-zero memory"
+    );
+    assert!(
+        profile
+            .checkpoints()
+            .iter()
+            .all(|checkpoint| checkpoint.active_retained_bytes.is_some()),
+        "retained profiling should record active live-state memory for every checkpoint"
+    );
+
+    let item_tree_drop = profile
+        .checkpoints()
+        .iter()
+        .find(|checkpoint| checkpoint.label == "after item-tree drop")
+        .expect("profile should contain item-tree drop checkpoint");
+    assert_eq!(
+        item_tree_drop.retained_bytes, None,
+        "process-only checkpoints should not pretend to sample a dropped phase object"
+    );
+}
 
 #[test]
 fn reparses_known_file_in_place() {

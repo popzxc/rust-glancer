@@ -8,7 +8,7 @@ use crate::TargetIr;
 /// `TargetRef { package, target }` can address every phase without an extra translation table.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PackageIr {
-    targets: Vec<TargetIr>,
+    pub(crate) targets: Vec<TargetIr>,
 }
 
 impl PackageIr {

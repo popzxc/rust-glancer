@@ -21,7 +21,7 @@ use crate::Project;
 /// file from disk and pass that content through the same API.
 #[derive(Debug, Clone)]
 pub struct AnalysisHost {
-    project: Project,
+    pub(crate) project: Project,
 }
 
 impl AnalysisHost {

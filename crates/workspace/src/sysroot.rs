@@ -33,8 +33,8 @@ impl fmt::Display for SysrootCrate {
 /// Rust source tree discovered from `rustc --print sysroot`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SysrootSources {
-    sysroot_root: PathBuf,
-    library_root: PathBuf,
+    pub(crate) sysroot_root: PathBuf,
+    pub(crate) library_root: PathBuf,
 }
 
 impl SysrootSources {

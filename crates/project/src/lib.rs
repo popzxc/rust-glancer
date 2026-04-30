@@ -1,4 +1,6 @@
 mod host;
+mod memsize;
+mod profile;
 mod project;
 
 pub use self::{
@@ -6,6 +8,7 @@ pub use self::{
         AnalysisChangeSummary, AnalysisHost, AnalysisSnapshot, ChangedFile, FileContext,
         SavedFileChange,
     },
+    profile::{BuildCheckpoint, BuildProfile, BuildProfileOptions, RssSampler},
     project::Project,
 };
 

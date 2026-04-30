@@ -8,11 +8,11 @@ use super::{DefId, ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, Modu
 /// Frozen namespace map for one analyzed target.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DefMap {
-    root_module: Option<ModuleId>,
+    pub(crate) root_module: Option<ModuleId>,
     // Currently means “implicit roots visible to this target,” including sibling lib roots
-    extern_prelude: HashMap<String, ModuleRef>,
+    pub(crate) extern_prelude: HashMap<String, ModuleRef>,
     // Standard prelude module selected for this target, if sysroot sources are available.
-    prelude: Option<ModuleRef>,
+    pub(crate) prelude: Option<ModuleRef>,
     pub modules: Vec<ModuleData>,
     pub local_defs: Vec<LocalDefData>,
     pub local_impls: Vec<LocalImplData>,

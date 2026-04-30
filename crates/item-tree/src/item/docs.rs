@@ -9,7 +9,7 @@ use ra_syntax::{
 /// Markdown-like so editor features can render it without re-reading AST.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Documentation {
-    text: String,
+    pub(crate) text: String,
 }
 
 impl Documentation {

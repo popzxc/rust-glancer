@@ -12,6 +12,7 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+rg_memsize.workspace = true
 rg_def_map.workspace = true
 rg_item_tree.workspace = true
 rg_parse.workspace = true

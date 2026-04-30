@@ -1,5 +1,6 @@
 mod item;
 mod lower;
+mod memsize;
 
 #[cfg(test)]
 mod tests;

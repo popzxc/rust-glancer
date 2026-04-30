@@ -115,8 +115,8 @@ impl ImportPath {
 /// Import path plus source spans for each segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportSourcePath {
-    absolute: bool,
-    segments: Vec<ImportSourcePathSegment>,
+    pub(crate) absolute: bool,
+    pub(crate) segments: Vec<ImportSourcePathSegment>,
 }
 
 impl ImportSourcePath {
@@ -158,7 +158,7 @@ impl ImportSourcePath {
 /// One source-spanned import path segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportSourcePathSegment {
-    segment: PathSegment,
+    pub(crate) segment: PathSegment,
     pub span: Span,
 }
 
