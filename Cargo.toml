@@ -46,6 +46,8 @@ tokio = "1.48"
 tower-lsp-server = "0.23"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+tikv-jemallocator = "0.6.1"
+tikv-jemalloc-sys = "0.6.1"
 
 ra_syntax = { package = "syntax", git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca"}
 

@@ -3,7 +3,10 @@ mod worker;
 
 use std::{
     path::PathBuf,
-    sync::mpsc::{self, Sender},
+    sync::{
+        Arc,
+        mpsc::{self, Sender},
+    },
     thread,
 };
 
@@ -15,6 +18,7 @@ use self::{
     command::{EngineCommand, EngineResponse},
     worker::EngineWorker,
 };
+use crate::memory::MemoryControl;
 
 #[derive(Clone, Debug)]
 pub(crate) struct EngineHandle {
@@ -22,10 +26,10 @@ pub(crate) struct EngineHandle {
 }
 
 impl EngineHandle {
-    pub(crate) fn spawn() -> Self {
+    pub(crate) fn spawn(memory_control: Arc<dyn MemoryControl>) -> Self {
         let (sender, receiver) = mpsc::channel();
 
-        thread::spawn(move || EngineWorker::new().run(receiver));
+        thread::spawn(move || EngineWorker::new(memory_control).run(receiver));
 
         Self { sender }
     }

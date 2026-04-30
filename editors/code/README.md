@@ -66,6 +66,7 @@ stderr there.
 {
   "rust-glancer.server.path": null,
   "rust-glancer.server.extraEnv": {},
+  "rust-glancer.server.purgeMemoryAfterBuild": true,
   "rust-glancer.trace.server": "off",
   "rust-glancer.checkOnSave": false,
   "rust-glancer.check.command": "check",
@@ -75,6 +76,11 @@ stderr there.
 
 `rust-glancer.server.path` should point to the `rust-glancer` executable
 itself; the extension adds the `lsp` subcommand.
+
+`rust-glancer.server.purgeMemoryAfterBuild` asks the server to return unused
+allocator pages to the OS after initial indexing and saved-file reindexing. It
+is enabled by default because indexing is allocation-heavy and the server is
+otherwise meant to sit idle in the background.
 
 Server logs are controlled through environment variables. For example:
 

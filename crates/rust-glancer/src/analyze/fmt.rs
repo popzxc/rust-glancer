@@ -1,0 +1,240 @@
+// TODO: This file is unreasonably messy, to be cleaned up
+
+use rg_memsize::{MemoryRecord, MemoryRecorder, MemorySize};
+use rg_project::{BuildProfile, Project};
+
+pub(super) const TOP_MEMORY_ROWS: usize = 12;
+
+pub(super) fn print_project_summary(project: &Project) {
+    let workspace_package_count = project.parse_db().workspace_packages().count();
+    let package_count = project.parse_db().package_count();
+    let def_map_stats = project.def_map_db().stats();
+    let semantic_ir_stats = project.semantic_ir_db().stats();
+    let body_ir_stats = project.body_ir_db().stats();
+
+    println!("rust-glancer analysis built");
+    println!("packages: {package_count} ({workspace_package_count} workspace)");
+    println!(
+        "def maps: {} targets, {} modules, {} unresolved imports",
+        def_map_stats.target_count,
+        def_map_stats.module_count,
+        def_map_stats.unresolved_import_count
+    );
+    println!(
+        "semantic IR: {} targets, {} type defs, {} traits, {} impls, {} functions",
+        semantic_ir_stats.target_count,
+        semantic_ir_stats.struct_count
+            + semantic_ir_stats.enum_count
+            + semantic_ir_stats.union_count,
+        semantic_ir_stats.trait_count,
+        semantic_ir_stats.impl_count,
+        semantic_ir_stats.function_count
+    );
+    println!(
+        "body IR: {} targets ({} built, {} skipped), {} bodies, {} expressions",
+        body_ir_stats.target_count,
+        body_ir_stats.built_target_count,
+        body_ir_stats.skipped_target_count,
+        body_ir_stats.body_count,
+        body_ir_stats.expression_count
+    );
+}
+
+pub(super) fn print_build_profile(profile: &BuildProfile) {
+    println!();
+    println!("build profile:");
+    println!(
+        "  {:>10}  {:>12}  {:>12}  {:>12}  checkpoint",
+        "elapsed", "sampled", "active", "resident"
+    );
+
+    for checkpoint in profile.checkpoints() {
+        println!(
+            "  {:>10}  {:>12}  {:>12}  {:>12}  {}",
+            format_duration(checkpoint.elapsed),
+            checkpoint
+                .retained_bytes
+                .map(format_bytes)
+                .unwrap_or_else(|| "-".to_string()),
+            checkpoint
+                .active_retained_bytes
+                .map(format_bytes)
+                .unwrap_or_else(|| "-".to_string()),
+            checkpoint
+                .resident_bytes
+                .map(format_bytes)
+                .unwrap_or_else(|| "-".to_string()),
+            checkpoint.label,
+        );
+    }
+}
+
+pub(super) fn print_allocator_stats(stats: rg_lsp::AllocatorStats) {
+    println!(
+        "allocator stats: allocated {}, active {}, resident {}, mapped {}, retained {}",
+        format_bytes(stats.allocated_bytes),
+        format_bytes(stats.active_bytes),
+        format_bytes(stats.resident_bytes),
+        format_bytes(stats.mapped_bytes),
+        format_bytes(stats.retained_bytes),
+    );
+}
+
+pub(super) fn print_allocator_purge_after_build(memory_control: &dyn rg_lsp::MemoryControl) {
+    let before_stats = memory_control.allocator_stats();
+    let Some(result) = memory_control.try_purge_allocator() else {
+        return;
+    };
+    let after_stats = memory_control.allocator_stats();
+
+    println!(
+        "allocator purge after build: tcache_flushed {}, arenas_purged {}",
+        result.tcache_flushed, result.arenas_purged,
+    );
+
+    if let (Some(before), Some(after)) = (before_stats, after_stats) {
+        println!(
+            "allocator purge stats: active {} -> {} ({}), resident {} -> {} ({}), mapped {} -> {} ({})",
+            format_bytes(before.active_bytes),
+            format_bytes(after.active_bytes),
+            format_byte_delta(Some(after.active_bytes), Some(before.active_bytes)),
+            format_bytes(before.resident_bytes),
+            format_bytes(after.resident_bytes),
+            format_byte_delta(Some(after.resident_bytes), Some(before.resident_bytes)),
+            format_bytes(before.mapped_bytes),
+            format_bytes(after.mapped_bytes),
+            format_byte_delta(Some(after.mapped_bytes), Some(before.mapped_bytes)),
+        );
+    }
+}
+
+pub(super) fn print_memory_summary(project: &Project) {
+    let mut recorder = MemoryRecorder::new("project");
+    project.record_memory_size(&mut recorder);
+    let records = recorder.records();
+
+    println!();
+    println!(
+        "memory: {} retained across {} aggregate buckets",
+        format_bytes(recorder.total_bytes()),
+        records.len()
+    );
+
+    print_memory_section("memory by phase", top_level_totals(&records), usize::MAX);
+    print_memory_section("memory by kind", kind_totals(&records), usize::MAX);
+    print_memory_section(
+        "top memory paths",
+        string_totals(
+            records
+                .iter()
+                .map(|record| (record.path.as_str(), record.bytes)),
+        ),
+        TOP_MEMORY_ROWS,
+    );
+    print_memory_section(
+        "top memory types",
+        string_totals(
+            records
+                .iter()
+                .map(|record| (record.type_name.as_str(), record.bytes)),
+        ),
+        TOP_MEMORY_ROWS,
+    );
+}
+
+fn print_memory_section(title: &str, rows: Vec<(String, usize)>, limit: usize) {
+    println!("{title}:");
+
+    for (label, bytes) in rows.into_iter().take(limit) {
+        println!("  {:>10}  {label}", format_bytes(bytes));
+    }
+}
+
+fn top_level_totals(records: &[MemoryRecord]) -> Vec<(String, usize)> {
+    string_totals(records.iter().map(|record| {
+        let path = top_level_path(&record.path);
+        (path, record.bytes)
+    }))
+}
+
+fn top_level_path(path: &str) -> String {
+    let mut parts = path.split('.');
+    let Some(root) = parts.next() else {
+        return path.to_string();
+    };
+    let Some(child) = parts.next() else {
+        return root.to_string();
+    };
+
+    format!("{root}.{child}")
+}
+
+fn kind_totals(records: &[MemoryRecord]) -> Vec<(String, usize)> {
+    string_totals(
+        records
+            .iter()
+            .map(|record| (record.kind.as_str(), record.bytes)),
+    )
+}
+
+fn string_totals<S>(items: impl IntoIterator<Item = (S, usize)>) -> Vec<(String, usize)>
+where
+    S: Into<String>,
+{
+    let mut totals = std::collections::BTreeMap::<String, usize>::new();
+    for (label, bytes) in items {
+        *totals.entry(label.into()).or_default() += bytes;
+    }
+
+    let mut rows = totals.into_iter().collect::<Vec<_>>();
+    rows.sort_by(|(left_label, left_bytes), (right_label, right_bytes)| {
+        right_bytes
+            .cmp(left_bytes)
+            .then_with(|| left_label.cmp(right_label))
+    });
+    rows
+}
+
+fn format_duration(duration: std::time::Duration) -> String {
+    let millis = duration.as_secs_f64() * 1000.0;
+    if millis < 1000.0 {
+        format!("{millis:.0} ms")
+    } else {
+        format!("{:.2} s", duration.as_secs_f64())
+    }
+}
+
+fn format_bytes(bytes: usize) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+
+    let mut value = bytes as f64;
+    let mut unit = UNITS[0];
+    for next_unit in UNITS.iter().skip(1) {
+        if value < 1024.0 {
+            break;
+        }
+        value /= 1024.0;
+        unit = next_unit;
+    }
+
+    if unit == "B" {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {unit}")
+    }
+}
+
+fn format_byte_delta(after: Option<usize>, before: Option<usize>) -> String {
+    let Some(after) = after.and_then(|value| i64::try_from(value).ok()) else {
+        return "-".to_string();
+    };
+    let Some(before) = before.and_then(|value| i64::try_from(value).ok()) else {
+        return "-".to_string();
+    };
+    let delta = after - before;
+    let prefix = if delta >= 0 { "+" } else { "-" };
+    let Some(bytes) = usize::try_from(delta.unsigned_abs()).ok() else {
+        return format!("{delta} B");
+    };
+    format!("{prefix}{}", format_bytes(bytes))
+}

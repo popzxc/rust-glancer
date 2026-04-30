@@ -76,9 +76,14 @@ impl Project {
             semantic_ir,
             body_ir,
         };
-        let rss_bytes = profiler.sample_rss();
+        let resident_bytes = profiler.sample_resident_memory();
         let project_bytes = profiler.measure(&project);
-        profiler.record("after project", project_bytes, project_bytes, rss_bytes);
+        profiler.record(
+            "after project",
+            project_bytes,
+            project_bytes,
+            resident_bytes,
+        );
 
         Ok((project, profiler.finish()))
     }
@@ -142,13 +147,13 @@ impl Project {
     ) -> anyhow::Result<(NameInterner, ParseDb, DefMapDb, SemanticIrDb, BodyIrDb)> {
         let mut names = NameInterner::new();
         let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
-        let rss_bytes = profiler.sample_rss();
+        let resident_bytes = profiler.sample_resident_memory();
         let parse_bytes = profiler.measure(&parse);
-        profiler.record("after parse", parse_bytes, parse_bytes, rss_bytes);
+        profiler.record("after parse", parse_bytes, parse_bytes, resident_bytes);
 
         let item_tree = ItemTreeDb::build_with_interner(&mut parse, &mut names)
             .context("while attempting to build item tree db")?;
-        let rss_bytes = profiler.sample_rss();
+        let resident_bytes = profiler.sample_resident_memory();
         let names_bytes = profiler.measure(&names);
         let parse_bytes = profiler.measure(&parse);
         let item_tree_bytes = profiler.measure(&item_tree);
@@ -156,24 +161,24 @@ impl Project {
             "after item-tree",
             item_tree_bytes,
             profiler.sum_retained(&[names_bytes, parse_bytes, item_tree_bytes]),
-            rss_bytes,
+            resident_bytes,
         );
 
         let def_map = DefMapDb::build_with_interner(workspace, &parse, &item_tree, &mut names)
             .context("while attempting to build def map db")?;
-        let rss_bytes = profiler.sample_rss();
+        let resident_bytes = profiler.sample_resident_memory();
         let names_bytes = profiler.measure(&names);
         let def_map_bytes = profiler.measure(&def_map);
         profiler.record(
             "after def-map",
             def_map_bytes,
             profiler.sum_retained(&[names_bytes, parse_bytes, item_tree_bytes, def_map_bytes]),
-            rss_bytes,
+            resident_bytes,
         );
 
         let semantic_ir = SemanticIrDb::build(&item_tree, &def_map)
             .context("while attempting to build semantic ir db")?;
-        let rss_bytes = profiler.sample_rss();
+        let resident_bytes = profiler.sample_resident_memory();
         let names_bytes = profiler.measure(&names);
         let semantic_ir_bytes = profiler.measure(&semantic_ir);
         profiler.record(
@@ -186,20 +191,20 @@ impl Project {
                 def_map_bytes,
                 semantic_ir_bytes,
             ]),
-            rss_bytes,
+            resident_bytes,
         );
 
         // ItemTree is a lowering input, not retained project state. Dropping it here makes the
         // following process-only checkpoint useful for separating transient build pressure from
         // final retained memory.
         drop(item_tree);
-        let rss_bytes = profiler.sample_rss();
+        let resident_bytes = profiler.sample_resident_memory();
         let names_bytes = profiler.measure(&names);
         profiler.record(
             "after item-tree drop",
             None,
             profiler.sum_retained(&[names_bytes, parse_bytes, def_map_bytes, semantic_ir_bytes]),
-            rss_bytes,
+            resident_bytes,
         );
 
         let body_ir = BodyIrDb::build_with_policy_and_interner(
@@ -210,7 +215,7 @@ impl Project {
             &mut names,
         )
         .context("while attempting to build body ir db")?;
-        let rss_bytes = profiler.sample_rss();
+        let resident_bytes = profiler.sample_resident_memory();
         let names_bytes = profiler.measure(&names);
         let body_ir_bytes = profiler.measure(&body_ir);
         profiler.record(
@@ -223,12 +228,12 @@ impl Project {
                 semantic_ir_bytes,
                 body_ir_bytes,
             ]),
-            rss_bytes,
+            resident_bytes,
         );
 
         parse.evict_syntax_trees();
         parse.shrink_to_fit();
-        let rss_bytes = profiler.sample_rss();
+        let resident_bytes = profiler.sample_resident_memory();
         names.shrink_to_fit();
         let names_bytes = profiler.measure(&names);
         let parse_bytes = profiler.measure(&parse);
@@ -242,7 +247,7 @@ impl Project {
                 semantic_ir_bytes,
                 body_ir_bytes,
             ]),
-            rss_bytes,
+            resident_bytes,
         );
 
         Ok((names, parse, def_map, semantic_ir, body_ir))

@@ -302,6 +302,16 @@ impl<'a> AnalysisSnapshot<'a> {
         self.project.body_ir_db()
     }
 
+    /// Returns an approximate retained-memory total for the current immutable analysis graph.
+    ///
+    /// This is intended for observability, not correctness. Computing it walks the graph, so LSP
+    /// callers should keep it behind explicit memory logging.
+    pub fn retained_memory_bytes(&self) -> usize {
+        use rg_memsize::MemorySize as _;
+
+        self.project.memory_size()
+    }
+
     /// Returns current analysis contexts for a saved filesystem path.
     pub fn file_contexts_for_path(
         &self,

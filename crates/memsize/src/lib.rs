@@ -90,6 +90,17 @@ pub enum MemoryRecordKind {
     Approximate,
 }
 
+impl MemoryRecordKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MemoryRecordKind::Shallow => "shallow",
+            MemoryRecordKind::Heap => "heap",
+            MemoryRecordKind::SpareCapacity => "spare capacity",
+            MemoryRecordKind::Approximate => "approximate",
+        }
+    }
+}
+
 /// Controls whether the recorder also keeps every individual contribution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryRecorderMode {

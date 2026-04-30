@@ -8,7 +8,7 @@ pub use self::{
         AnalysisChangeSummary, AnalysisHost, AnalysisSnapshot, ChangedFile, FileContext,
         SavedFileChange,
     },
-    profile::{BuildCheckpoint, BuildProfile, BuildProfileOptions, RssSampler},
+    profile::{BuildCheckpoint, BuildProfile, BuildProfileOptions, ResidentMemorySampler},
     project::Project,
 };
 

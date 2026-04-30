@@ -26,7 +26,7 @@ pub struct User;
         workspace,
         BuildProfileOptions {
             retained_memory: true,
-            rss_sampler: None,
+            resident_memory_sampler: None,
         },
     )
     .expect("profiled project build should succeed");

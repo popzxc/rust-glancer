@@ -7,7 +7,10 @@ use tower_lsp_server::{
     ls_types::{request::*, *},
 };
 
-use crate::{check::CheckHandle, documents::DocumentStore, engine::EngineHandle, methods};
+use crate::{
+    check::CheckHandle, documents::DocumentStore, engine::EngineHandle, memory::MemoryControl,
+    methods,
+};
 
 #[derive(Debug)]
 pub(crate) struct Backend {
@@ -15,13 +18,13 @@ pub(crate) struct Backend {
 }
 
 impl Backend {
-    pub(crate) fn new(client: Client) -> Self {
+    pub(crate) fn new(client: Client, memory_control: Arc<dyn MemoryControl>) -> Self {
         let documents = Arc::new(Mutex::new(DocumentStore::default()));
         Self {
             ctx: ServerContext {
                 check: CheckHandle::new(client.clone(), Arc::clone(&documents)),
                 client,
-                engine: EngineHandle::spawn(),
+                engine: EngineHandle::spawn(memory_control),
                 documents,
             },
         }

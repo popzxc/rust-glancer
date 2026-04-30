@@ -5,6 +5,7 @@ export type TraceSetting = "off" | "messages" | "verbose";
 export interface ExtensionConfig {
   readonly serverPath: string | undefined;
   readonly extraEnv: Record<string, string>;
+  readonly purgeMemoryAfterBuild: boolean;
   readonly traceServer: TraceSetting;
   readonly check: CheckConfig;
 }
@@ -20,6 +21,7 @@ export namespace ExtensionConfig {
     const config = vscode.workspace.getConfiguration("rust-glancer");
     const serverPath = config.get<string | null>("server.path", null);
     const extraEnv = config.get<Record<string, unknown>>("server.extraEnv", {});
+    const purgeMemoryAfterBuild = config.get<boolean>("server.purgeMemoryAfterBuild", true);
     const traceServer = config.get<TraceSetting>("trace.server", "off");
     const checkOnSave = config.get<boolean>("checkOnSave", false);
     const checkCommand = config.get<string>("check.command", "check");
@@ -28,6 +30,7 @@ export namespace ExtensionConfig {
     return {
       serverPath: normalizeOptionalString(serverPath),
       extraEnv: normalizeStringRecord(extraEnv),
+      purgeMemoryAfterBuild,
       traceServer,
       check: {
         onSave: checkOnSave,

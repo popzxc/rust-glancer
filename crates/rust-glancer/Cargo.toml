@@ -10,6 +10,15 @@ homepage.workspace = true
 readme.workspace = true
 description.workspace = true
 
+[features]
+default = ["jemalloc-stats"]
+jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
+jemalloc-stats = [
+  "jemalloc",
+  "tikv-jemallocator/stats",
+  "tikv-jemalloc-sys/stats",
+]
+
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
@@ -18,3 +27,7 @@ rg_memsize.workspace = true
 rg_project.workspace = true
 rg_workspace.workspace = true
 rg_lsp.workspace = true
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
+tikv-jemalloc-sys = { workspace = true, optional = true }

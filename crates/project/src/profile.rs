@@ -30,22 +30,23 @@ pub struct BuildCheckpoint {
     pub retained_bytes: Option<usize>,
     /// Retained size of all live phase state known at this checkpoint.
     pub active_retained_bytes: Option<usize>,
-    pub rss_bytes: Option<usize>,
+    /// Runtime resident memory reported by the executable, if available.
+    pub resident_bytes: Option<usize>,
 }
 
-pub type RssSampler = Box<dyn FnMut() -> Option<usize>>;
+pub type ResidentMemorySampler = Box<dyn FnMut() -> Option<usize>>;
 
 /// Optional profiling knobs for `Project::build_profiled*`.
 #[derive(Default)]
 pub struct BuildProfileOptions {
     pub retained_memory: bool,
-    pub rss_sampler: Option<RssSampler>,
+    pub resident_memory_sampler: Option<ResidentMemorySampler>,
 }
 
 pub(crate) struct BuildProfiler {
     started_at: Instant,
     retained_memory: bool,
-    rss_sampler: Option<RssSampler>,
+    resident_memory_sampler: Option<ResidentMemorySampler>,
     checkpoints: Vec<BuildCheckpoint>,
 }
 
@@ -54,7 +55,7 @@ impl BuildProfiler {
         Self {
             started_at: Instant::now(),
             retained_memory: false,
-            rss_sampler: None,
+            resident_memory_sampler: None,
             checkpoints: Vec::new(),
         }
     }
@@ -63,7 +64,7 @@ impl BuildProfiler {
         Self {
             started_at: Instant::now(),
             retained_memory: options.retained_memory,
-            rss_sampler: options.rss_sampler,
+            resident_memory_sampler: options.resident_memory_sampler,
             checkpoints: Vec::new(),
         }
     }
@@ -80,8 +81,10 @@ impl BuildProfiler {
             .then(|| values.iter().flatten().copied().sum())
     }
 
-    pub(crate) fn sample_rss(&mut self) -> Option<usize> {
-        self.rss_sampler.as_mut().and_then(|sampler| sampler())
+    pub(crate) fn sample_resident_memory(&mut self) -> Option<usize> {
+        self.resident_memory_sampler
+            .as_mut()
+            .and_then(|sampler| sampler())
     }
 
     pub(crate) fn record(
@@ -89,7 +92,7 @@ impl BuildProfiler {
         label: &'static str,
         retained_bytes: Option<usize>,
         active_retained_bytes: Option<usize>,
-        rss_bytes: Option<usize>,
+        resident_bytes: Option<usize>,
     ) {
         if !self.is_enabled() {
             return;
@@ -100,7 +103,7 @@ impl BuildProfiler {
             elapsed: self.started_at.elapsed(),
             retained_bytes,
             active_retained_bytes,
-            rss_bytes,
+            resident_bytes,
         });
     }
 
@@ -109,6 +112,6 @@ impl BuildProfiler {
     }
 
     fn is_enabled(&self) -> bool {
-        self.retained_memory || self.rss_sampler.is_some()
+        self.retained_memory || self.resident_memory_sampler.is_some()
     }
 }

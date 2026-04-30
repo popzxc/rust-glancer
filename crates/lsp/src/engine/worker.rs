@@ -1,6 +1,6 @@
 use std::{
     path::{Path, PathBuf},
-    sync::mpsc::Receiver,
+    sync::{Arc, mpsc::Receiver},
     time::Instant,
 };
 
@@ -14,17 +14,22 @@ use tower_lsp_server::ls_types;
 
 use crate::{
     engine::command::EngineCommand,
+    memory::{MemoryControl, MemoryPurge, MemoryStats},
     proto::{completion, hover, inlay_hint, navigation, position, symbols},
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct EngineWorker {
     host: Option<AnalysisHost>,
+    memory_control: Arc<dyn MemoryControl>,
 }
 
 impl EngineWorker {
-    pub(super) fn new() -> Self {
-        Self::default()
+    pub(super) fn new(memory_control: Arc<dyn MemoryControl>) -> Self {
+        Self {
+            host: None,
+            memory_control,
+        }
     }
 
     pub(super) fn run(mut self, receiver: Receiver<EngineCommand>) {
@@ -180,7 +185,7 @@ impl EngineWorker {
         let host = AnalysisHost::build(workspace)
             .context("while attempting to build LSP analysis host")?;
         let snapshot = host.snapshot();
-        Self::log_analysis_stats(snapshot, "initial index");
+        Self::post_project_build(self.memory_control.as_ref(), snapshot, "initial index");
 
         self.host = Some(host);
         tracing::info!(
@@ -194,6 +199,7 @@ impl EngineWorker {
 
     fn did_save(&mut self, path: PathBuf, text: Option<String>) -> anyhow::Result<()> {
         let started = Instant::now();
+        let memory_control = Arc::clone(&self.memory_control);
         let host = self
             .host
             .as_mut()
@@ -216,7 +222,7 @@ impl EngineWorker {
             elapsed_ms = started.elapsed().as_millis(),
             "saved file reindex finished"
         );
-        Self::log_analysis_stats(host.snapshot(), "after save");
+        Self::post_project_build(memory_control.as_ref(), host.snapshot(), "after save");
 
         Ok(())
     }
@@ -587,33 +593,21 @@ impl EngineWorker {
             .context("LSP engine is not initialized")
     }
 
-    fn log_analysis_stats(snapshot: AnalysisSnapshot<'_>, label: &'static str) {
-        let parse_db = snapshot.parse_db();
-        let def_map_stats = snapshot.def_map_db().stats();
-        let semantic_ir_stats = snapshot.semantic_ir_db().stats();
-        let body_ir_stats = snapshot.body_ir_db().stats();
+    /// Hook for activities to be run after the project (re-)build.
+    fn post_project_build(
+        memory_control: &dyn MemoryControl,
+        snapshot: AnalysisSnapshot<'_>,
+        label: &'static str,
+    ) {
+        // We report the memory usage and try to purge memory to make sure
+        // that we utilize the least possible amount of LSP. The expectation is that
+        // after the code has been edited, user needs memory for other things, so
+        // it isn't wise to keep it to LSP just so that future allocations are faster.
+        let before = MemoryStats::capture(memory_control);
+        let purge = MemoryPurge::try_purge(memory_control, before);
+        let stats = purge.map(MemoryPurge::after).unwrap_or(before);
 
-        tracing::info!(
-            label,
-            package_count = parse_db.package_count(),
-            workspace_package_count = parse_db.workspace_packages().count(),
-            def_map_targets = def_map_stats.target_count,
-            def_map_modules = def_map_stats.module_count,
-            unresolved_imports = def_map_stats.unresolved_import_count,
-            semantic_targets = semantic_ir_stats.target_count,
-            semantic_type_defs = semantic_ir_stats.struct_count
-                + semantic_ir_stats.enum_count
-                + semantic_ir_stats.union_count,
-            semantic_traits = semantic_ir_stats.trait_count,
-            semantic_impls = semantic_ir_stats.impl_count,
-            semantic_functions = semantic_ir_stats.function_count,
-            body_targets = body_ir_stats.target_count,
-            body_built_targets = body_ir_stats.built_target_count,
-            body_skipped_targets = body_ir_stats.skipped_target_count,
-            body_count = body_ir_stats.body_count,
-            expression_count = body_ir_stats.expression_count,
-            "analysis stats"
-        );
+        stats.report(memory_control, snapshot, label, purge);
     }
 }
 
