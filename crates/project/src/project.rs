@@ -107,6 +107,7 @@ impl Project {
             .context("while attempting to rebuild affected body IR packages")?;
 
         self.parse.evict_syntax_trees();
+        self.parse.shrink_to_fit();
         self.def_map = def_map;
         self.semantic_ir = semantic_ir;
         self.body_ir = body_ir;
@@ -187,6 +188,7 @@ impl Project {
         );
 
         parse.evict_syntax_trees();
+        parse.shrink_to_fit();
         let rss_bytes = profiler.sample_rss();
         let parse_bytes = profiler.measure(&parse);
         profiler.record(

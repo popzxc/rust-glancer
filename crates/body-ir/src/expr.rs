@@ -24,6 +24,14 @@ pub struct ExprData {
     pub ty: BodyTy,
 }
 
+impl ExprData {
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.kind.shrink_to_fit();
+        self.resolution.shrink_to_fit();
+        self.ty.shrink_to_fit();
+    }
+}
+
 /// Expression forms that the first Body IR pass understands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExprKind {
@@ -106,4 +114,43 @@ pub enum LiteralKind {
     String,
     #[display("unknown")]
     Unknown,
+}
+
+impl ExprKind {
+    fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Block {
+                statements, tail, ..
+            } => {
+                statements.shrink_to_fit();
+                let _ = tail;
+            }
+            Self::Path { path } => path.shrink_to_fit(),
+            Self::Call { callee, args } => {
+                let _ = callee;
+                args.shrink_to_fit();
+            }
+            Self::Match { scrutinee, arms } => {
+                let _ = scrutinee;
+                arms.shrink_to_fit();
+            }
+            Self::MethodCall {
+                receiver,
+                method_name,
+                args,
+                ..
+            } => {
+                let _ = receiver;
+                method_name.shrink_to_fit();
+                args.shrink_to_fit();
+            }
+            Self::Field { field, .. } => {
+                if let Some(field) = field {
+                    field.shrink_to_fit();
+                }
+            }
+            Self::Wrapper { .. } | Self::Literal { .. } => {}
+            Self::Unknown { children } => children.shrink_to_fit(),
+        }
+    }
 }

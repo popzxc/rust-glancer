@@ -243,7 +243,7 @@ impl<'a> TargetLowering<'a> {
             &trait_item.items,
             ItemOwner::Trait(trait_id),
         );
-        self.target_ir.items_mut().traits[trait_id.0].items = assoc_items;
+        self.target_ir.items_mut().traits[trait_id].items = assoc_items;
         trait_id
     }
 
@@ -270,7 +270,7 @@ impl<'a> TargetLowering<'a> {
         });
         let assoc_items =
             self.lower_assoc_items(source.file_id, &impl_item.items, ItemOwner::Impl(impl_id));
-        self.target_ir.items_mut().impls[impl_id.0].items = assoc_items;
+        self.target_ir.items_mut().impls[impl_id].items = assoc_items;
         impl_id
     }
 

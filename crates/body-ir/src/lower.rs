@@ -588,7 +588,7 @@ impl<'a> FunctionBodyLowering<'a> {
         // lowered binding so downstream snapshots and type propagation have one stable target.
         if bindings
             .iter()
-            .filter_map(|binding| self.builder.bindings.get(binding.0))
+            .filter_map(|binding| self.builder.bindings.get(*binding))
             .any(|binding| binding.name.as_deref() == Some(name.as_str()))
         {
             return None;

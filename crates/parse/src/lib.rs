@@ -93,6 +93,14 @@ impl ParseDb {
         }
     }
 
+    /// Compacts saved parse metadata after a project snapshot has finished building.
+    pub fn shrink_to_fit(&mut self) {
+        self.packages.shrink_to_fit();
+        for package in &mut self.packages {
+            package.shrink_to_fit();
+        }
+    }
+
     /// Reparses a saved file for every parsed package that already owns `file_path`.
     ///
     /// This keeps package-local `FileId`s stable. Unknown files do not appear in the returned owner

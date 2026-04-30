@@ -1,3 +1,4 @@
+use rg_arena::Arena;
 use rg_def_map::{LocalDefRef, LocalImplRef, ModuleRef};
 use rg_item_tree::{
     ConstItem, Documentation, EnumVariantItem, FieldItem, FieldList, FunctionItem, GenericParams,
@@ -16,108 +17,129 @@ use crate::ids::{
 /// lowering allocate ids cheaply while the public query surface exposes stable typed references.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ItemStore {
-    pub(crate) structs: Vec<StructData>,
-    pub(crate) unions: Vec<UnionData>,
-    pub(crate) enums: Vec<EnumData>,
-    pub(crate) traits: Vec<TraitData>,
-    pub(crate) impls: Vec<ImplData>,
-    pub(crate) functions: Vec<FunctionData>,
-    pub(crate) type_aliases: Vec<TypeAliasData>,
-    pub(crate) consts: Vec<ConstData>,
-    pub(crate) statics: Vec<StaticData>,
+    pub(crate) structs: Arena<StructId, StructData>,
+    pub(crate) unions: Arena<UnionId, UnionData>,
+    pub(crate) enums: Arena<EnumId, EnumData>,
+    pub(crate) traits: Arena<TraitId, TraitData>,
+    pub(crate) impls: Arena<ImplId, ImplData>,
+    pub(crate) functions: Arena<FunctionId, FunctionData>,
+    pub(crate) type_aliases: Arena<TypeAliasId, TypeAliasData>,
+    pub(crate) consts: Arena<ConstId, ConstData>,
+    pub(crate) statics: Arena<StaticId, StaticData>,
 }
 
 impl ItemStore {
     pub fn struct_data(&self, id: StructId) -> Option<&StructData> {
-        self.structs.get(id.0)
+        self.structs.get(id)
     }
 
     pub fn union_data(&self, id: UnionId) -> Option<&UnionData> {
-        self.unions.get(id.0)
+        self.unions.get(id)
     }
 
     pub fn enum_data(&self, id: EnumId) -> Option<&EnumData> {
-        self.enums.get(id.0)
+        self.enums.get(id)
     }
 
     pub fn trait_data(&self, id: TraitId) -> Option<&TraitData> {
-        self.traits.get(id.0)
+        self.traits.get(id)
     }
 
     pub fn impl_data(&self, id: ImplId) -> Option<&ImplData> {
-        self.impls.get(id.0)
+        self.impls.get(id)
     }
 
     pub fn function_data(&self, id: FunctionId) -> Option<&FunctionData> {
-        self.functions.get(id.0)
+        self.functions.get(id)
     }
 
     pub fn type_alias_data(&self, id: TypeAliasId) -> Option<&TypeAliasData> {
-        self.type_aliases.get(id.0)
+        self.type_aliases.get(id)
     }
 
     pub fn const_data(&self, id: ConstId) -> Option<&ConstData> {
-        self.consts.get(id.0)
+        self.consts.get(id)
     }
 
     pub fn static_data(&self, id: StaticId) -> Option<&StaticData> {
-        self.statics.get(id.0)
+        self.statics.get(id)
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.structs.shrink_to_fit();
+        for data in self.structs.iter_mut() {
+            data.shrink_to_fit();
+        }
+        self.unions.shrink_to_fit();
+        for data in self.unions.iter_mut() {
+            data.shrink_to_fit();
+        }
+        self.enums.shrink_to_fit();
+        for data in self.enums.iter_mut() {
+            data.shrink_to_fit();
+        }
+        self.traits.shrink_to_fit();
+        for data in self.traits.iter_mut() {
+            data.shrink_to_fit();
+        }
+        self.impls.shrink_to_fit();
+        for data in self.impls.iter_mut() {
+            data.shrink_to_fit();
+        }
+        self.functions.shrink_to_fit();
+        for data in self.functions.iter_mut() {
+            data.shrink_to_fit();
+        }
+        self.type_aliases.shrink_to_fit();
+        for data in self.type_aliases.iter_mut() {
+            data.shrink_to_fit();
+        }
+        self.consts.shrink_to_fit();
+        for data in self.consts.iter_mut() {
+            data.shrink_to_fit();
+        }
+        self.statics.shrink_to_fit();
+        for data in self.statics.iter_mut() {
+            data.shrink_to_fit();
+        }
     }
 }
 
 impl ItemStore {
     pub(crate) fn alloc_struct(&mut self, data: StructData) -> StructId {
-        let id = StructId(self.structs.len());
-        self.structs.push(data);
-        id
+        self.structs.alloc(data)
     }
 
     pub(crate) fn alloc_union(&mut self, data: UnionData) -> UnionId {
-        let id = UnionId(self.unions.len());
-        self.unions.push(data);
-        id
+        self.unions.alloc(data)
     }
 
     pub(crate) fn alloc_enum(&mut self, data: EnumData) -> EnumId {
-        let id = EnumId(self.enums.len());
-        self.enums.push(data);
-        id
+        self.enums.alloc(data)
     }
 
     pub(crate) fn alloc_trait(&mut self, data: TraitData) -> TraitId {
-        let id = TraitId(self.traits.len());
-        self.traits.push(data);
-        id
+        self.traits.alloc(data)
     }
 
     pub(crate) fn alloc_impl(&mut self, data: ImplData) -> ImplId {
-        let id = ImplId(self.impls.len());
-        self.impls.push(data);
-        id
+        self.impls.alloc(data)
     }
 
     pub(crate) fn alloc_function(&mut self, data: FunctionData) -> FunctionId {
-        let id = FunctionId(self.functions.len());
-        self.functions.push(data);
-        id
+        self.functions.alloc(data)
     }
 
     pub(crate) fn alloc_type_alias(&mut self, data: TypeAliasData) -> TypeAliasId {
-        let id = TypeAliasId(self.type_aliases.len());
-        self.type_aliases.push(data);
-        id
+        self.type_aliases.alloc(data)
     }
 
     pub(crate) fn alloc_const(&mut self, data: ConstData) -> ConstId {
-        let id = ConstId(self.consts.len());
-        self.consts.push(data);
-        id
+        self.consts.alloc(data)
     }
 
     pub(crate) fn alloc_static(&mut self, data: StaticData) -> StaticId {
-        let id = StaticId(self.statics.len());
-        self.statics.push(data);
-        id
+        self.statics.alloc(data)
     }
 }
 
@@ -154,6 +176,17 @@ pub struct StructData {
     pub fields: FieldList,
 }
 
+impl StructData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.generics.shrink_to_fit();
+        self.fields.shrink_to_fit();
+    }
+}
+
 /// Nominal union lowered from a module item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnionData {
@@ -165,6 +198,20 @@ pub struct UnionData {
     pub docs: Option<Documentation>,
     pub generics: GenericParams,
     pub fields: Vec<FieldItem>,
+}
+
+impl UnionData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.generics.shrink_to_fit();
+        self.fields.shrink_to_fit();
+        for field in &mut self.fields {
+            field.shrink_to_fit();
+        }
+    }
 }
 
 /// Enum definition together with variant payloads.
@@ -180,6 +227,20 @@ pub struct EnumData {
     pub variants: Vec<EnumVariantItem>,
 }
 
+impl EnumData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.generics.shrink_to_fit();
+        self.variants.shrink_to_fit();
+        for variant in &mut self.variants {
+            variant.shrink_to_fit();
+        }
+    }
+}
+
 /// Trait signature and associated items.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraitData {
@@ -193,6 +254,21 @@ pub struct TraitData {
     pub super_traits: Vec<TypeBound>,
     pub items: Vec<AssocItemId>,
     pub is_unsafe: bool,
+}
+
+impl TraitData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.generics.shrink_to_fit();
+        self.super_traits.shrink_to_fit();
+        for bound in &mut self.super_traits {
+            bound.shrink_to_fit();
+        }
+        self.items.shrink_to_fit();
+    }
 }
 
 /// Impl block header and associated items.
@@ -211,6 +287,19 @@ pub struct ImplData {
     pub resolved_trait_refs: Vec<TraitRef>,
     pub items: Vec<AssocItemId>,
     pub is_unsafe: bool,
+}
+
+impl ImplData {
+    fn shrink_to_fit(&mut self) {
+        self.generics.shrink_to_fit();
+        if let Some(trait_ref) = &mut self.trait_ref {
+            trait_ref.shrink_to_fit();
+        }
+        self.self_ty.shrink_to_fit();
+        self.resolved_self_tys.shrink_to_fit();
+        self.resolved_trait_refs.shrink_to_fit();
+        self.items.shrink_to_fit();
+    }
 }
 
 /// Function signature and source identity.
@@ -234,6 +323,14 @@ impl FunctionData {
             .first()
             .is_some_and(|param| matches!(param.kind, ParamKind::SelfParam))
     }
+
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.declaration.shrink_to_fit();
+    }
 }
 
 /// Type alias signature and optional aliased type.
@@ -250,6 +347,16 @@ pub struct TypeAliasData {
     pub declaration: TypeAliasItem,
 }
 
+impl TypeAliasData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.declaration.shrink_to_fit();
+    }
+}
+
 /// Const signature and optional value body owner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstData {
@@ -262,6 +369,16 @@ pub struct ConstData {
     pub visibility: VisibilityLevel,
     pub docs: Option<Documentation>,
     pub declaration: ConstItem,
+}
+
+impl ConstData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.declaration.shrink_to_fit();
+    }
 }
 
 /// Module-level static item.
@@ -277,4 +394,16 @@ pub struct StaticData {
     pub docs: Option<Documentation>,
     pub ty: Option<TypeRef>,
     pub mutability: Mutability,
+}
+
+impl StaticData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        if let Some(ty) = &mut self.ty {
+            ty.shrink_to_fit();
+        }
+    }
 }

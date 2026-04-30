@@ -11,7 +11,7 @@ use rg_semantic_ir::{SemanticIrDb, TypeDefId, TypePathContext};
 use crate::{
     body::BodyData,
     expr::ExprKind,
-    ids::{BindingId, BodyRef, ExprId, PatId, ScopeId},
+    ids::{BindingId, BodyRef, ExprId, PatId, ScopeId, StmtId},
     pat::{PatKind, RecordPatField},
     path::BodyPath,
     stmt::StmtKind,
@@ -50,13 +50,14 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
         let mut changed = false;
 
         for statement_idx in 0..self.body.statements.len() {
+            let statement = StmtId(statement_idx);
             let StmtKind::Let {
                 scope,
                 pat: Some(pat),
                 annotation,
                 initializer,
                 ..
-            } = self.body.statements[statement_idx].kind.clone()
+            } = self.body.statements[statement].kind.clone()
             else {
                 continue;
             };
@@ -66,13 +67,14 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
         }
 
         for expr_idx in 0..self.body.exprs.len() {
-            let ExprKind::Match { scrutinee, arms } = self.body.exprs[expr_idx].kind.clone() else {
+            let expr = ExprId(expr_idx);
+            let ExprKind::Match { scrutinee, arms } = self.body.exprs[expr].kind.clone() else {
                 continue;
             };
             let Some(scrutinee) = scrutinee else {
                 continue;
             };
-            let expected_ty = self.body.exprs[scrutinee.0].ty.clone();
+            let expected_ty = self.body.exprs[scrutinee].ty.clone();
             for arm in arms {
                 if let Some(pat) = arm.pat {
                     changed |= self.propagate_pat(pat, &expected_ty);
@@ -99,7 +101,7 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
         }
 
         initializer
-            .map(|expr| self.body.exprs[expr.0].ty.clone())
+            .map(|expr| self.body.exprs[expr].ty.clone())
             .unwrap_or(BodyTy::Unknown)
     }
 
@@ -236,7 +238,7 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
             return false;
         }
 
-        let Some(binding_data) = self.body.bindings.get_mut(binding.0) else {
+        let Some(binding_data) = self.body.bindings.get_mut(binding) else {
             return false;
         };
         if !matches!(binding_data.ty, BodyTy::Unknown) {

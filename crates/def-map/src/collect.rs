@@ -20,10 +20,9 @@ use rg_item_tree::{
 use rg_parse::{Package, Target};
 
 use super::{
-    DefId, DefMap, ImportBinding, ImportData, ImportId, ImportKind, ImportPath, ImportSourcePath,
-    LocalDefData, LocalDefId, LocalDefKind, LocalDefRef, LocalImplData, LocalImplId, ModuleData,
-    ModuleId, ModuleOrigin, ModuleRef, ModuleScope, PackageSlot, ScopeBinding, TargetRef,
-    data::Namespace,
+    DefId, DefMap, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
+    LocalDefData, LocalDefKind, LocalDefRef, LocalImplData, ModuleData, ModuleId, ModuleOrigin,
+    ModuleRef, ModuleScope, PackageSlot, ScopeBinding, TargetRef, data::Namespace,
 };
 
 /// Collected state for one target before fixed-point import resolution.
@@ -176,8 +175,7 @@ impl<'db> TargetScopeCollector<'db> {
         docs: Option<rg_item_tree::Documentation>,
         origin: ModuleOrigin,
     ) -> ModuleId {
-        let module_id = ModuleId(self.def_map.modules.len());
-        self.def_map.modules.push(ModuleData {
+        let module_id = self.def_map.modules.alloc(ModuleData {
             name,
             name_span,
             docs,
@@ -244,8 +242,7 @@ impl<'db> TargetScopeCollector<'db> {
             return;
         };
 
-        let local_def_id = LocalDefId(self.def_map.local_defs.len());
-        self.def_map.local_defs.push(LocalDefData {
+        let local_def_id = self.def_map.local_defs.alloc(LocalDefData {
             module: module_id,
             name: name.clone(),
             kind,
@@ -257,7 +254,7 @@ impl<'db> TargetScopeCollector<'db> {
         });
         self.def_map
             .modules
-            .get_mut(module_id.0)
+            .get_mut(module_id)
             .expect("module should exist for collected local definition")
             .local_defs
             .push(local_def_id);
@@ -283,8 +280,7 @@ impl<'db> TargetScopeCollector<'db> {
 
     /// Records one module-scope impl block without inserting a namespace binding.
     fn collect_local_impl(&mut self, module_id: ModuleId, item: &ItemNode, source: ItemTreeRef) {
-        let local_impl_id = LocalImplId(self.def_map.local_impls.len());
-        self.def_map.local_impls.push(LocalImplData {
+        let local_impl_id = self.def_map.local_impls.alloc(LocalImplData {
             module: module_id,
             source,
             file_id: item.file_id,
@@ -292,7 +288,7 @@ impl<'db> TargetScopeCollector<'db> {
         });
         self.def_map
             .modules
-            .get_mut(module_id.0)
+            .get_mut(module_id)
             .expect("module should exist for collected impl block")
             .impls
             .push(local_impl_id);
@@ -397,7 +393,7 @@ impl<'db> TargetScopeCollector<'db> {
     ) {
         self.def_map
             .modules
-            .get_mut(parent_module.0)
+            .get_mut(parent_module)
             .expect("parent module should exist for child link")
             .children
             .push((module_name.to_string(), child_module));
@@ -442,8 +438,7 @@ impl<'db> TargetScopeCollector<'db> {
                 continue;
             }
 
-            let import_id = ImportId(self.def_map.imports.len());
-            self.def_map.imports.push(ImportData {
+            let import_id = self.def_map.imports.alloc(ImportData {
                 module: module_id,
                 visibility: item.visibility.clone(),
                 kind: ImportKind::from_use_kind(import.kind),
@@ -459,7 +454,7 @@ impl<'db> TargetScopeCollector<'db> {
             });
             self.def_map
                 .modules
-                .get_mut(module_id.0)
+                .get_mut(module_id)
                 .expect("module should exist for lowered import")
                 .imports
                 .push(import_id);

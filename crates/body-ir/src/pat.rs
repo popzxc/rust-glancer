@@ -13,6 +13,12 @@ pub struct PatData {
     pub kind: PatKind,
 }
 
+impl PatData {
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.kind.shrink_to_fit();
+    }
+}
+
 /// Pattern forms that matter for binding and enum-payload type propagation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PatKind {
@@ -55,4 +61,44 @@ pub enum PatKind {
 pub struct RecordPatField {
     pub key: FieldKey,
     pub pat: PatId,
+}
+
+impl PatKind {
+    fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Tuple { fields } | Self::Slice { fields } => fields.shrink_to_fit(),
+            Self::TupleStruct { path, fields } => {
+                if let Some(path) = path {
+                    path.shrink_to_fit();
+                }
+                fields.shrink_to_fit();
+            }
+            Self::Record { path, fields } => {
+                if let Some(path) = path {
+                    path.shrink_to_fit();
+                }
+                fields.shrink_to_fit();
+                for field in fields {
+                    field.shrink_to_fit();
+                }
+            }
+            Self::Or { pats } => pats.shrink_to_fit(),
+            Self::Path { path } => {
+                if let Some(path) = path {
+                    path.shrink_to_fit();
+                }
+            }
+            Self::Binding { .. }
+            | Self::Ref { .. }
+            | Self::Box { .. }
+            | Self::Wildcard
+            | Self::Unsupported => {}
+        }
+    }
+}
+
+impl RecordPatField {
+    fn shrink_to_fit(&mut self) {
+        self.key.shrink_to_fit();
+    }
 }

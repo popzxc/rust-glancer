@@ -6,6 +6,7 @@ mod memsize;
 mod tests;
 
 use anyhow::Context as _;
+use rg_arena::Arena;
 use rg_parse::{FileId, ParseDb, TargetId};
 
 pub use self::item::{
@@ -72,8 +73,8 @@ fn normalized_package_slots(packages: &[usize]) -> Vec<usize> {
 /// Item trees for all files inside one parsed package, plus target entrypoints.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Package {
-    files: Vec<Option<FileTree>>,
-    target_roots: Vec<TargetRoot>,
+    files: Arena<FileId, Option<FileTree>>,
+    target_roots: Arena<TargetId, TargetRoot>,
 }
 
 impl Package {
@@ -84,7 +85,7 @@ impl Package {
 
     /// Returns one file tree by parsed file id.
     pub fn file(&self, file_id: FileId) -> Option<&FileTree> {
-        self.files.get(file_id.0)?.as_ref()
+        self.files.get(file_id)?.as_ref()
     }
 
     /// Returns one lowered item by stable item-tree reference.
@@ -94,14 +95,12 @@ impl Package {
 
     /// Returns all target roots.
     pub fn target_roots(&self) -> &[TargetRoot] {
-        &self.target_roots
+        self.target_roots.as_slice()
     }
 
     /// Returns one target root by parsed target id.
     pub fn target_root(&self, target_id: TargetId) -> Option<&TargetRoot> {
-        self.target_roots
-            .iter()
-            .find(|target| target.target == target_id)
+        self.target_roots.get(target_id)
     }
 }
 
@@ -111,13 +110,13 @@ pub struct FileTree {
     pub file: FileId,
     pub docs: Option<Documentation>,
     pub top_level: Vec<ItemTreeId>,
-    pub items: Vec<ItemNode>,
+    pub items: Arena<ItemTreeId, ItemNode>,
 }
 
 impl FileTree {
     /// Returns one file-local item-tree node by id.
     pub fn item(&self, item_id: ItemTreeId) -> Option<&ItemNode> {
-        self.items.get(item_id.0)
+        self.items.get(item_id)
     }
 }
 

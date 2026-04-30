@@ -435,13 +435,13 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
     fn body_local_document_symbols(&self, body: &BodyData, file_id: FileId) -> Vec<DocumentSymbol> {
         let mut symbols = Vec::new();
 
-        for item in &body.local_items {
+        for item in body.local_items.iter() {
             if item.source.file_id == file_id {
                 symbols.push(self.body_item_document_symbol(file_id, item));
             }
         }
 
-        for impl_data in &body.local_impls {
+        for impl_data in body.local_impls.iter() {
             if impl_data.source.file_id == file_id {
                 symbols.push(self.body_impl_document_symbol(body, impl_data));
             }

@@ -31,6 +31,12 @@ impl ImportData {
 
         self.binding.resolve(inferred_name)
     }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.path.shrink_to_fit();
+        self.source_path.shrink_to_fit();
+        self.binding.shrink_to_fit();
+    }
 }
 
 /// Binding strategy for one lowered import or extern crate item.
@@ -58,6 +64,12 @@ impl ImportBinding {
             Self::Inferred => inferred_name,
             Self::Explicit(name) => Some(name.clone()),
             Self::Hidden => None,
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        if let Self::Explicit(name) = self {
+            name.shrink_to_fit();
         }
     }
 }
@@ -110,6 +122,13 @@ impl ImportPath {
     pub(super) fn last_name(&self) -> Option<String> {
         last_segment_name(&self.segments)
     }
+
+    fn shrink_to_fit(&mut self) {
+        self.segments.shrink_to_fit();
+        for segment in &mut self.segments {
+            segment.shrink_to_fit();
+        }
+    }
 }
 
 /// Import path plus source spans for each segment.
@@ -151,6 +170,13 @@ impl ImportSourcePath {
                 .take(segment_idx + 1)
                 .map(|segment| segment.segment.clone())
                 .collect(),
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.segments.shrink_to_fit();
+        for segment in &mut self.segments {
+            segment.segment.shrink_to_fit();
         }
     }
 }

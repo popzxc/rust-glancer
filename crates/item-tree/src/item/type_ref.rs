@@ -204,6 +204,48 @@ impl TypeRef {
             }
         }
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Unknown(text) => text.shrink_to_fit(),
+            Self::Path(path) => path.shrink_to_fit(),
+            Self::Tuple(types) => {
+                types.shrink_to_fit();
+                for ty in types {
+                    ty.shrink_to_fit();
+                }
+            }
+            Self::Reference {
+                lifetime, inner, ..
+            } => {
+                if let Some(lifetime) = lifetime {
+                    lifetime.shrink_to_fit();
+                }
+                inner.shrink_to_fit();
+            }
+            Self::RawPointer { inner, .. } | Self::Slice(inner) => inner.shrink_to_fit(),
+            Self::Array { inner, len } => {
+                inner.shrink_to_fit();
+                if let Some(len) = len {
+                    len.shrink_to_fit();
+                }
+            }
+            Self::FnPointer { params, ret } => {
+                params.shrink_to_fit();
+                for param in params {
+                    param.shrink_to_fit();
+                }
+                ret.shrink_to_fit();
+            }
+            Self::ImplTrait(bounds) | Self::DynTrait(bounds) => {
+                bounds.shrink_to_fit();
+                for bound in bounds {
+                    bound.shrink_to_fit();
+                }
+            }
+            Self::Never | Self::Unit | Self::Infer => {}
+        }
+    }
 }
 
 impl fmt::Display for TypeRef {
@@ -305,6 +347,13 @@ impl TypePath {
             segments.push(TypePathSegment::from_ast(&segment, line_index));
         }
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.segments.shrink_to_fit();
+        for segment in &mut self.segments {
+            segment.shrink_to_fit();
+        }
+    }
 }
 
 impl fmt::Display for TypePath {
@@ -361,6 +410,14 @@ impl TypePathSegment {
             name,
             args,
             span: Span::from_text_range(span),
+        }
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        self.args.shrink_to_fit();
+        for arg in &mut self.args {
+            arg.shrink_to_fit();
         }
     }
 }
@@ -424,6 +481,21 @@ impl GenericArg {
             Self::Lifetime(_) | Self::Const(_) | Self::Unsupported(_) => false,
         }
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Type(ty) => ty.shrink_to_fit(),
+            Self::Lifetime(lifetime) | Self::Const(lifetime) | Self::Unsupported(lifetime) => {
+                lifetime.shrink_to_fit();
+            }
+            Self::AssocType { name, ty } => {
+                name.shrink_to_fit();
+                if let Some(ty) = ty {
+                    ty.shrink_to_fit();
+                }
+            }
+        }
+    }
 }
 
 impl fmt::Display for GenericArg {
@@ -485,6 +557,13 @@ impl TypeBound {
         match self {
             Self::Trait(ty) => ty.mentions_type_param(params),
             Self::Lifetime(_) | Self::Unsupported(_) => false,
+        }
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Trait(ty) => ty.shrink_to_fit(),
+            Self::Lifetime(lifetime) | Self::Unsupported(lifetime) => lifetime.shrink_to_fit(),
         }
     }
 }

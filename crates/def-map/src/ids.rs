@@ -1,5 +1,21 @@
 use rg_parse::TargetId;
 
+macro_rules! impl_arena_id {
+    ($($id:ty),+ $(,)?) => {
+        $(
+            impl rg_arena::ArenaId for $id {
+                fn from_index(index: usize) -> Self {
+                    Self(index)
+                }
+
+                fn index(self) -> usize {
+                    self.0
+                }
+            }
+        )+
+    };
+}
+
 /// Stable identifier of one module inside a target map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub usize);
@@ -19,6 +35,8 @@ pub struct ImportId(pub usize);
 /// Stable identifier of one analyzed package inside a project analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PackageSlot(pub usize);
+
+impl_arena_id!(ModuleId, LocalDefId, LocalImplId, ImportId, PackageSlot);
 
 /// Stable reference to one target across the whole project analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::Context as _;
+use rg_arena::Arena;
 
 use crate::{FileId, ParsedFile, Target, TargetId, file::FileDb};
 use rg_workspace::{PackageId, PackageOrigin, TargetKind};
@@ -19,7 +20,7 @@ pub struct Package {
     /// All parsed files known to this package.
     pub(crate) files: FileDb,
     /// Parsed targets rooted in this package.
-    pub(crate) targets: Vec<Target>,
+    pub(crate) targets: Arena<TargetId, Target>,
 }
 
 impl Package {
@@ -44,6 +45,15 @@ impl Package {
     /// Drops retained syntax trees while preserving file ids, paths, diagnostics, and line indexes.
     pub(crate) fn evict_syntax_trees(&mut self) {
         self.files.evict_syntax_trees();
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.package_name.shrink_to_fit();
+        self.files.shrink_to_fit();
+        self.targets.shrink_to_fit();
+        for target in self.targets.iter_mut() {
+            target.shrink_to_fit();
+        }
     }
 
     /// Returns the cached parsed file for a previously known `FileId`.
@@ -83,12 +93,12 @@ impl Package {
 
     /// Returns all parsed targets for this package.
     pub fn targets(&self) -> &[Target] {
-        &self.targets
+        self.targets.as_slice()
     }
 
     /// Returns one parsed target by stable id.
     pub fn target(&self, target_id: TargetId) -> Option<&Target> {
-        self.targets.iter().find(|target| target.id == target_id)
+        self.targets.get(target_id)
     }
 
     /// Parses package targets and their root files.
@@ -106,10 +116,10 @@ impl Package {
         };
 
         let mut files = FileDb::default();
-        let mut parsed_targets = Vec::new();
+        let mut parsed_targets = Arena::new();
 
-        for (idx, target) in targets.into_iter().enumerate() {
-            let target_id = TargetId(idx);
+        for target in targets {
+            let target_id = parsed_targets.next_id();
             let root_file = files.get_or_parse_file(&target.src_path).with_context(|| {
                 format!(
                     "while attempting to parse target root {}",
@@ -117,7 +127,7 @@ impl Package {
                 )
             })?;
 
-            parsed_targets.push(Target {
+            parsed_targets.alloc(Target {
                 id: target_id,
                 name: target.name,
                 kind: target.kind,

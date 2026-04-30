@@ -89,12 +89,12 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         for binding_idx in 0..self.body.bindings.len() {
             let binding = BindingId(binding_idx);
             let ty = self.binding_ty(binding);
-            self.body.bindings[binding.0].ty = ty;
+            self.body.bindings[binding].ty = ty;
         }
     }
 
     fn binding_ty(&self, binding: BindingId) -> BodyTy {
-        let binding_data = &self.body.bindings[binding.0];
+        let binding_data = &self.body.bindings[binding];
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .type_path_resolver()
@@ -121,7 +121,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         for impl_idx in 0..self.body.local_impls.len() {
             let impl_id = BodyImplId(impl_idx);
             let self_item = {
-                let impl_data = &self.body.local_impls[impl_idx];
+                let impl_data = &self.body.local_impls[impl_id];
                 self.type_path_resolver()
                     .local_item_from_type_ref_in_scope(&impl_data.self_ty, impl_data.scope)
             };
@@ -133,41 +133,41 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
     }
 
     fn resolve_expr(&mut self, expr: ExprId) -> bool {
-        let old_resolution = self.body.exprs[expr.0].resolution.clone();
-        let old_ty = self.body.exprs[expr.0].ty.clone();
-        let kind = self.body.exprs[expr.0].kind.clone();
+        let old_resolution = self.body.exprs[expr].resolution.clone();
+        let old_ty = self.body.exprs[expr].ty.clone();
+        let kind = self.body.exprs[expr].kind.clone();
 
         match kind {
             ExprKind::Path { path } => {
                 let (resolution, ty) = self.resolve_path_expr(expr, &path.path);
-                let data = &mut self.body.exprs[expr.0];
+                let data = &mut self.body.exprs[expr];
                 data.resolution = resolution;
                 data.ty = ty;
             }
             ExprKind::Call { callee, .. } => {
-                self.body.exprs[expr.0].ty = self.call_ty(callee);
+                self.body.exprs[expr].ty = self.call_ty(callee);
             }
             ExprKind::Match { arms, .. } => {
                 let mut arm_tys = Vec::new();
                 for arm in arms {
                     if let Some(expr) = arm.expr {
-                        push_unique(&mut arm_tys, self.body.exprs[expr.0].ty.clone());
+                        push_unique(&mut arm_tys, self.body.exprs[expr].ty.clone());
                     }
                 }
-                self.body.exprs[expr.0].ty = if arm_tys.len() == 1 {
+                self.body.exprs[expr].ty = if arm_tys.len() == 1 {
                     arm_tys.pop().expect("one arm type should exist")
                 } else {
                     BodyTy::Unknown
                 };
             }
             ExprKind::Block { tail, .. } => {
-                self.body.exprs[expr.0].ty = tail
-                    .map(|tail| self.body.exprs[tail.0].ty.clone())
+                self.body.exprs[expr].ty = tail
+                    .map(|tail| self.body.exprs[tail].ty.clone())
                     .unwrap_or(BodyTy::Unit);
             }
             ExprKind::Field { base, field, .. } => {
                 let (resolution, ty) = self.resolve_field_expr(base, field.as_ref());
-                let data = &mut self.body.exprs[expr.0];
+                let data = &mut self.body.exprs[expr];
                 data.resolution = resolution;
                 data.ty = ty;
             }
@@ -177,27 +177,27 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
                 ..
             } => {
                 let (resolution, ty) = self.resolve_method_call_expr(receiver, &method_name);
-                let data = &mut self.body.exprs[expr.0];
+                let data = &mut self.body.exprs[expr];
                 data.resolution = resolution;
                 data.ty = ty;
             }
             ExprKind::Wrapper { kind, inner } => {
                 let (resolution, ty) = self.resolve_wrapper_expr(kind, inner);
-                let data = &mut self.body.exprs[expr.0];
+                let data = &mut self.body.exprs[expr];
                 data.resolution = resolution;
                 data.ty = ty;
             }
             ExprKind::Literal { .. } | ExprKind::Unknown { .. } => {}
         }
 
-        self.body.exprs[expr.0].resolution != old_resolution || self.body.exprs[expr.0].ty != old_ty
+        self.body.exprs[expr].resolution != old_resolution || self.body.exprs[expr].ty != old_ty
     }
 
     fn resolve_path_expr(&self, expr: ExprId, path: &Path) -> (BodyResolution, BodyTy) {
-        let scope = self.body.exprs[expr.0].scope;
+        let scope = self.body.exprs[expr].scope;
         if let Some(name) = path.single_name() {
             if let Some(binding) = self.resolve_local_name(scope, name, expr) {
-                let ty = self.body.bindings[binding.0].ty.clone();
+                let ty = self.body.bindings[binding].ty.clone();
                 return (BodyResolution::Local(binding), ty);
             }
         }
@@ -228,7 +228,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
 
         // Local and semantic fields use the same substitution idea, but local items need their
         // declaration scope so field types can mention body-local names.
-        for local_ty in self.body.exprs[base.0].ty.local_nominals() {
+        for local_ty in self.body.exprs[base].ty.local_nominals() {
             let Some(field_ref) = self.local_field_for_type(local_ty.item, field) else {
                 continue;
             };
@@ -247,7 +247,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
             push_unique(&mut field_tys, field_ty);
         }
 
-        for nominal_ty in self.body.exprs[base.0].ty.nominal_tys() {
+        for nominal_ty in self.body.exprs[base].ty.nominal_tys() {
             let Some(field_ref) = self.semantic_ir.field_for_type(nominal_ty.def, field) else {
                 continue;
             };
@@ -293,7 +293,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
 
         let mut functions = Vec::new();
         let mut return_tys = Vec::new();
-        let receiver_ty = &self.body.exprs[receiver.0].ty;
+        let receiver_ty = &self.body.exprs[receiver].ty;
 
         // Method lookup is intentionally shallow: exact local item identity for body-local impls,
         // and nominal type plus lightweight impl-argument matching for semantic impls.
@@ -353,7 +353,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         let Some(inner) = inner else {
             return (BodyResolution::Unknown, BodyTy::Unknown);
         };
-        let inner_data = &self.body.exprs[inner.0];
+        let inner_data = &self.body.exprs[inner];
         let ty = BodyTyNormalizer::new(self.semantic_ir, self.body)
             .ty_for_wrapper(kind, inner_data.ty.clone());
         let resolution = if matches!(kind, ExprWrapperKind::Paren) {
@@ -528,7 +528,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         loop {
             let scope_data = self.body.scope(scope)?;
             for binding in scope_data.bindings.iter().rev() {
-                if binding.0 >= self.body.exprs[expr.0].visible_bindings {
+                if binding.0 >= self.body.exprs[expr].visible_bindings {
                     continue;
                 }
 
@@ -546,7 +546,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         let Some(callee) = callee else {
             return BodyTy::Unknown;
         };
-        let callee_data = &self.body.exprs[callee.0];
+        let callee_data = &self.body.exprs[callee];
 
         if matches!(
             callee_data.ty,

@@ -48,3 +48,26 @@ pub enum BodyTypePathResolution {
     Traits(Vec<TraitRef>),
     Unknown,
 }
+
+impl BodyResolution {
+    pub(crate) fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Item(items) => items.shrink_to_fit(),
+            Self::Field(fields) => fields.shrink_to_fit(),
+            Self::Function(functions) | Self::Method(functions) => functions.shrink_to_fit(),
+            Self::EnumVariant(variants) => variants.shrink_to_fit(),
+            Self::Local(_) | Self::LocalItem(_) | Self::Unknown => {}
+        }
+    }
+}
+
+impl BodyTypePathResolution {
+    #[allow(dead_code)]
+    pub(crate) fn shrink_to_fit(&mut self) {
+        match self {
+            Self::SelfType(types) | Self::TypeDefs(types) => types.shrink_to_fit(),
+            Self::Traits(traits) => traits.shrink_to_fit(),
+            Self::BodyLocal(_) | Self::Unknown => {}
+        }
+    }
+}

@@ -47,7 +47,9 @@ pub fn build_db(
     let packages = finalize_and_freeze(workspace, parse.packages(), &mut target_states)
         .context("while attempting to finish target states")?;
 
-    Ok(DefMapDb { packages })
+    Ok(DefMapDb {
+        packages: rg_arena::Arena::from_vec(packages),
+    })
 }
 
 /// Rebuilds selected package def maps against the previous frozen graph.
@@ -127,7 +129,7 @@ pub fn rebuild_packages(
                 package_slot.0
             )
         })?;
-        let package = next.packages.get_mut(package_slot.0).with_context(|| {
+        let package = next.packages.get_mut(package_slot).with_context(|| {
             format!(
                 "while attempting to replace def-map package {}",
                 package_slot.0
@@ -166,14 +168,18 @@ fn finalize_and_freeze(
         .zip(packages)
         .map(|(package_states, package)| super::Package {
             name: package.package_name().to_string(),
-            target_names: package_states
-                .iter()
-                .map(|state| state.target_name.clone())
-                .collect(),
-            targets: package_states
-                .iter()
-                .map(freeze_target_state)
-                .collect::<Vec<_>>(),
+            target_names: rg_arena::Arena::from_vec(
+                package_states
+                    .iter()
+                    .map(|state| state.target_name.clone())
+                    .collect(),
+            ),
+            targets: rg_arena::Arena::from_vec(
+                package_states
+                    .iter()
+                    .map(freeze_target_state)
+                    .collect::<Vec<_>>(),
+            ),
         })
         .collect())
 }
@@ -456,15 +462,15 @@ fn finalize_scopes(states: &mut [Vec<TargetState>]) -> anyhow::Result<()> {
                         .and_then(|package_imports| package_imports.get(state.target.target.0))
                         .expect("unresolved imports should exist for every target");
 
-                    for (module_id, scope) in final_scopes.iter().enumerate() {
+                    for (module_idx, scope) in final_scopes.iter().enumerate() {
                         let module = state
                             .def_map
                             .modules
-                            .get_mut(module_id)
+                            .get_mut(ModuleId(module_idx))
                             .expect("module should exist for every final scope");
                         module.scope = scope.clone();
                         module.unresolved_imports = final_unresolved_imports
-                            .get(module_id)
+                            .get(module_idx)
                             .expect("unresolved imports should exist for every module")
                             .clone();
                     }
@@ -491,12 +497,12 @@ fn collect_unresolved_imports(
                 .map(|state| {
                     let mut module_imports = vec![Vec::new(); state.def_map.modules.len()];
 
-                    for (import_idx, import) in state.def_map.imports.iter().enumerate() {
+                    for (import_id, import) in state.def_map.imports.iter_with_ids() {
                         if import_is_unresolved(state, states, final_scopes, import) {
                             module_imports
                                 .get_mut(import.module.0)
                                 .expect("import module should exist while collecting unresolved imports")
-                                .push(ImportId(import_idx));
+                                .push(import_id);
                         }
                     }
 
@@ -544,7 +550,7 @@ fn apply_imports(
     current_scopes: &[Vec<Vec<ModuleScope>>],
     next_scopes: &mut [Vec<Vec<ModuleScope>>],
 ) -> anyhow::Result<()> {
-    for import in &state.def_map.imports {
+    for import in state.def_map.imports.iter() {
         match import.kind {
             super::ImportKind::Glob => {
                 let source_modules = resolve_path_to_modules(

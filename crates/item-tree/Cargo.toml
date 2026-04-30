@@ -14,6 +14,7 @@ description.workspace = true
 anyhow.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 ra_syntax.workspace = true
+rg_arena = { workspace = true, features = ["memsize"] }
 rg_memsize.workspace = true
 rg_parse.workspace = true
 

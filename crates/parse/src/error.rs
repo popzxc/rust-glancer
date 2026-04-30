@@ -10,3 +10,9 @@ pub struct ParseError {
     /// Location of the parse error in both byte and line/column space.
     pub span: Span,
 }
+
+impl ParseError {
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.message.shrink_to_fit();
+    }
+}

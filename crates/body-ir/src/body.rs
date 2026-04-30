@@ -1,3 +1,4 @@
+use rg_arena::Arena;
 use rg_parse::{FileId, Span, TargetId};
 use rg_semantic_ir::{FunctionId, FunctionRef};
 
@@ -31,26 +32,35 @@ pub struct BodyIrStats {
 /// Lowered bodies for all targets inside one parsed package.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PackageBodies {
-    pub(crate) targets: Vec<TargetBodies>,
+    pub(crate) targets: Arena<TargetId, TargetBodies>,
 }
 
 impl PackageBodies {
     pub(super) fn new(targets: Vec<TargetBodies>) -> Self {
-        Self { targets }
+        Self {
+            targets: Arena::from_vec(targets),
+        }
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.targets.shrink_to_fit();
+        for target in self.targets.iter_mut() {
+            target.shrink_to_fit();
+        }
     }
 
     pub fn targets(&self) -> &[TargetBodies] {
-        &self.targets
+        self.targets.as_slice()
     }
 
     pub fn target(&self, target: TargetId) -> Option<&TargetBodies> {
-        self.targets.get(target.0)
+        self.targets.get(target)
     }
 }
 
 impl PackageBodies {
     pub(super) fn targets_mut(&mut self) -> &mut [TargetBodies] {
-        &mut self.targets
+        self.targets.as_mut_slice()
     }
 }
 
@@ -58,24 +68,32 @@ impl PackageBodies {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetBodies {
     pub(crate) status: TargetBodiesStatus,
-    pub(crate) function_bodies: Vec<Option<BodyId>>,
-    pub(crate) bodies: Vec<BodyData>,
+    pub(crate) function_bodies: Arena<FunctionId, Option<BodyId>>,
+    pub(crate) bodies: Arena<BodyId, BodyData>,
 }
 
 impl TargetBodies {
     pub(super) fn new(function_count: usize) -> Self {
         Self {
             status: TargetBodiesStatus::Built,
-            function_bodies: vec![None; function_count],
-            bodies: Vec::new(),
+            function_bodies: {
+                let mut function_bodies = Arena::new();
+                function_bodies.resize_with(function_count, || None);
+                function_bodies
+            },
+            bodies: Arena::new(),
         }
     }
 
     pub(super) fn skipped(function_count: usize) -> Self {
         Self {
             status: TargetBodiesStatus::Skipped,
-            function_bodies: vec![None; function_count],
-            bodies: Vec::new(),
+            function_bodies: {
+                let mut function_bodies = Arena::new();
+                function_bodies.resize_with(function_count, || None);
+                function_bodies
+            },
+            bodies: Arena::new(),
         }
     }
 
@@ -84,15 +102,23 @@ impl TargetBodies {
     }
 
     pub fn body_for_function(&self, function: FunctionId) -> Option<BodyId> {
-        self.function_bodies.get(function.0).copied().flatten()
+        self.function_bodies.get(function).copied().flatten()
     }
 
     pub fn body(&self, body: BodyId) -> Option<&BodyData> {
-        self.bodies.get(body.0)
+        self.bodies.get(body)
     }
 
     pub fn bodies(&self) -> &[BodyData] {
-        &self.bodies
+        self.bodies.as_slice()
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.function_bodies.shrink_to_fit();
+        self.bodies.shrink_to_fit();
+        for body in self.bodies.iter_mut() {
+            body.shrink_to_fit();
+        }
     }
 }
 
@@ -107,21 +133,19 @@ pub enum TargetBodiesStatus {
 
 impl TargetBodies {
     pub(super) fn alloc_body(&mut self, data: BodyData) -> BodyId {
-        let body = BodyId(self.bodies.len());
-        self.bodies.push(data);
-        body
+        self.bodies.alloc(data)
     }
 
     pub(super) fn set_function_body(&mut self, function: FunctionId, body: BodyId) {
         let slot = self
             .function_bodies
-            .get_mut(function.0)
+            .get_mut(function)
             .expect("function body slot should exist while building body IR");
         *slot = Some(body);
     }
 
     pub(super) fn bodies_mut(&mut self) -> &mut [BodyData] {
-        &mut self.bodies
+        self.bodies.as_mut_slice()
     }
 }
 
@@ -134,48 +158,48 @@ pub struct BodyData {
     pub param_scope: ScopeId,
     pub root_expr: ExprId,
     pub params: Vec<BindingId>,
-    pub scopes: Vec<ScopeData>,
-    pub local_items: Vec<BodyItemData>,
-    pub local_impls: Vec<BodyImplData>,
-    pub local_functions: Vec<BodyFunctionData>,
-    pub bindings: Vec<BindingData>,
-    pub pats: Vec<PatData>,
-    pub statements: Vec<StmtData>,
-    pub exprs: Vec<ExprData>,
+    pub scopes: Arena<ScopeId, ScopeData>,
+    pub local_items: Arena<BodyItemId, BodyItemData>,
+    pub local_impls: Arena<BodyImplId, BodyImplData>,
+    pub local_functions: Arena<BodyFunctionId, BodyFunctionData>,
+    pub bindings: Arena<BindingId, BindingData>,
+    pub pats: Arena<PatId, PatData>,
+    pub statements: Arena<StmtId, StmtData>,
+    pub exprs: Arena<ExprId, ExprData>,
 }
 
 #[allow(dead_code)]
 impl BodyData {
     pub fn binding(&self, binding: BindingId) -> Option<&BindingData> {
-        self.bindings.get(binding.0)
+        self.bindings.get(binding)
     }
 
     pub fn pat(&self, pat: PatId) -> Option<&PatData> {
-        self.pats.get(pat.0)
+        self.pats.get(pat)
     }
 
     pub fn scope(&self, scope: ScopeId) -> Option<&ScopeData> {
-        self.scopes.get(scope.0)
+        self.scopes.get(scope)
     }
 
     pub fn local_item(&self, item: BodyItemId) -> Option<&BodyItemData> {
-        self.local_items.get(item.0)
+        self.local_items.get(item)
     }
 
     pub fn local_impl(&self, impl_id: BodyImplId) -> Option<&BodyImplData> {
-        self.local_impls.get(impl_id.0)
+        self.local_impls.get(impl_id)
     }
 
     pub fn local_function(&self, function: BodyFunctionId) -> Option<&BodyFunctionData> {
-        self.local_functions.get(function.0)
+        self.local_functions.get(function)
     }
 
     pub fn statement(&self, statement: StmtId) -> Option<&StmtData> {
-        self.statements.get(statement.0)
+        self.statements.get(statement)
     }
 
     pub fn expr(&self, expr: ExprId) -> Option<&ExprData> {
-        self.exprs.get(expr.0)
+        self.exprs.get(expr)
     }
 
     pub(super) fn new(
@@ -205,8 +229,44 @@ impl BodyData {
         }
     }
 
+    fn shrink_to_fit(&mut self) {
+        self.params.shrink_to_fit();
+        self.scopes.shrink_to_fit();
+        for scope in self.scopes.iter_mut() {
+            scope.shrink_to_fit();
+        }
+        self.local_items.shrink_to_fit();
+        for item in self.local_items.iter_mut() {
+            item.shrink_to_fit();
+        }
+        self.local_impls.shrink_to_fit();
+        for impl_data in self.local_impls.iter_mut() {
+            impl_data.shrink_to_fit();
+        }
+        self.local_functions.shrink_to_fit();
+        for function in self.local_functions.iter_mut() {
+            function.shrink_to_fit();
+        }
+        self.bindings.shrink_to_fit();
+        for binding in self.bindings.iter_mut() {
+            binding.shrink_to_fit();
+        }
+        self.pats.shrink_to_fit();
+        for pat in self.pats.iter_mut() {
+            pat.shrink_to_fit();
+        }
+        self.statements.shrink_to_fit();
+        for statement in self.statements.iter_mut() {
+            statement.shrink_to_fit();
+        }
+        self.exprs.shrink_to_fit();
+        for expr in self.exprs.iter_mut() {
+            expr.shrink_to_fit();
+        }
+    }
+
     pub(crate) fn local_impl_mut(&mut self, impl_id: BodyImplId) -> Option<&mut BodyImplData> {
-        self.local_impls.get_mut(impl_id.0)
+        self.local_impls.get_mut(impl_id)
     }
 
     pub(crate) fn inherent_functions_for_local_type(
@@ -219,7 +279,7 @@ impl BodyData {
         }
 
         let mut functions = Vec::new();
-        for impl_data in &self.local_impls {
+        for impl_data in self.local_impls.iter() {
             if impl_data.self_item != Some(item_ref) || impl_data.trait_ref.is_some() {
                 continue;
             }
@@ -239,34 +299,31 @@ impl BodyData {
 /// Mutable store used while one body is being lowered.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(super) struct BodyBuilder {
-    pub(super) scopes: Vec<ScopeData>,
-    pub(super) local_items: Vec<BodyItemData>,
-    pub(super) local_impls: Vec<BodyImplData>,
-    pub(super) local_functions: Vec<BodyFunctionData>,
-    pub(super) bindings: Vec<BindingData>,
-    pub(super) pats: Vec<PatData>,
-    pub(super) statements: Vec<StmtData>,
-    pub(super) exprs: Vec<ExprData>,
+    pub(super) scopes: Arena<ScopeId, ScopeData>,
+    pub(super) local_items: Arena<BodyItemId, BodyItemData>,
+    pub(super) local_impls: Arena<BodyImplId, BodyImplData>,
+    pub(super) local_functions: Arena<BodyFunctionId, BodyFunctionData>,
+    pub(super) bindings: Arena<BindingId, BindingData>,
+    pub(super) pats: Arena<PatId, PatData>,
+    pub(super) statements: Arena<StmtId, StmtData>,
+    pub(super) exprs: Arena<ExprId, ExprData>,
 }
 
 impl BodyBuilder {
     pub(super) fn alloc_scope(&mut self, parent: Option<ScopeId>) -> ScopeId {
-        let scope = ScopeId(self.scopes.len());
-        self.scopes.push(ScopeData {
+        self.scopes.alloc(ScopeData {
             parent,
             local_items: Vec::new(),
             local_impls: Vec::new(),
             bindings: Vec::new(),
-        });
-        scope
+        })
     }
 
     pub(super) fn alloc_local_item(&mut self, data: BodyItemData) -> BodyItemId {
-        let item = BodyItemId(self.local_items.len());
         let scope = data.scope;
-        self.local_items.push(data);
+        let item = self.local_items.alloc(data);
         self.scopes
-            .get_mut(scope.0)
+            .get_mut(scope)
             .expect("local item scope should exist while lowering body")
             .local_items
             .push(item);
@@ -274,11 +331,10 @@ impl BodyBuilder {
     }
 
     pub(super) fn alloc_local_impl(&mut self, data: BodyImplData) -> BodyImplId {
-        let impl_id = BodyImplId(self.local_impls.len());
         let scope = data.scope;
-        self.local_impls.push(data);
+        let impl_id = self.local_impls.alloc(data);
         self.scopes
-            .get_mut(scope.0)
+            .get_mut(scope)
             .expect("local impl scope should exist while lowering body")
             .local_impls
             .push(impl_id);
@@ -286,9 +342,7 @@ impl BodyBuilder {
     }
 
     pub(super) fn alloc_local_function(&mut self, data: BodyFunctionData) -> BodyFunctionId {
-        let function = BodyFunctionId(self.local_functions.len());
-        self.local_functions.push(data);
-        function
+        self.local_functions.alloc(data)
     }
 
     pub(super) fn set_local_impl_functions(
@@ -298,17 +352,16 @@ impl BodyBuilder {
     ) {
         let impl_data = self
             .local_impls
-            .get_mut(impl_id.0)
+            .get_mut(impl_id)
             .expect("local impl should exist while assigning functions");
         impl_data.functions = functions;
     }
 
     pub(super) fn alloc_binding(&mut self, data: BindingData) -> BindingId {
-        let binding = BindingId(self.bindings.len());
         let scope = data.scope;
-        self.bindings.push(data);
+        let binding = self.bindings.alloc(data);
         self.scopes
-            .get_mut(scope.0)
+            .get_mut(scope)
             .expect("binding scope should exist while lowering body")
             .bindings
             .push(binding);
@@ -316,21 +369,15 @@ impl BodyBuilder {
     }
 
     pub(super) fn alloc_pat(&mut self, data: PatData) -> PatId {
-        let pat = PatId(self.pats.len());
-        self.pats.push(data);
-        pat
+        self.pats.alloc(data)
     }
 
     pub(super) fn alloc_statement(&mut self, data: StmtData) -> StmtId {
-        let statement = StmtId(self.statements.len());
-        self.statements.push(data);
-        statement
+        self.statements.alloc(data)
     }
 
     pub(super) fn alloc_expr(&mut self, data: ExprData) -> ExprId {
-        let expr = ExprId(self.exprs.len());
-        self.exprs.push(data);
-        expr
+        self.exprs.alloc(data)
     }
 }
 
@@ -348,4 +395,12 @@ pub struct ScopeData {
     pub local_items: Vec<BodyItemId>,
     pub local_impls: Vec<BodyImplId>,
     pub bindings: Vec<BindingId>,
+}
+
+impl ScopeData {
+    fn shrink_to_fit(&mut self) {
+        self.local_items.shrink_to_fit();
+        self.local_impls.shrink_to_fit();
+        self.bindings.shrink_to_fit();
+    }
 }

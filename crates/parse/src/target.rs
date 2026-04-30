@@ -1,11 +1,22 @@
 use std::path::PathBuf;
 
 use crate::file::FileId;
+use rg_arena::ArenaId;
 use rg_workspace::TargetKind;
 
 /// Stable identifier of a target within one parsed package.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TargetId(pub usize);
+
+impl ArenaId for TargetId {
+    fn from_index(index: usize) -> Self {
+        Self(index)
+    }
+
+    fn index(self) -> usize {
+        self.0
+    }
+}
 
 /// Parsed target metadata.
 ///
@@ -23,4 +34,10 @@ pub struct Target {
     pub src_path: PathBuf,
     /// Entrypoint file id for this target.
     pub root_file: FileId,
+}
+
+impl Target {
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+    }
 }

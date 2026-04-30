@@ -17,6 +17,7 @@ mod tests;
 
 use anyhow::Context as _;
 
+use rg_arena::Arena;
 use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
 use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TraitApplicability};
 
@@ -45,7 +46,7 @@ pub use self::{
 /// Body-level IR for all analyzed packages and targets.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BodyIrDb {
-    packages: Vec<PackageBodies>,
+    packages: Arena<PackageSlot, PackageBodies>,
 }
 
 impl BodyIrDb {
@@ -71,6 +72,7 @@ impl BodyIrDb {
     ) -> anyhow::Result<Self> {
         let mut db = lower::build_db(parse, semantic_ir, policy)?;
         resolution::resolve_bodies(&mut db, def_map, semantic_ir);
+        db.shrink_to_fit();
         Ok(db)
     }
 
@@ -98,24 +100,42 @@ impl BodyIrDb {
                 })?;
             let rebuilt =
                 lower::build_package(parse, semantic_ir, policy, package.0, target_count)?;
-            let slot = next.packages.get_mut(package.0).with_context(|| {
+            let slot = next.packages.get_mut(*package).with_context(|| {
                 format!("while attempting to replace body IR package {}", package.0)
             })?;
             *slot = rebuilt;
         }
 
         resolution::resolve_bodies_for_packages(&mut next, def_map, semantic_ir, &packages);
+        next.shrink_packages(&packages);
         Ok(next)
     }
 
     pub(crate) fn new(packages: Vec<PackageBodies>) -> Self {
-        Self { packages }
+        Self {
+            packages: Arena::from_vec(packages),
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.packages.shrink_to_fit();
+        for package in self.packages.iter_mut() {
+            package.shrink_to_fit();
+        }
+    }
+
+    fn shrink_packages(&mut self, packages: &[PackageSlot]) {
+        for package in packages {
+            if let Some(package) = self.packages.get_mut(*package) {
+                package.shrink_to_fit();
+            }
+        }
     }
 
     pub fn stats(&self) -> BodyIrStats {
         let mut stats = BodyIrStats::default();
 
-        for package in &self.packages {
+        for package in self.packages.iter() {
             for target in package.targets() {
                 stats.target_count += 1;
                 match target.status() {
@@ -140,12 +160,12 @@ impl BodyIrDb {
 
     /// Returns all package-level body IR sets.
     pub fn packages(&self) -> &[PackageBodies] {
-        &self.packages
+        self.packages.as_slice()
     }
 
     /// Returns one package by package slot.
     pub fn package(&self, package: PackageSlot) -> Option<&PackageBodies> {
-        self.packages.get(package.0)
+        self.packages.get(package)
     }
 
     /// Returns one target body IR by project-wide target reference.
@@ -284,7 +304,7 @@ impl BodyIrDb {
     }
 
     pub(crate) fn packages_mut(&mut self) -> &mut [PackageBodies] {
-        &mut self.packages
+        self.packages.as_mut_slice()
     }
 }
 

@@ -668,12 +668,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_arena"
+version = "0.1.0"
+dependencies = [
+ "rg_memsize",
+]
+
+[[package]]
 name = "rg_body_ir"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "derive_more",
  "expect-test",
+ "rg_arena",
  "rg_def_map",
  "rg_item_tree",
  "rg_memsize",
@@ -691,6 +699,7 @@ dependencies = [
  "anyhow",
  "derive_more",
  "expect-test",
+ "rg_arena",
  "rg_item_tree",
  "rg_memsize",
  "rg_parse",
@@ -705,6 +714,7 @@ dependencies = [
  "anyhow",
  "derive_more",
  "expect-test",
+ "rg_arena",
  "rg_memsize",
  "rg_parse",
  "rg_workspace",
@@ -743,6 +753,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "expect-test",
+ "rg_arena",
  "rg_memsize",
  "rg_workspace",
  "syntax",
@@ -772,6 +783,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "expect-test",
+ "rg_arena",
  "rg_def_map",
  "rg_item_tree",
  "rg_memsize",

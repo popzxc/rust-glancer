@@ -5,6 +5,7 @@ use std::{
 };
 
 use ra_syntax::{Edition, SourceFile};
+use rg_arena::Arena;
 
 use crate::{
     error::ParseError,
@@ -14,6 +15,16 @@ use crate::{
 /// Stable identifier for a parsed source file inside `FileDb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FileId(pub usize);
+
+impl rg_arena::ArenaId for FileId {
+    fn from_index(index: usize) -> Self {
+        Self(index)
+    }
+
+    fn index(self) -> usize {
+        self.0
+    }
+}
 
 /// Internal parsed representation used by the parser cache.
 #[derive(Debug, Clone)]
@@ -88,7 +99,7 @@ impl<'a> ParsedFile<'a> {
 /// and reused during multiple target traversals.
 #[derive(Default, Debug, Clone)]
 pub(super) struct FileDb {
-    pub(crate) parsed_files: Vec<ParsedFileData>,
+    pub(crate) parsed_files: Arena<FileId, ParsedFileData>,
     pub(crate) file_ids_by_path: HashMap<PathBuf, FileId>,
 }
 
@@ -104,10 +115,10 @@ impl FileDb {
             return Ok(file_id);
         }
 
-        let file_id = FileId(self.parsed_files.len());
         let source = Self::read_source(&canonical_file_path)?;
 
-        self.parsed_files.push(Self::parse_source(
+        let file_id = self.parsed_files.next_id();
+        self.parsed_files.alloc(Self::parse_source(
             file_id,
             canonical_file_path.clone(),
             &source,
@@ -127,14 +138,13 @@ impl FileDb {
         };
 
         let source = Self::read_source(file_path)?;
-        self.parsed_files[file_id.0] =
-            Self::parse_source(file_id, file_path.to_path_buf(), &source);
+        self.parsed_files[file_id] = Self::parse_source(file_id, file_path.to_path_buf(), &source);
         Ok(Some(file_id))
     }
 
     /// Ensures that syntax for an already known file is available for AST-consuming lowering.
     pub(super) fn ensure_file_syntax(&mut self, file_id: FileId) -> anyhow::Result<()> {
-        let Some(parsed_file) = self.parsed_files.get(file_id.0) else {
+        let Some(parsed_file) = self.parsed_files.get(file_id) else {
             anyhow::bail!("unknown file id {:?}", file_id);
         };
         if parsed_file.syntax.is_some() {
@@ -143,36 +153,43 @@ impl FileDb {
 
         let source = Self::read_source(&parsed_file.path)?;
         let path = parsed_file.path.clone();
-        self.parsed_files[file_id.0] = Self::parse_source(file_id, path, &source);
+        self.parsed_files[file_id] = Self::parse_source(file_id, path, &source);
         Ok(())
     }
 
     /// Drops retained syntax trees while keeping source coordinates and file identity.
     pub(super) fn evict_syntax_trees(&mut self) {
-        for parsed_file in &mut self.parsed_files {
+        for parsed_file in self.parsed_files.iter_mut() {
             parsed_file.syntax = None;
+        }
+    }
+
+    pub(super) fn shrink_to_fit(&mut self) {
+        self.parsed_files.shrink_to_fit();
+        self.file_ids_by_path.shrink_to_fit();
+        for parsed_file in self.parsed_files.iter_mut() {
+            parsed_file.shrink_to_fit();
         }
     }
 
     /// Returns the cached parsed file for a previously known `FileId`.
     pub(super) fn parsed_file(&self, file_id: FileId) -> Option<ParsedFile<'_>> {
         self.parsed_files
-            .get(file_id.0)
+            .get(file_id)
             .map(|data| ParsedFile::new(file_id, data))
     }
 
     /// Returns all cached parsed files.
     pub(super) fn parsed_files(&self) -> impl Iterator<Item = ParsedFile<'_>> {
         self.parsed_files
-            .iter()
-            .enumerate()
-            .map(|(idx, data)| ParsedFile::new(FileId(idx), data))
+            .iter_with_ids()
+            .map(|(file_id, data)| ParsedFile::new(file_id, data))
     }
 
     /// Returns the canonical path associated with `file_id`.
     pub(super) fn file_path(&self, file_id: FileId) -> Option<&Path> {
         self.parsed_files
-            .get(file_id.0)
+            .get(file_id)
             .map(|parsed_file| parsed_file.path.as_path())
     }
 
@@ -200,5 +217,15 @@ impl FileDb {
             line_index,
             syntax: Some(parsed_file.tree()),
         }
+    }
+}
+
+impl ParsedFileData {
+    fn shrink_to_fit(&mut self) {
+        self.parse_errors.shrink_to_fit();
+        for error in &mut self.parse_errors {
+            error.shrink_to_fit();
+        }
+        self.line_index.shrink_to_fit();
     }
 }

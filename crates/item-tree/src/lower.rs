@@ -14,6 +14,7 @@ use ra_syntax::{
     AstNode as _,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
+use rg_arena::Arena;
 
 use rg_parse::{FileId, LineIndex, Package as ParsePackage};
 
@@ -35,7 +36,7 @@ pub(super) fn build_package(parse_package: &mut ParsePackage) -> anyhow::Result<
 struct PackageLowering<'db> {
     parse_package: &'db mut ParsePackage,
     active_stack: HashSet<FileId>,
-    file_trees: Vec<Option<FileTree>>,
+    file_trees: Arena<FileId, Option<FileTree>>,
 }
 
 impl<'db> PackageLowering<'db> {
@@ -43,7 +44,7 @@ impl<'db> PackageLowering<'db> {
         Self {
             parse_package,
             active_stack: HashSet::default(),
-            file_trees: Vec::new(),
+            file_trees: Arena::new(),
         }
     }
 
@@ -68,14 +69,14 @@ impl<'db> PackageLowering<'db> {
 
         Ok(Package {
             files: self.file_trees,
-            target_roots,
+            target_roots: Arena::from_vec(target_roots),
         })
     }
 
     /// Lowers one file into a cached `FileTree` unless it was already lowered earlier.
     fn lower_file(&mut self, current_file_id: FileId) -> anyhow::Result<()> {
         self.ensure_file_tree_slot(current_file_id);
-        if self.file_trees[current_file_id.0].is_some() {
+        if self.file_trees[current_file_id].is_some() {
             return Ok(());
         }
 
@@ -124,7 +125,7 @@ impl<'db> PackageLowering<'db> {
                 )
             })?;
 
-        self.file_trees[current_file_id.0] = Some(FileTree {
+        self.file_trees[current_file_id] = Some(FileTree {
             file: current_file_id,
             docs,
             top_level,
@@ -476,7 +477,7 @@ impl<'db> PackageLowering<'db> {
 struct FileTreeBuilder<'a> {
     current_file_id: FileId,
     line_index: &'a LineIndex,
-    items: Vec<ItemNode>,
+    items: Arena<ItemTreeId, ItemNode>,
 }
 
 impl<'a> FileTreeBuilder<'a> {
@@ -484,7 +485,7 @@ impl<'a> FileTreeBuilder<'a> {
         Self {
             current_file_id,
             line_index,
-            items: Vec::new(),
+            items: Arena::new(),
         }
     }
 
@@ -529,8 +530,7 @@ impl<'a> FileTreeBuilder<'a> {
         docs: Option<Documentation>,
         text_range: ra_syntax::TextRange,
     ) -> ItemTreeId {
-        let item_id = ItemTreeId(self.items.len());
-        self.items.push(ItemNode::new(
+        self.items.alloc(ItemNode::new(
             kind,
             name,
             name_range,
@@ -538,8 +538,7 @@ impl<'a> FileTreeBuilder<'a> {
             docs,
             text_range,
             self.current_file_id,
-        ));
-        item_id
+        ))
     }
 }
 

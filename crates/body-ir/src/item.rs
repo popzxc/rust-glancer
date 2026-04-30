@@ -31,6 +31,15 @@ impl BodyItemData {
             .iter()
             .position(|field| field.key.as_ref() == Some(key))
     }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.generics.shrink_to_fit();
+        self.fields.shrink_to_fit();
+    }
 }
 
 /// Resolved access to one field declared on a body-local item.
@@ -52,6 +61,17 @@ pub struct BodyImplData {
     pub functions: Vec<BodyFunctionId>,
 }
 
+impl BodyImplData {
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.generics.shrink_to_fit();
+        if let Some(trait_ref) = &mut self.trait_ref {
+            trait_ref.shrink_to_fit();
+        }
+        self.self_ty.shrink_to_fit();
+        self.functions.shrink_to_fit();
+    }
+}
+
 /// One function-like declaration inside a function body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodyFunctionData {
@@ -69,6 +89,14 @@ impl BodyFunctionData {
             .params
             .first()
             .is_some_and(|param| matches!(param.kind, ParamKind::SelfParam))
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.declaration.shrink_to_fit();
     }
 }
 

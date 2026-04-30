@@ -1,5 +1,21 @@
 use rg_def_map::{ModuleRef, TargetRef};
 
+macro_rules! impl_arena_id {
+    ($($id:ty),+ $(,)?) => {
+        $(
+            impl rg_arena::ArenaId for $id {
+                fn from_index(index: usize) -> Self {
+                    Self(index)
+                }
+
+                fn index(self) -> usize {
+                    self.0
+                }
+            }
+        )+
+    };
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StructId(pub usize);
 
@@ -26,6 +42,18 @@ pub struct ConstId(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StaticId(pub usize);
+
+impl_arena_id!(
+    StructId,
+    UnionId,
+    EnumId,
+    TraitId,
+    ImplId,
+    FunctionId,
+    TypeAliasId,
+    ConstId,
+    StaticId,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TypeDefId {

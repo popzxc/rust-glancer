@@ -261,7 +261,7 @@ pub(super) fn namespace_for_def(states: &[Vec<TargetState>], def: DefId) -> Opti
                 .get(local_def_ref.target.target.0)?
                 .def_map
                 .local_defs
-                .get(local_def_ref.local_def.0)?;
+                .get(local_def_ref.local_def)?;
             Some(local_def.kind.namespace())
         }
     }

@@ -1,5 +1,21 @@
 use rg_def_map::TargetRef;
 
+macro_rules! impl_arena_id {
+    ($($id:ty),+ $(,)?) => {
+        $(
+            impl rg_arena::ArenaId for $id {
+                fn from_index(index: usize) -> Self {
+                    Self(index)
+                }
+
+                fn index(self) -> usize {
+                    self.0
+                }
+            }
+        )+
+    };
+}
+
 /// Stable identifier for one lowered function body inside a target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BodyId(pub usize);
@@ -63,3 +79,15 @@ pub struct BindingId(pub usize);
 /// Stable identifier for one lexical scope inside a body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScopeId(pub usize);
+
+impl_arena_id!(
+    BodyId,
+    BodyItemId,
+    BodyImplId,
+    BodyFunctionId,
+    ExprId,
+    PatId,
+    StmtId,
+    BindingId,
+    ScopeId,
+);

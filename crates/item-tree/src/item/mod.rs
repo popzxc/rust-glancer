@@ -33,6 +33,16 @@ mod visibility;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ItemTreeId(pub usize);
 
+impl rg_arena::ArenaId for ItemTreeId {
+    fn from_index(index: usize) -> Self {
+        Self(index)
+    }
+
+    fn index(self) -> usize {
+        self.0
+    }
+}
+
 /// Stable project-local reference to one item-tree node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ItemTreeRef {

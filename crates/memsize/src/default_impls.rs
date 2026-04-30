@@ -81,6 +81,33 @@ where
     }
 }
 
+impl<T> MemorySize for Box<[T]>
+where
+    T: MemorySize,
+{
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        let payload = self.len().saturating_mul(mem::size_of::<T>());
+        recorder.scope("items", |recorder| {
+            recorder.record_heap::<T>(payload);
+
+            for item in self.iter() {
+                item.record_memory_children(recorder);
+            }
+        });
+        recorder.scope("allocation_overhead", |recorder| {
+            recorder.record_approximate::<Box<[T]>>(approximate_allocation_overhead(payload));
+        });
+    }
+}
+
+impl MemorySize for Box<str> {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        let payload = self.len();
+        recorder.record_heap::<str>(payload);
+        recorder.record_approximate::<Box<str>>(approximate_allocation_overhead(payload));
+    }
+}
+
 impl<T> MemorySize for Vec<T>
 where
     T: MemorySize,
@@ -159,8 +186,12 @@ where
 
 impl MemorySize for String {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        let initialized = self.len();
+        let spare = self.capacity().saturating_sub(self.len());
+
+        recorder.record_heap::<str>(initialized);
+        recorder.record_spare_capacity::<String>(spare);
         let payload = self.capacity();
-        recorder.record_heap::<String>(payload);
         recorder.record_approximate::<String>(approximate_allocation_overhead(payload));
     }
 }
@@ -336,7 +367,8 @@ mod tests {
             totals.get(&MemoryRecordKind::Shallow),
             Some(&mem::size_of::<String>())
         );
-        assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&16));
+        assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&3));
+        assert_eq!(totals.get(&MemoryRecordKind::SpareCapacity), Some(&13));
         assert_eq!(
             totals.get(&MemoryRecordKind::Approximate),
             Some(&approximate_allocation_overhead(16))
@@ -362,7 +394,8 @@ mod tests {
             totals.get(&MemoryRecordKind::Shallow),
             Some(&mem::size_of::<Option<String>>())
         );
-        assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&11));
+        assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&4));
+        assert_eq!(totals.get(&MemoryRecordKind::SpareCapacity), Some(&7));
         assert_eq!(
             totals.get(&MemoryRecordKind::Approximate),
             Some(&approximate_allocation_overhead(11))
@@ -394,8 +427,9 @@ mod tests {
         );
         assert_eq!(
             totals.get(&MemoryRecordKind::Heap),
-            Some(&(mem::size_of::<String>() + 5))
+            Some(&(mem::size_of::<String>() + 4))
         );
+        assert_eq!(totals.get(&MemoryRecordKind::SpareCapacity), Some(&1));
         assert_eq!(
             totals.get(&MemoryRecordKind::Approximate),
             Some(
@@ -431,11 +465,11 @@ mod tests {
         );
         assert_eq!(
             totals.get(&MemoryRecordKind::Heap),
-            Some(&(mem::size_of::<String>() + 5))
+            Some(&(mem::size_of::<String>() + 4))
         );
         assert_eq!(
             totals.get(&MemoryRecordKind::SpareCapacity),
-            Some(&mem::size_of::<String>())
+            Some(&(mem::size_of::<String>() + 1))
         );
         assert_eq!(
             totals.get(&MemoryRecordKind::Approximate),
@@ -444,6 +478,41 @@ mod tests {
                     + approximate_allocation_overhead(5))
             )
         );
+    }
+
+    #[test]
+    fn boxed_slice_records_exact_payload_without_spare_capacity() {
+        let value = vec![1_u32, 2, 3].into_boxed_slice();
+
+        let mut recorder = MemoryRecorder::new("slice");
+        value.record_memory_size(&mut recorder);
+        let totals = recorder.totals_by_kind();
+
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Shallow),
+            Some(&mem::size_of::<Box<[u32]>>())
+        );
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Heap),
+            Some(&(3 * mem::size_of::<u32>()))
+        );
+        assert!(!totals.contains_key(&MemoryRecordKind::SpareCapacity));
+    }
+
+    #[test]
+    fn boxed_str_records_exact_payload_without_spare_capacity() {
+        let value: Box<str> = "crate".to_string().into_boxed_str();
+
+        let mut recorder = MemoryRecorder::new("str");
+        value.record_memory_size(&mut recorder);
+        let totals = recorder.totals_by_kind();
+
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Shallow),
+            Some(&mem::size_of::<Box<str>>())
+        );
+        assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&5));
+        assert!(!totals.contains_key(&MemoryRecordKind::SpareCapacity));
     }
 
     #[test]
@@ -483,7 +552,8 @@ mod tests {
             totals.get(&MemoryRecordKind::Shallow),
             Some(&mem::size_of::<(u32, String)>())
         );
-        assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&9));
+        assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&6));
+        assert_eq!(totals.get(&MemoryRecordKind::SpareCapacity), Some(&3));
         assert_eq!(
             totals.get(&MemoryRecordKind::Approximate),
             Some(&approximate_allocation_overhead(9))

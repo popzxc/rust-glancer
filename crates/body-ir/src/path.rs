@@ -50,6 +50,11 @@ impl BodyPath {
     pub fn segment_count(&self) -> usize {
         self.path.segments.len()
     }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.path.shrink_to_fit();
+        self.segment_spans.shrink_to_fit();
+    }
 }
 
 impl fmt::Display for BodyPath {

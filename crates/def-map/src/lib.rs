@@ -8,6 +8,7 @@ mod path;
 mod path_resolution;
 mod resolve;
 
+use rg_arena::Arena;
 use rg_item_tree::ItemTreeDb;
 use rg_parse::{self, TargetId};
 use rg_workspace::WorkspaceMetadata;
@@ -31,7 +32,7 @@ pub use self::{
 /// Frozen def maps for all parsed packages and targets.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DefMapDb {
-    packages: Vec<Package>,
+    packages: Arena<PackageSlot, Package>,
 }
 
 impl DefMapDb {
@@ -41,7 +42,9 @@ impl DefMapDb {
         parse: &rg_parse::ParseDb,
         item_tree: &ItemTreeDb,
     ) -> anyhow::Result<Self> {
-        resolve::build_db(workspace, parse, item_tree)
+        let mut db = resolve::build_db(workspace, parse, item_tree)?;
+        db.shrink_to_fit();
+        Ok(db)
     }
 
     /// Returns a new def-map snapshot with selected packages rebuilt.
@@ -52,12 +55,14 @@ impl DefMapDb {
         item_tree: &ItemTreeDb,
         packages: &[PackageSlot],
     ) -> anyhow::Result<Self> {
-        resolve::rebuild_packages(self, workspace, parse, item_tree, packages)
+        let mut db = resolve::rebuild_packages(self, workspace, parse, item_tree, packages)?;
+        db.shrink_packages(packages);
+        Ok(db)
     }
 
     /// Returns all package-level def-map sets.
     pub fn packages(&self) -> &[Package] {
-        &self.packages
+        self.packages.as_slice()
     }
 
     /// Iterates over every target def map together with its project-wide target reference.
@@ -99,7 +104,7 @@ impl DefMapDb {
 
     /// Returns one package def-map set by package slot.
     pub fn package(&self, package_slot: PackageSlot) -> Option<&Package> {
-        self.packages.get(package_slot.0)
+        self.packages.get(package_slot)
     }
 
     /// Returns one target def map by project-wide target reference.
@@ -225,6 +230,21 @@ impl DefMapDb {
     pub fn resolve_path(&self, from: ModuleRef, path: &Path) -> ResolvePathResult {
         path_resolution::resolve_path_in_db(self, from, path)
     }
+
+    fn shrink_to_fit(&mut self) {
+        self.packages.shrink_to_fit();
+        for package in self.packages.iter_mut() {
+            package.shrink_to_fit();
+        }
+    }
+
+    fn shrink_packages(&mut self, packages: &[PackageSlot]) {
+        for package in packages {
+            if let Some(package) = self.packages.get_mut(*package) {
+                package.shrink_to_fit();
+            }
+        }
+    }
 }
 
 /// Coarse totals for reporting that the DefMap phase produced useful data.
@@ -242,8 +262,8 @@ pub struct DefMapStats {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Package {
     name: String,
-    target_names: Vec<String>,
-    targets: Vec<DefMap>,
+    target_names: Arena<TargetId, String>,
+    targets: Arena<TargetId, DefMap>,
 }
 
 impl Package {
@@ -254,17 +274,29 @@ impl Package {
 
     /// Returns the crate name for one target, if that target exists.
     pub fn target_name(&self, target_id: TargetId) -> Option<&str> {
-        self.target_names.get(target_id.0).map(String::as_str)
+        self.target_names.get(target_id).map(String::as_str)
     }
 
     /// Returns all target def maps in target-id order.
     pub fn targets(&self) -> &[DefMap] {
-        &self.targets
+        self.targets.as_slice()
     }
 
     /// Returns one target def map by target id.
     pub fn target(&self, target_id: TargetId) -> Option<&DefMap> {
-        self.targets.get(target_id.0)
+        self.targets.get(target_id)
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        self.target_names.shrink_to_fit();
+        for target_name in self.target_names.iter_mut() {
+            target_name.shrink_to_fit();
+        }
+        self.targets.shrink_to_fit();
+        for target in self.targets.iter_mut() {
+            target.shrink_to_fit();
+        }
     }
 }
 

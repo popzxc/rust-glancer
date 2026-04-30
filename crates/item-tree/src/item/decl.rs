@@ -79,6 +79,25 @@ impl GenericParams {
 
         params
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.lifetimes.shrink_to_fit();
+        for param in &mut self.lifetimes {
+            param.shrink_to_fit();
+        }
+        self.types.shrink_to_fit();
+        for param in &mut self.types {
+            param.shrink_to_fit();
+        }
+        self.consts.shrink_to_fit();
+        for param in &mut self.consts {
+            param.shrink_to_fit();
+        }
+        self.where_predicates.shrink_to_fit();
+        for predicate in &mut self.where_predicates {
+            predicate.shrink_to_fit();
+        }
+    }
 }
 
 impl fmt::Display for GenericParams {
@@ -148,6 +167,16 @@ pub struct LifetimeParamData {
     pub bounds: Vec<String>,
 }
 
+impl LifetimeParamData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        self.bounds.shrink_to_fit();
+        for bound in &mut self.bounds {
+            bound.shrink_to_fit();
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeParamData {
     pub name: String,
@@ -155,11 +184,36 @@ pub struct TypeParamData {
     pub default: Option<TypeRef>,
 }
 
+impl TypeParamData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        self.bounds.shrink_to_fit();
+        for bound in &mut self.bounds {
+            bound.shrink_to_fit();
+        }
+        if let Some(default) = &mut self.default {
+            default.shrink_to_fit();
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstParamData {
     pub name: String,
     pub ty: Option<TypeRef>,
     pub default: Option<String>,
+}
+
+impl ConstParamData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(ty) = &mut self.ty {
+            ty.shrink_to_fit();
+        }
+        if let Some(default) = &mut self.default {
+            default.shrink_to_fit();
+        }
+    }
 }
 
 /// Where-clause predicate that can affect later signature resolution.
@@ -193,6 +247,26 @@ impl WherePredicate {
         }
 
         Self::Unsupported(normalized_syntax(&predicate))
+    }
+
+    fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Type { ty, bounds } => {
+                ty.shrink_to_fit();
+                bounds.shrink_to_fit();
+                for bound in bounds {
+                    bound.shrink_to_fit();
+                }
+            }
+            Self::Lifetime { lifetime, bounds } => {
+                lifetime.shrink_to_fit();
+                bounds.shrink_to_fit();
+                for bound in bounds {
+                    bound.shrink_to_fit();
+                }
+            }
+            Self::Unsupported(text) => text.shrink_to_fit(),
+        }
     }
 }
 
@@ -230,6 +304,17 @@ impl FunctionItem {
                 is_const: item.const_token().is_some(),
                 is_unsafe: item.unsafe_token().is_some(),
             },
+        }
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.generics.shrink_to_fit();
+        self.params.shrink_to_fit();
+        for param in &mut self.params {
+            param.shrink_to_fit();
+        }
+        if let Some(ret_ty) = &mut self.ret_ty {
+            ret_ty.shrink_to_fit();
         }
     }
 }
@@ -277,6 +362,13 @@ impl ParamItem {
 
         params
     }
+
+    fn shrink_to_fit(&mut self) {
+        self.pat.shrink_to_fit();
+        if let Some(ty) = &mut self.ty {
+            ty.shrink_to_fit();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -298,6 +390,11 @@ impl StructItem {
             fields: FieldList::from_ast(item.field_list(), line_index),
         }
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.generics.shrink_to_fit();
+        self.fields.shrink_to_fit();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -314,6 +411,14 @@ impl UnionItem {
                 .record_field_list()
                 .map(|fields| FieldItem::record_list_from_ast(fields, line_index))
                 .unwrap_or_default(),
+        }
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.generics.shrink_to_fit();
+        self.fields.shrink_to_fit();
+        for field in &mut self.fields {
+            field.shrink_to_fit();
         }
     }
 }
@@ -337,6 +442,14 @@ impl EnumItem {
                         .collect()
                 })
                 .unwrap_or_default(),
+        }
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.generics.shrink_to_fit();
+        self.variants.shrink_to_fit();
+        for variant in &mut self.variants {
+            variant.shrink_to_fit();
         }
     }
 }
@@ -369,6 +482,14 @@ impl EnumVariantItem {
             fields: FieldList::from_ast(variant.field_list(), line_index),
         }
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.fields.shrink_to_fit();
+    }
 }
 
 /// Field shape shared by structs and enum variants.
@@ -398,6 +519,18 @@ impl FieldList {
             Self::Unit => &[],
         }
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Named(fields) | Self::Tuple(fields) => {
+                fields.shrink_to_fit();
+                for field in fields {
+                    field.shrink_to_fit();
+                }
+            }
+            Self::Unit => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -421,6 +554,12 @@ impl FieldKey {
         match self {
             Self::Named(name) => name.clone(),
             Self::Tuple(index) => format!("#{index}"),
+        }
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        if let Self::Named(name) = self {
+            name.shrink_to_fit();
         }
     }
 }
@@ -475,6 +614,16 @@ impl FieldItem {
             })
             .collect()
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        if let Some(key) = &mut self.key {
+            key.shrink_to_fit();
+        }
+        self.ty.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -493,6 +642,15 @@ impl TraitItem {
             items,
             is_unsafe: item.unsafe_token().is_some(),
         }
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.generics.shrink_to_fit();
+        self.super_traits.shrink_to_fit();
+        for bound in &mut self.super_traits {
+            bound.shrink_to_fit();
+        }
+        self.items.shrink_to_fit();
     }
 }
 
@@ -547,6 +705,15 @@ impl ImplItem {
             .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
         (None, self_ty)
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.generics.shrink_to_fit();
+        if let Some(trait_ref) = &mut self.trait_ref {
+            trait_ref.shrink_to_fit();
+        }
+        self.self_ty.shrink_to_fit();
+        self.items.shrink_to_fit();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -564,6 +731,17 @@ impl TypeAliasItem {
             aliased_ty: item.ty().map(|ty| TypeRef::from_ast(ty, line_index)),
         }
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.generics.shrink_to_fit();
+        self.bounds.shrink_to_fit();
+        for bound in &mut self.bounds {
+            bound.shrink_to_fit();
+        }
+        if let Some(aliased_ty) = &mut self.aliased_ty {
+            aliased_ty.shrink_to_fit();
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -579,6 +757,13 @@ impl ConstItem {
             ty: item.ty().map(|ty| TypeRef::from_ast(ty, line_index)),
         }
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.generics.shrink_to_fit();
+        if let Some(ty) = &mut self.ty {
+            ty.shrink_to_fit();
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -592,6 +777,12 @@ impl StaticItem {
         Self {
             ty: item.ty().map(|ty| TypeRef::from_ast(ty, line_index)),
             mutability: Mutability::from_mut_token(item.mut_token().is_some()),
+        }
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        if let Some(ty) = &mut self.ty {
+            ty.shrink_to_fit();
         }
     }
 }

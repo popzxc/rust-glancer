@@ -259,7 +259,7 @@ impl BodyIrDb {
                 target,
                 body: BodyId(body_idx),
             };
-            for expr in &body.exprs {
+            for expr in body.exprs.iter() {
                 if expr.source.file_id != file_id || !offset_in_dot_expr(expr, body, offset) {
                     continue;
                 }
@@ -296,7 +296,7 @@ struct TypePathCursorScanner<'a> {
 
 impl TypePathCursorScanner<'_> {
     fn scan(&mut self) {
-        for statement in &self.body.statements {
+        for statement in self.body.statements.iter() {
             if statement.source.file_id != self.file_id {
                 continue;
             }
@@ -383,11 +383,7 @@ impl ValuePathCursorScanner<'_> {
         // Expression source-node lookup deliberately picks one smallest AST-ish node. Qualified
         // paths need finer granularity: in `Action::Start()`, `Action` and `Start` should produce
         // different symbols even though they belong to the same lowered expression.
-        for expr_idx in 0..self.body.exprs.len() {
-            let expr = ExprId(expr_idx);
-            let Some(expr_data) = self.body.expr(expr) else {
-                continue;
-            };
+        for (_expr, expr_data) in self.body.exprs.iter_with_ids() {
             if expr_data.source.file_id != self.file_id {
                 continue;
             }
@@ -399,7 +395,7 @@ impl ValuePathCursorScanner<'_> {
         // Pattern paths are not represented as expressions, but they are still editor-visible
         // value paths: `let Some(value) = option` and `Action::Start { .. }` should navigate from
         // both the enum name and the variant name.
-        for statement in &self.body.statements {
+        for statement in self.body.statements.iter() {
             if statement.source.file_id != self.file_id {
                 continue;
             }
@@ -414,7 +410,7 @@ impl ValuePathCursorScanner<'_> {
             self.scan_pat(*scope, *pat);
         }
 
-        for expr in &self.body.exprs {
+        for expr in self.body.exprs.iter() {
             if expr.source.file_id != self.file_id {
                 continue;
             }

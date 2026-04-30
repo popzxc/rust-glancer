@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use rg_arena::Arena;
 use rg_item_tree::{Documentation, ItemTag, ItemTreeRef, VisibilityLevel};
 use rg_parse::{FileId, Span};
 
@@ -13,10 +14,10 @@ pub struct DefMap {
     pub(crate) extern_prelude: HashMap<String, ModuleRef>,
     // Standard prelude module selected for this target, if sysroot sources are available.
     pub(crate) prelude: Option<ModuleRef>,
-    pub modules: Vec<ModuleData>,
-    pub local_defs: Vec<LocalDefData>,
-    pub local_impls: Vec<LocalImplData>,
-    pub imports: Vec<ImportData>,
+    pub modules: Arena<ModuleId, ModuleData>,
+    pub local_defs: Arena<LocalDefId, LocalDefData>,
+    pub local_impls: Arena<LocalImplId, LocalImplData>,
+    pub imports: Arena<ImportId, ImportData>,
 }
 
 impl DefMap {
@@ -37,44 +38,44 @@ impl DefMap {
 
     /// Returns all modules in stable module-id order.
     pub fn modules(&self) -> &[ModuleData] {
-        &self.modules
+        self.modules.as_slice()
     }
 
     /// Returns module data by id.
     pub fn module(&self, module_id: ModuleId) -> Option<&ModuleData> {
-        self.modules.get(module_id.0)
+        self.modules.get(module_id)
     }
 
     /// Returns local definition data by id.
     pub fn local_def(&self, local_def: LocalDefId) -> Option<&LocalDefData> {
-        self.local_defs.get(local_def.0)
+        self.local_defs.get(local_def)
     }
 
     /// Returns all local definitions in stable local-def-id order.
     pub fn local_defs(&self) -> &[LocalDefData] {
-        &self.local_defs
+        self.local_defs.as_slice()
     }
 
     /// Returns impl block data by id.
     #[allow(dead_code)]
     pub fn local_impl(&self, local_impl: LocalImplId) -> Option<&LocalImplData> {
-        self.local_impls.get(local_impl.0)
+        self.local_impls.get(local_impl)
     }
 
     /// Returns all impl blocks in stable local-impl-id order.
     pub fn local_impls(&self) -> &[LocalImplData] {
-        &self.local_impls
+        self.local_impls.as_slice()
     }
 
     /// Returns import data by id.
     #[allow(dead_code)]
     pub fn import(&self, import: ImportId) -> Option<&ImportData> {
-        self.imports.get(import.0)
+        self.imports.get(import)
     }
 
     /// Returns all imports in stable import-id order.
     pub fn imports(&self) -> &[ImportData] {
-        &self.imports
+        self.imports.as_slice()
     }
 
     pub(super) fn set_root_module(&mut self, root_module: ModuleId) {
@@ -87,6 +88,23 @@ impl DefMap {
 
     pub(super) fn set_prelude(&mut self, prelude: Option<ModuleRef>) {
         self.prelude = prelude;
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.extern_prelude.shrink_to_fit();
+        self.modules.shrink_to_fit();
+        for module in self.modules.iter_mut() {
+            module.shrink_to_fit();
+        }
+        self.local_defs.shrink_to_fit();
+        for local_def in self.local_defs.iter_mut() {
+            local_def.shrink_to_fit();
+        }
+        self.local_impls.shrink_to_fit();
+        self.imports.shrink_to_fit();
+        for import in self.imports.iter_mut() {
+            import.shrink_to_fit();
+        }
     }
 }
 
@@ -104,6 +122,26 @@ pub struct ModuleData {
     pub unresolved_imports: Vec<ImportId>,
     pub scope: ModuleScope,
     pub origin: ModuleOrigin,
+}
+
+impl ModuleData {
+    fn shrink_to_fit(&mut self) {
+        if let Some(name) = &mut self.name {
+            name.shrink_to_fit();
+        }
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.children.shrink_to_fit();
+        for (name, _) in &mut self.children {
+            name.shrink_to_fit();
+        }
+        self.local_defs.shrink_to_fit();
+        self.impls.shrink_to_fit();
+        self.imports.shrink_to_fit();
+        self.unresolved_imports.shrink_to_fit();
+        self.scope.shrink_to_fit();
+    }
 }
 
 /// Where a module came from in source code.
@@ -151,6 +189,12 @@ pub struct LocalDefData {
     pub file_id: FileId,
     pub name_span: Option<Span>,
     pub span: Span,
+}
+
+impl LocalDefData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
+    }
 }
 
 /// One module-owned impl block collected from source.
@@ -250,6 +294,13 @@ impl ModuleScope {
     pub fn entry(&self, name: &str) -> Option<&ScopeEntry> {
         self.names.get(name)
     }
+
+    fn shrink_to_fit(&mut self) {
+        self.names.shrink_to_fit();
+        for entry in self.names.values_mut() {
+            entry.shrink_to_fit();
+        }
+    }
 }
 
 /// All namespace slots for one textual name.
@@ -274,6 +325,12 @@ impl ScopeEntry {
 
         bucket.push(binding);
         true
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.types.shrink_to_fit();
+        self.values.shrink_to_fit();
+        self.macros.shrink_to_fit();
     }
 }
 

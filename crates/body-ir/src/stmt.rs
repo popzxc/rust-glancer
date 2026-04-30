@@ -17,6 +17,18 @@ pub struct BindingData {
     pub ty: BodyTy,
 }
 
+impl BindingData {
+    pub(crate) fn shrink_to_fit(&mut self) {
+        if let Some(name) = &mut self.name {
+            name.shrink_to_fit();
+        }
+        if let Some(annotation) = &mut self.annotation {
+            annotation.shrink_to_fit();
+        }
+        self.ty.shrink_to_fit();
+    }
+}
+
 /// Local binding category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub enum BindingKind {
@@ -33,6 +45,12 @@ pub enum BindingKind {
 pub struct StmtData {
     pub source: BodySource,
     pub kind: StmtKind,
+}
+
+impl StmtData {
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.kind.shrink_to_fit();
+    }
 }
 
 /// Statement forms that matter for the first Body IR pass.
@@ -56,4 +74,22 @@ pub enum StmtKind {
         impl_id: BodyImplId,
     },
     ItemIgnored,
+}
+
+impl StmtKind {
+    fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Let {
+                bindings,
+                annotation,
+                ..
+            } => {
+                bindings.shrink_to_fit();
+                if let Some(annotation) = annotation {
+                    annotation.shrink_to_fit();
+                }
+            }
+            Self::Expr { .. } | Self::Item { .. } | Self::Impl { .. } | Self::ItemIgnored => {}
+        }
+    }
 }

@@ -82,6 +82,10 @@ impl Documentation {
     pub fn as_str(&self) -> &str {
         &self.text
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.text.shrink_to_fit();
+    }
 }
 
 fn doc_attr_text(attr: &ast::Attr) -> Option<String> {

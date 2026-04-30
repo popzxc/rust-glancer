@@ -543,7 +543,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
                 for import_id in &module.unresolved_imports {
                     let import = def_map
                         .imports
-                        .get(import_id.0)
+                        .get(*import_id)
                         .expect("unresolved import id should exist while dumping");
                     dump.push_str(&format!("- {}\n", self.render_unresolved_import(import)));
                 }
@@ -739,7 +739,7 @@ impl ResolvedDefOrigin<'_> {
                     .def_map(local_def_ref.target)
                     .expect("target def map should exist while dumping")
                     .local_defs
-                    .get(local_def_ref.local_def.0)
+                    .get(local_def_ref.local_def)
                     .expect("local def id should exist while dumping");
                 let module_path = self.render_module_path(crate::ModuleRef {
                     target: local_def_ref.target,

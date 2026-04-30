@@ -13,6 +13,7 @@ mod tests;
 
 use anyhow::Context as _;
 
+use rg_arena::Arena;
 use rg_def_map::{DefMapDb, LocalDefRef, ModuleRef, PackageSlot, Path, TargetRef};
 use rg_parse::TargetId;
 
@@ -45,7 +46,7 @@ pub use rg_item_tree::{
 /// again. Bodies live in `rg_body_ir`; this layer intentionally stops at item/signature facts.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SemanticIrDb {
-    packages: Vec<PackageIr>,
+    packages: Arena<PackageSlot, PackageIr>,
 }
 
 impl SemanticIrDb {
@@ -56,6 +57,7 @@ impl SemanticIrDb {
     ) -> anyhow::Result<Self> {
         let mut db = lower::build_db(item_tree, def_map)?;
         resolution::resolve_impl_headers(&mut db, def_map);
+        db.shrink_to_fit();
         Ok(db)
     }
 
@@ -71,7 +73,7 @@ impl SemanticIrDb {
 
         for package in &packages {
             let rebuilt = lower::build_package(item_tree, def_map, *package)?;
-            let slot = next.packages.get_mut(package.0).with_context(|| {
+            let slot = next.packages.get_mut(*package).with_context(|| {
                 format!(
                     "while attempting to replace semantic IR package {}",
                     package.0
@@ -81,18 +83,36 @@ impl SemanticIrDb {
         }
 
         resolution::resolve_impl_headers_for_packages(&mut next, def_map, &packages);
+        next.shrink_packages(&packages);
         Ok(next)
     }
 
     pub(crate) fn new(packages: Vec<PackageIr>) -> Self {
-        Self { packages }
+        Self {
+            packages: Arena::from_vec(packages),
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.packages.shrink_to_fit();
+        for package in self.packages.iter_mut() {
+            package.shrink_to_fit();
+        }
+    }
+
+    fn shrink_packages(&mut self, packages: &[PackageSlot]) {
+        for package in packages {
+            if let Some(package) = self.packages.get_mut(*package) {
+                package.shrink_to_fit();
+            }
+        }
     }
 
     /// Returns coarse item counts for status output and smoke checks.
     pub fn stats(&self) -> SemanticIrStats {
         let mut stats = SemanticIrStats::default();
 
-        for package in &self.packages {
+        for package in self.packages.iter() {
             for target in package.targets() {
                 let items = target.items();
                 stats.target_count += 1;
@@ -113,12 +133,12 @@ impl SemanticIrDb {
 
     /// Returns all package-level semantic IR sets.
     pub fn packages(&self) -> &[PackageIr] {
-        &self.packages
+        self.packages.as_slice()
     }
 
     /// Returns one package by package slot.
     pub fn package(&self, package: PackageSlot) -> Option<&PackageIr> {
-        self.packages.get(package.0)
+        self.packages.get(package)
     }
 
     /// Returns one target semantic IR by project-wide target reference.
@@ -159,13 +179,12 @@ impl SemanticIrDb {
                 target_ir
                     .items()
                     .structs
-                    .iter()
-                    .enumerate()
-                    .map(move |(idx, data)| {
+                    .iter_with_ids()
+                    .map(move |(id, data)| {
                         (
                             TypeDefRef {
                                 target,
-                                id: TypeDefId::Struct(StructId(idx)),
+                                id: TypeDefId::Struct(id),
                             },
                             data,
                         )
@@ -181,13 +200,12 @@ impl SemanticIrDb {
                 target_ir
                     .items()
                     .unions
-                    .iter()
-                    .enumerate()
-                    .map(move |(idx, data)| {
+                    .iter_with_ids()
+                    .map(move |(id, data)| {
                         (
                             TypeDefRef {
                                 target,
-                                id: TypeDefId::Union(UnionId(idx)),
+                                id: TypeDefId::Union(id),
                             },
                             data,
                         )
@@ -203,13 +221,12 @@ impl SemanticIrDb {
                 target_ir
                     .items()
                     .enums
-                    .iter()
-                    .enumerate()
-                    .map(move |(idx, data)| {
+                    .iter_with_ids()
+                    .map(move |(id, data)| {
                         (
                             TypeDefRef {
                                 target,
-                                id: TypeDefId::Enum(EnumId(idx)),
+                                id: TypeDefId::Enum(id),
                             },
                             data,
                         )
@@ -225,17 +242,8 @@ impl SemanticIrDb {
                 target_ir
                     .items()
                     .traits
-                    .iter()
-                    .enumerate()
-                    .map(move |(idx, data)| {
-                        (
-                            TraitRef {
-                                target,
-                                id: TraitId(idx),
-                            },
-                            data,
-                        )
-                    })
+                    .iter_with_ids()
+                    .map(move |(id, data)| (TraitRef { target, id }, data))
             })
     }
 
@@ -247,17 +255,8 @@ impl SemanticIrDb {
                 target_ir
                     .items()
                     .impls
-                    .iter()
-                    .enumerate()
-                    .map(move |(idx, data)| {
-                        (
-                            ImplRef {
-                                target,
-                                id: ImplId(idx),
-                            },
-                            data,
-                        )
-                    })
+                    .iter_with_ids()
+                    .map(move |(id, data)| (ImplRef { target, id }, data))
             })
     }
 
@@ -272,17 +271,8 @@ impl SemanticIrDb {
                 target_ir
                     .items()
                     .functions
-                    .iter()
-                    .enumerate()
-                    .map(move |(idx, data)| {
-                        (
-                            FunctionRef {
-                                target,
-                                id: FunctionId(idx),
-                            },
-                            data,
-                        )
-                    })
+                    .iter_with_ids()
+                    .map(move |(id, data)| (FunctionRef { target, id }, data))
             })
     }
 
@@ -302,17 +292,8 @@ impl SemanticIrDb {
                 target_ir
                     .items()
                     .type_aliases
-                    .iter()
-                    .enumerate()
-                    .map(move |(idx, data)| {
-                        (
-                            TypeAliasRef {
-                                target,
-                                id: TypeAliasId(idx),
-                            },
-                            data,
-                        )
-                    })
+                    .iter_with_ids()
+                    .map(move |(id, data)| (TypeAliasRef { target, id }, data))
             })
     }
 
@@ -324,17 +305,8 @@ impl SemanticIrDb {
                 target_ir
                     .items()
                     .consts
-                    .iter()
-                    .enumerate()
-                    .map(move |(idx, data)| {
-                        (
-                            ConstRef {
-                                target,
-                                id: ConstId(idx),
-                            },
-                            data,
-                        )
-                    })
+                    .iter_with_ids()
+                    .map(move |(id, data)| (ConstRef { target, id }, data))
             })
     }
 
@@ -349,17 +321,8 @@ impl SemanticIrDb {
                 target_ir
                     .items()
                     .statics
-                    .iter()
-                    .enumerate()
-                    .map(move |(idx, data)| {
-                        (
-                            StaticRef {
-                                target,
-                                id: StaticId(idx),
-                            },
-                            data,
-                        )
-                    })
+                    .iter_with_ids()
+                    .map(move |(id, data)| (StaticRef { target, id }, data))
             })
     }
 
@@ -787,11 +750,11 @@ impl SemanticIrDb {
             .target_mut(impl_ref.target.target)?
             .items_mut()
             .impls
-            .get_mut(impl_ref.id.0)
+            .get_mut(impl_ref.id)
     }
 
     fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageIr> {
-        self.packages.get_mut(package.0)
+        self.packages.get_mut(package)
     }
 }
 

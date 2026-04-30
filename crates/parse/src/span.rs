@@ -202,6 +202,15 @@ impl LineIndex {
 
         end
     }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.line_starts.shrink_to_fit();
+        self.line_byte_lens.shrink_to_fit();
+        self.non_ascii_lines.shrink_to_fit();
+        for metrics in &mut self.non_ascii_lines {
+            metrics.shrink_to_fit();
+        }
+    }
 }
 
 /// Sparse per-line mapping between UTF-8 byte columns and UTF-16 code-unit columns.
@@ -293,6 +302,10 @@ impl LineUtf16Metrics {
             .map(|range| range.byte_width().saturating_sub(range.utf16_width()))
             .sum::<u32>();
         self.utf16_len + adjustment
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.non_ascii_ranges.shrink_to_fit();
     }
 }
 

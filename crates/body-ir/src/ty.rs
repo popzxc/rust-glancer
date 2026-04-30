@@ -31,6 +31,13 @@ impl BodyLocalNominalTy {
             args: Vec::new(),
         }
     }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.args.shrink_to_fit();
+        for arg in &mut self.args {
+            arg.shrink_to_fit();
+        }
+    }
 }
 
 /// Module-level nominal type together with the generic arguments visible at use site.
@@ -45,6 +52,13 @@ impl BodyNominalTy {
         Self {
             def,
             args: Vec::new(),
+        }
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.args.shrink_to_fit();
+        for arg in &mut self.args {
+            arg.shrink_to_fit();
         }
     }
 }
@@ -115,5 +129,42 @@ impl BodyTy {
 
     pub fn type_defs(&self) -> Vec<TypeDefRef> {
         self.nominal_tys().iter().map(|ty| ty.def).collect()
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Syntax(ty) => ty.shrink_to_fit(),
+            Self::Reference(inner) => inner.shrink_to_fit(),
+            Self::LocalNominal(types) => {
+                types.shrink_to_fit();
+                for ty in types {
+                    ty.shrink_to_fit();
+                }
+            }
+            Self::Nominal(types) | Self::SelfTy(types) => {
+                types.shrink_to_fit();
+                for ty in types {
+                    ty.shrink_to_fit();
+                }
+            }
+            Self::Unit | Self::Never | Self::Unknown => {}
+        }
+    }
+}
+
+impl BodyGenericArg {
+    fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Type(ty) => ty.shrink_to_fit(),
+            Self::Lifetime(text) | Self::Const(text) | Self::Unsupported(text) => {
+                text.shrink_to_fit();
+            }
+            Self::AssocType { name, ty } => {
+                name.shrink_to_fit();
+                if let Some(ty) = ty {
+                    ty.shrink_to_fit();
+                }
+            }
+        }
     }
 }
