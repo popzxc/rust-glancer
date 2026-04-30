@@ -4,6 +4,8 @@ use ra_syntax::AstNode as _;
 
 use crate::{MemoryRecorder, MemorySize};
 
+const GREEN_CHILD_BYTES: usize = mem::size_of::<usize>() * 2;
+
 macro_rules! impl_leaf_memory_size {
     ($($ty:ty),+ $(,)?) => {
         $(
@@ -47,6 +49,7 @@ impl MemorySize for ra_syntax::SyntaxToken {
 /// Aggregates syntax-tree accounting to keep reports readable for large files.
 struct SyntaxTreeStats {
     nodes: usize,
+    child_edges: usize,
     tokens: usize,
     token_bytes: usize,
 }
@@ -55,6 +58,7 @@ impl SyntaxTreeStats {
     fn from_node(node: &ra_syntax::SyntaxNode) -> Self {
         let mut stats = Self {
             nodes: 0,
+            child_edges: 0,
             tokens: 0,
             token_bytes: 0,
         };
@@ -65,7 +69,12 @@ impl SyntaxTreeStats {
             };
 
             match element {
-                ra_syntax::NodeOrToken::Node(_) => stats.nodes += 1,
+                ra_syntax::NodeOrToken::Node(node) => {
+                    stats.nodes += 1;
+                    stats.child_edges = stats
+                        .child_edges
+                        .saturating_add(node.children_with_tokens().count());
+                }
                 ra_syntax::NodeOrToken::Token(token) => {
                     stats.tokens += 1;
                     stats.token_bytes = stats.token_bytes.saturating_add(token.text().len());
@@ -78,12 +87,18 @@ impl SyntaxTreeStats {
 
     fn record(&self, recorder: &mut MemoryRecorder) {
         recorder.scope("green_tree", |recorder| {
-            // rowan keeps the exact green-node/token representation private. These estimates are
-            // intentionally coarse but still make large syntax roots visible in phase reports.
+            // rowan keeps the exact green-node/token layout private. We keep the original
+            // wrapper-sized node/token estimates and add the important piece they miss: green
+            // child entries stored inline with each green node allocation.
             recorder.scope("nodes", |recorder| {
                 recorder.record_approximate::<ra_syntax::SyntaxNode>(
                     self.nodes
                         .saturating_mul(mem::size_of::<ra_syntax::SyntaxNode>()),
+                );
+                recorder.record_type_name(
+                    crate::MemoryRecordKind::Approximate,
+                    "rowan::GreenChild",
+                    self.child_edges.saturating_mul(GREEN_CHILD_BYTES),
                 );
             });
             recorder.scope("tokens", |recorder| {

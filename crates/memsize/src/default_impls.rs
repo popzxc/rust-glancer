@@ -7,7 +7,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::{MemoryRecorder, MemorySize};
+use crate::{MemoryRecorder, MemorySize, approximate_allocation_overhead};
 
 macro_rules! impl_leaf_memory_size {
     ($($ty:ty),+ $(,)?) => {
@@ -73,7 +73,9 @@ where
 {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         recorder.scope("box", |recorder| {
-            recorder.record_heap::<T>(mem::size_of::<T>());
+            let payload = mem::size_of::<T>();
+            recorder.record_heap::<T>(payload);
+            recorder.record_approximate::<Box<T>>(approximate_allocation_overhead(payload));
             (**self).record_memory_children(recorder);
         });
     }
@@ -84,6 +86,7 @@ where
     T: MemorySize,
 {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        let payload = self.capacity().saturating_mul(mem::size_of::<T>());
         recorder.scope("items", |recorder| {
             recorder.record_heap::<T>(self.len().saturating_mul(mem::size_of::<T>()));
 
@@ -95,6 +98,9 @@ where
         let spare = self.capacity().saturating_sub(self.len());
         recorder.scope("spare_capacity", |recorder| {
             recorder.record_spare_capacity::<T>(spare.saturating_mul(mem::size_of::<T>()));
+        });
+        recorder.scope("allocation_overhead", |recorder| {
+            recorder.record_approximate::<Vec<T>>(approximate_allocation_overhead(payload));
         });
     }
 }
@@ -153,19 +159,27 @@ where
 
 impl MemorySize for String {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.record_heap::<String>(self.capacity());
+        let payload = self.capacity();
+        recorder.record_heap::<String>(payload);
+        recorder.record_approximate::<String>(approximate_allocation_overhead(payload));
     }
 }
 
 impl MemorySize for OsString {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.record_approximate::<OsString>(self.as_encoded_bytes().len());
+        let payload = self.as_encoded_bytes().len();
+        recorder.record_approximate::<OsString>(
+            payload.saturating_add(approximate_allocation_overhead(payload)),
+        );
     }
 }
 
 impl MemorySize for PathBuf {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.record_approximate::<PathBuf>(self.as_os_str().as_encoded_bytes().len());
+        let payload = self.as_os_str().as_encoded_bytes().len();
+        recorder.record_approximate::<PathBuf>(
+            payload.saturating_add(approximate_allocation_overhead(payload)),
+        );
     }
 }
 
@@ -189,6 +203,11 @@ where
     S: BuildHasher,
 {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        let payload = self
+            .capacity()
+            .saturating_mul(mem::size_of::<K>().saturating_add(mem::size_of::<V>()));
+        let control_bytes = hash_table_control_bytes(self.capacity());
+
         recorder.scope("entries", |recorder| {
             // HashMap hides bucket/control-byte layout. Key/value payload bytes are useful as
             // heap attribution; spare slot storage remains approximate.
@@ -207,6 +226,12 @@ where
                 spare.saturating_mul(mem::size_of::<K>().saturating_add(mem::size_of::<V>())),
             );
         });
+        recorder.scope("table_overhead", |recorder| {
+            recorder.record_approximate::<HashMap<K, V, S>>(
+                control_bytes
+                    .saturating_add(approximate_allocation_overhead(payload + control_bytes)),
+            );
+        });
     }
 }
 
@@ -216,6 +241,9 @@ where
     S: BuildHasher,
 {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        let payload = self.capacity().saturating_mul(mem::size_of::<T>());
+        let control_bytes = hash_table_control_bytes(self.capacity());
+
         recorder.scope("items", |recorder| {
             recorder.record_heap::<T>(self.len().saturating_mul(mem::size_of::<T>()));
 
@@ -228,6 +256,22 @@ where
         recorder.scope("spare_capacity", |recorder| {
             recorder.record_approximate::<HashSet<T, S>>(spare.saturating_mul(mem::size_of::<T>()));
         });
+        recorder.scope("table_overhead", |recorder| {
+            recorder.record_approximate::<HashSet<T, S>>(
+                control_bytes
+                    .saturating_add(approximate_allocation_overhead(payload + control_bytes)),
+            );
+        });
+    }
+}
+
+fn hash_table_control_bytes(capacity: usize) -> usize {
+    if capacity == 0 {
+        0
+    } else {
+        // std::HashMap is backed by hashbrown's SwissTable. The exact bucket count is hidden, but
+        // one control byte per public capacity slot plus one SIMD group is a useful lower-bound.
+        capacity.saturating_add(16)
     }
 }
 
@@ -272,14 +316,17 @@ where
 mod tests {
     use std::{any, collections::BTreeMap, mem};
 
-    use crate::{MemoryRecordKind, MemoryRecorder, MemorySize};
+    use crate::{MemoryRecordKind, MemoryRecorder, MemorySize, approximate_allocation_overhead};
 
     #[test]
     fn records_string_shallow_and_heap_capacity() {
         let mut value = String::with_capacity(16);
         value.push_str("api");
 
-        assert_eq!(value.memory_size(), mem::size_of::<String>() + 16);
+        assert_eq!(
+            value.memory_size(),
+            mem::size_of::<String>() + 16 + approximate_allocation_overhead(16)
+        );
 
         let mut recorder = MemoryRecorder::new("string");
         value.record_memory_size(&mut recorder);
@@ -290,6 +337,10 @@ mod tests {
             Some(&mem::size_of::<String>())
         );
         assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&16));
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Approximate),
+            Some(&approximate_allocation_overhead(16))
+        );
     }
 
     #[test]
@@ -298,7 +349,10 @@ mod tests {
         value.push_str("user");
         let value = Some(value);
 
-        assert_eq!(value.memory_size(), mem::size_of::<Option<String>>() + 11);
+        assert_eq!(
+            value.memory_size(),
+            mem::size_of::<Option<String>>() + 11 + approximate_allocation_overhead(11)
+        );
 
         let mut recorder = MemoryRecorder::new("option");
         value.record_memory_size(&mut recorder);
@@ -309,6 +363,10 @@ mod tests {
             Some(&mem::size_of::<Option<String>>())
         );
         assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&11));
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Approximate),
+            Some(&approximate_allocation_overhead(11))
+        );
     }
 
     #[test]
@@ -319,7 +377,11 @@ mod tests {
 
         assert_eq!(
             value.memory_size(),
-            mem::size_of::<Box<String>>() + mem::size_of::<String>() + 5
+            mem::size_of::<Box<String>>()
+                + mem::size_of::<String>()
+                + 5
+                + approximate_allocation_overhead(mem::size_of::<String>())
+                + approximate_allocation_overhead(5)
         );
 
         let mut recorder = MemoryRecorder::new("box");
@@ -334,6 +396,13 @@ mod tests {
             totals.get(&MemoryRecordKind::Heap),
             Some(&(mem::size_of::<String>() + 5))
         );
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Approximate),
+            Some(
+                &(approximate_allocation_overhead(mem::size_of::<String>())
+                    + approximate_allocation_overhead(5))
+            )
+        );
     }
 
     #[test]
@@ -345,7 +414,11 @@ mod tests {
 
         assert_eq!(
             value.memory_size(),
-            mem::size_of::<Vec<String>>() + 2 * mem::size_of::<String>() + 5
+            mem::size_of::<Vec<String>>()
+                + 2 * mem::size_of::<String>()
+                + 5
+                + approximate_allocation_overhead(2 * mem::size_of::<String>())
+                + approximate_allocation_overhead(5)
         );
 
         let mut recorder = MemoryRecorder::new("vec");
@@ -364,6 +437,13 @@ mod tests {
             totals.get(&MemoryRecordKind::SpareCapacity),
             Some(&mem::size_of::<String>())
         );
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Approximate),
+            Some(
+                &(approximate_allocation_overhead(2 * mem::size_of::<String>())
+                    + approximate_allocation_overhead(5))
+            )
+        );
     }
 
     #[test]
@@ -378,7 +458,10 @@ mod tests {
         let totals = recorder.totals_by_type();
         assert_eq!(
             totals.get(any::type_name::<Vec<u32>>()),
-            Some(&mem::size_of::<Vec<u32>>())
+            Some(
+                &(mem::size_of::<Vec<u32>>()
+                    + approximate_allocation_overhead(3 * mem::size_of::<u32>()))
+            )
         );
         assert_eq!(
             totals.get(any::type_name::<u32>()),
@@ -401,6 +484,10 @@ mod tests {
             Some(&mem::size_of::<(u32, String)>())
         );
         assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&9));
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Approximate),
+            Some(&approximate_allocation_overhead(9))
+        );
     }
 
     #[test]

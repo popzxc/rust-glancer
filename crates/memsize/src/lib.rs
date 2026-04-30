@@ -36,10 +36,36 @@ pub trait MemorySize {
     where
         Self: Sized,
     {
-        let mut recorder = MemoryRecorder::new("root");
+        let mut recorder = MemoryRecorder::total_only("root");
         self.record_memory_size(&mut recorder);
         recorder.total_bytes()
     }
+}
+
+const ALLOCATION_HEADER_BYTES: usize = mem::size_of::<usize>() * 2;
+const ALLOCATION_GRANULARITY: usize = mem::size_of::<usize>() * 2;
+
+/// Best-effort size-class approximation for one heap allocation.
+///
+/// The exact allocator layout is intentionally outside this crate's scope, but RSS-oriented
+/// profiles are misleading if millions of tiny allocations count only their logical payload bytes.
+pub(crate) fn approximate_allocation_size(payload_bytes: usize) -> usize {
+    if payload_bytes == 0 {
+        return 0;
+    }
+
+    round_up(
+        payload_bytes.saturating_add(ALLOCATION_HEADER_BYTES),
+        ALLOCATION_GRANULARITY,
+    )
+}
+
+pub(crate) fn approximate_allocation_overhead(payload_bytes: usize) -> usize {
+    approximate_allocation_size(payload_bytes).saturating_sub(payload_bytes)
+}
+
+fn round_up(value: usize, alignment: usize) -> usize {
+    value.saturating_add(alignment.saturating_sub(1)) / alignment * alignment
 }
 
 /// One memory contribution attached to the current recorder path.
@@ -67,6 +93,8 @@ pub enum MemoryRecordKind {
 /// Controls whether the recorder also keeps every individual contribution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryRecorderMode {
+    /// Keep only the total byte count.
+    TotalOnly,
     /// Keep only totals for each `(path, type_name, kind)` bucket.
     Aggregate,
     /// Keep aggregated totals plus the raw contribution stream.
@@ -87,9 +115,11 @@ struct MemoryRecordKey {
 /// reports should depend on the grouped totals.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryRecorder {
+    mode: MemoryRecorderMode,
     path: Vec<String>,
     records: BTreeMap<MemoryRecordKey, usize>,
     raw_records: Option<Vec<MemoryRecord>>,
+    total_bytes: usize,
 }
 
 impl MemoryRecorder {
@@ -101,18 +131,28 @@ impl MemoryRecorder {
         Self::with_mode(root, MemoryRecorderMode::Detailed)
     }
 
+    pub fn total_only(root: impl Into<String>) -> Self {
+        Self::with_mode(root, MemoryRecorderMode::TotalOnly)
+    }
+
     pub fn with_mode(root: impl Into<String>, mode: MemoryRecorderMode) -> Self {
         Self {
+            mode,
             path: vec![root.into()],
             records: BTreeMap::new(),
             raw_records: match mode {
-                MemoryRecorderMode::Aggregate => None,
+                MemoryRecorderMode::TotalOnly | MemoryRecorderMode::Aggregate => None,
                 MemoryRecorderMode::Detailed => Some(Vec::new()),
             },
+            total_bytes: 0,
         }
     }
 
     pub fn scope<R>(&mut self, label: impl Into<String>, f: impl FnOnce(&mut Self) -> R) -> R {
+        if self.mode == MemoryRecorderMode::TotalOnly {
+            return f(self);
+        }
+
         self.path.push(label.into());
         let result = f(self);
         self.path.pop();
@@ -164,6 +204,11 @@ impl MemoryRecorder {
             return;
         }
 
+        self.total_bytes = self.total_bytes.saturating_add(bytes);
+        if self.mode == MemoryRecorderMode::TotalOnly {
+            return;
+        }
+
         let path = self.path.join(".");
         let type_name = type_name.into();
         let key = MemoryRecordKey {
@@ -184,11 +229,7 @@ impl MemoryRecorder {
     }
 
     pub fn mode(&self) -> MemoryRecorderMode {
-        if self.raw_records.is_some() {
-            MemoryRecorderMode::Detailed
-        } else {
-            MemoryRecorderMode::Aggregate
-        }
+        self.mode
     }
 
     pub fn records(&self) -> Vec<MemoryRecord> {
@@ -208,7 +249,7 @@ impl MemoryRecorder {
     }
 
     pub fn total_bytes(&self) -> usize {
-        self.records.values().sum()
+        self.total_bytes
     }
 
     pub fn totals_by_path(&self) -> BTreeMap<&str, usize> {
@@ -338,5 +379,19 @@ mod tests {
         assert_eq!(raw_records.len(), 2);
         assert_eq!(raw_records[0].bytes, 5);
         assert_eq!(raw_records[1].bytes, 7);
+    }
+
+    #[test]
+    fn total_only_recorder_keeps_totals_without_records() {
+        let mut recorder = MemoryRecorder::total_only("root");
+        recorder.scope("ignored", |recorder| {
+            recorder.record_heap::<String>(5);
+            recorder.record_heap::<Vec<u8>>(7);
+        });
+
+        assert_eq!(recorder.mode(), MemoryRecorderMode::TotalOnly);
+        assert_eq!(recorder.total_bytes(), 12);
+        assert!(recorder.records().is_empty());
+        assert!(recorder.totals_by_path().is_empty());
     }
 }

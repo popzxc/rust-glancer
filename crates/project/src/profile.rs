@@ -80,17 +80,21 @@ impl BuildProfiler {
             .then(|| values.iter().flatten().copied().sum())
     }
 
+    pub(crate) fn sample_rss(&mut self) -> Option<usize> {
+        self.rss_sampler.as_mut().and_then(|sampler| sampler())
+    }
+
     pub(crate) fn record(
         &mut self,
         label: &'static str,
         retained_bytes: Option<usize>,
         active_retained_bytes: Option<usize>,
+        rss_bytes: Option<usize>,
     ) {
         if !self.is_enabled() {
             return;
         }
 
-        let rss_bytes = self.rss_sampler.as_mut().and_then(|sampler| sampler());
         self.checkpoints.push(BuildCheckpoint {
             label,
             elapsed: self.started_at.elapsed(),
