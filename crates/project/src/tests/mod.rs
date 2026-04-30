@@ -45,6 +45,7 @@ pub struct User;
             "after semantic-ir",
             "after item-tree drop",
             "after body-ir",
+            "after parse syntax eviction",
             "after project",
         ]
     );

@@ -84,6 +84,12 @@ impl<'db> PackageLowering<'db> {
             return Ok(());
         }
 
+        self.parse_package
+            .ensure_file_syntax(current_file_id)
+            .with_context(|| {
+                format!("while attempting to load syntax for {:?}", current_file_id)
+            })?;
+
         let (items, docs, line_index, module_file_context) = {
             let parsed_file = self
                 .parse_package
@@ -94,9 +100,15 @@ impl<'db> PackageLowering<'db> {
                         current_file_id
                     )
                 })?;
+            let syntax = parsed_file.syntax().with_context(|| {
+                format!(
+                    "while attempting to access retained syntax for {:?}",
+                    current_file_id
+                )
+            })?;
             (
-                parsed_file.syntax().items().collect::<Vec<_>>(),
-                Documentation::inner_from_ast(parsed_file.syntax()),
+                syntax.items().collect::<Vec<_>>(),
+                Documentation::inner_from_ast(syntax),
                 parsed_file.line_index().clone(),
                 ModuleFileContext::from_definition_file(parsed_file.path()),
             )

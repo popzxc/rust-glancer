@@ -36,6 +36,16 @@ impl Package {
         self.files.reparse_file_from_disk(file_path)
     }
 
+    /// Rehydrates syntax for a known file before an AST-consuming lowering pass.
+    pub fn ensure_file_syntax(&mut self, file_id: FileId) -> anyhow::Result<()> {
+        self.files.ensure_file_syntax(file_id)
+    }
+
+    /// Drops retained syntax trees while preserving file ids, paths, diagnostics, and line indexes.
+    pub(crate) fn evict_syntax_trees(&mut self) {
+        self.files.evict_syntax_trees();
+    }
+
     /// Returns the cached parsed file for a previously known `FileId`.
     pub fn parsed_file(&self, file_id: FileId) -> Option<ParsedFile<'_>> {
         self.files.parsed_file(file_id)

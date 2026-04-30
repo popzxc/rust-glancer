@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ra_syntax::{AstNode as _, Edition, SourceFile};
+use ra_syntax::{Edition, SourceFile};
 
 use crate::{
     error::ParseError,
@@ -25,7 +25,10 @@ pub(crate) struct ParsedFileData {
     /// Line-start index used to convert byte offsets into line/column coordinates.
     pub(crate) line_index: LineIndex,
     /// Parsed Rust syntax tree produced by `ra_syntax`.
-    pub(crate) tree: SourceFile,
+    ///
+    /// This is retained only while AST-consuming phases are lowering. Query-time state keeps
+    /// paths, parse errors, and line indexes, but can evict syntax trees to keep memory bounded.
+    pub(crate) syntax: Option<SourceFile>,
 }
 
 /// Borrowed view over one cached source file.
@@ -64,14 +67,14 @@ impl<'a> ParsedFile<'a> {
         &self.data.line_index
     }
 
-    /// Returns the parsed Rust syntax tree.
-    pub fn syntax(&self) -> &'a SourceFile {
-        &self.data.tree
+    /// Returns the parsed Rust syntax tree when it is currently retained.
+    pub fn syntax(&self) -> Option<&'a SourceFile> {
+        self.data.syntax.as_ref()
     }
 
-    /// Returns source text for a byte span by reading it back from the syntax tree.
+    /// Returns source text for a byte span by reading it from the saved source file.
     pub fn text_for_span(&self, span: Span) -> Option<String> {
-        let file_text = self.data.tree.syntax().text().to_string();
+        let file_text = std::fs::read_to_string(&self.data.path).ok()?;
         let start = usize::try_from(span.text.start).ok()?;
         let end = usize::try_from(span.text.end).ok()?;
 
@@ -96,8 +99,9 @@ impl FileDb {
             .canonicalize()
             .with_context(|| format!("while attempting to canonicalize {}", file_path.display()))?;
 
-        if let Some(file_id) = self.file_ids_by_path.get(&canonical_file_path) {
-            return Ok(*file_id);
+        if let Some(file_id) = self.file_ids_by_path.get(&canonical_file_path).copied() {
+            self.ensure_file_syntax(file_id)?;
+            return Ok(file_id);
         }
 
         let file_id = FileId(self.parsed_files.len());
@@ -126,6 +130,28 @@ impl FileDb {
         self.parsed_files[file_id.0] =
             Self::parse_source(file_id, file_path.to_path_buf(), &source);
         Ok(Some(file_id))
+    }
+
+    /// Ensures that syntax for an already known file is available for AST-consuming lowering.
+    pub(super) fn ensure_file_syntax(&mut self, file_id: FileId) -> anyhow::Result<()> {
+        let Some(parsed_file) = self.parsed_files.get(file_id.0) else {
+            anyhow::bail!("unknown file id {:?}", file_id);
+        };
+        if parsed_file.syntax.is_some() {
+            return Ok(());
+        }
+
+        let source = Self::read_source(&parsed_file.path)?;
+        let path = parsed_file.path.clone();
+        self.parsed_files[file_id.0] = Self::parse_source(file_id, path, &source);
+        Ok(())
+    }
+
+    /// Drops retained syntax trees while keeping source coordinates and file identity.
+    pub(super) fn evict_syntax_trees(&mut self) {
+        for parsed_file in &mut self.parsed_files {
+            parsed_file.syntax = None;
+        }
     }
 
     /// Returns the cached parsed file for a previously known `FileId`.
@@ -172,7 +198,7 @@ impl FileDb {
             path,
             parse_errors,
             line_index,
-            tree: parsed_file.tree(),
+            syntax: Some(parsed_file.tree()),
         }
     }
 }

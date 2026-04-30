@@ -106,6 +106,7 @@ impl Project {
             )
             .context("while attempting to rebuild affected body IR packages")?;
 
+        self.parse.evict_syntax_trees();
         self.def_map = def_map;
         self.semantic_ir = semantic_ir;
         self.body_ir = body_ir;
@@ -181,6 +182,16 @@ impl Project {
         profiler.record(
             "after body-ir",
             body_ir_bytes,
+            profiler.sum_retained(&[parse_bytes, def_map_bytes, semantic_ir_bytes, body_ir_bytes]),
+            rss_bytes,
+        );
+
+        parse.evict_syntax_trees();
+        let rss_bytes = profiler.sample_rss();
+        let parse_bytes = profiler.measure(&parse);
+        profiler.record(
+            "after parse syntax eviction",
+            parse_bytes,
             profiler.sum_retained(&[parse_bytes, def_map_bytes, semantic_ir_bytes, body_ir_bytes]),
             rss_bytes,
         );

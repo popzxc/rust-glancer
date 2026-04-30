@@ -86,6 +86,13 @@ impl ParseDb {
         self.packages.get_mut(package_slot)
     }
 
+    /// Drops retained syntax trees from all packages after AST-consuming phases have finished.
+    pub fn evict_syntax_trees(&mut self) {
+        for package in &mut self.packages {
+            package.evict_syntax_trees();
+        }
+    }
+
     /// Reparses a saved file for every parsed package that already owns `file_path`.
     ///
     /// This keeps package-local `FileId`s stable. Unknown files do not appear in the returned owner

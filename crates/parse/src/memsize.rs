@@ -51,7 +51,7 @@ impl MemorySize for FileDb {
 
 impl MemorySize for ParsedFileData {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, path, parse_errors, line_index, tree);
+        record_fields!(recorder, self, path, parse_errors, line_index, syntax);
     }
 }
 

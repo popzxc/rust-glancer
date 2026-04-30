@@ -19,7 +19,7 @@ use rg_semantic_ir::{
     TypeDefRef,
 };
 use rg_workspace::WorkspaceMetadata;
-use test_fixture::fixture_crate;
+use test_fixture::{CrateFixture, fixture_crate};
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);
@@ -40,6 +40,8 @@ pub(super) fn check_project_body_ir_with_policy(
 }
 
 struct BodyIrFixtureDb {
+    /// Keeps the temporary fixture files on disk while snapshots recover source text by span.
+    _fixture: CrateFixture,
     parse: ParseDb,
     def_map: DefMapDb,
     semantic_ir: SemanticIrDb,
@@ -64,6 +66,7 @@ impl BodyIrFixtureDb {
             .expect("fixture body ir db should build");
 
         Self {
+            _fixture: fixture,
             parse,
             def_map,
             semantic_ir,

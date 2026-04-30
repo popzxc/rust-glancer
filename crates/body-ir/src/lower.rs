@@ -162,8 +162,13 @@ impl<'a> TargetLowering<'a> {
         })?;
 
         let expected = expected.text;
-        Ok(parsed_file
-            .syntax()
+        let syntax = parsed_file.syntax().with_context(|| {
+            format!(
+                "while attempting to access retained syntax for {:?}",
+                file_id
+            )
+        })?;
+        Ok(syntax
             .syntax()
             .descendants()
             .filter_map(ast::Fn::cast)
