@@ -702,26 +702,26 @@ impl TargetSemanticIrSnapshot<'_> {
             .function_data(id)
             .expect("function id should exist while rendering");
         let params = data
-            .declaration
-            .params
+            .signature
+            .params()
             .iter()
             .map(render_param)
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = data
-            .declaration
-            .ret_ty
-            .as_ref()
+            .signature
+            .ret_ty()
             .map(|ty| format!(" -> {ty}"))
             .unwrap_or_default();
+        let generics = data.signature.generics();
         writeln!(
             dump,
             "{}- {}fn {}{}({params}){ret_ty}{}",
             indent(depth),
             visibility_prefix(&data.visibility),
             data.name,
-            generic_params(&data.declaration.generics),
-            where_clause(&data.declaration.generics),
+            generic_params_opt(generics),
+            where_clause_opt(generics),
         )
         .expect("string writes should not fail");
     }
@@ -731,13 +731,13 @@ impl TargetSemanticIrSnapshot<'_> {
             .items()
             .type_alias_data(id)
             .expect("type alias id should exist while rendering");
-        let bounds = if data.declaration.bounds.is_empty() {
+        let bounds = if data.signature.bounds().is_empty() {
             String::new()
         } else {
             format!(
                 ": {}",
-                data.declaration
-                    .bounds
+                data.signature
+                    .bounds()
                     .iter()
                     .map(ToString::to_string)
                     .collect::<Vec<_>>()
@@ -745,20 +745,20 @@ impl TargetSemanticIrSnapshot<'_> {
             )
         };
         let aliased_ty = data
-            .declaration
-            .aliased_ty
-            .as_ref()
+            .signature
+            .aliased_ty()
             .map(|ty| format!(" = {ty}"))
             .unwrap_or_default();
+        let generics = data.signature.generics();
         writeln!(
             dump,
             "{}- {}type {}{}{}{}{}",
             indent(depth),
             visibility_prefix(&data.visibility),
             data.name,
-            generic_params(&data.declaration.generics),
+            generic_params_opt(generics),
             bounds,
-            where_clause(&data.declaration.generics),
+            where_clause_opt(generics),
             aliased_ty,
         )
         .expect("string writes should not fail");
@@ -770,9 +770,8 @@ impl TargetSemanticIrSnapshot<'_> {
             .const_data(id)
             .expect("const id should exist while rendering");
         let ty = data
-            .declaration
-            .ty
-            .as_ref()
+            .signature
+            .ty()
             .map(ToString::to_string)
             .unwrap_or_else(|| "<unknown>".to_string());
         writeln!(
@@ -886,6 +885,10 @@ fn generic_params(generics: &rg_item_tree::GenericParams) -> String {
     generics.to_string()
 }
 
+fn generic_params_opt(generics: Option<&rg_item_tree::GenericParams>) -> String {
+    generics.map(generic_params).unwrap_or_default()
+}
+
 fn where_clause(generics: &rg_item_tree::GenericParams) -> String {
     if generics.where_predicates.is_empty() {
         return String::new();
@@ -900,6 +903,10 @@ fn where_clause(generics: &rg_item_tree::GenericParams) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+fn where_clause_opt(generics: Option<&rg_item_tree::GenericParams>) -> String {
+    generics.map(where_clause).unwrap_or_default()
 }
 
 fn visibility_prefix(visibility: &VisibilityLevel) -> String {

@@ -1,15 +1,18 @@
 use rg_arena::Arena;
 use rg_def_map::{LocalDefRef, LocalImplRef, ModuleRef};
 use rg_item_tree::{
-    ConstItem, Documentation, EnumVariantItem, FieldItem, FieldList, FunctionItem, GenericParams,
-    ItemTreeRef, Mutability, ParamKind, TypeAliasItem, TypeBound, TypeRef, VisibilityLevel,
+    Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ItemTreeRef, Mutability,
+    ParamKind, TypeBound, TypeRef, VisibilityLevel,
 };
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
-use crate::ids::{
-    AssocItemId, ConstId, EnumId, FunctionId, ImplId, ItemOwner, StaticId, StructId, TraitId,
-    TraitRef, TypeAliasId, TypeDefRef, UnionId,
+use crate::{
+    ids::{
+        AssocItemId, ConstId, EnumId, FunctionId, ImplId, ItemOwner, StaticId, StructId, TraitId,
+        TraitRef, TypeAliasId, TypeDefRef, UnionId,
+    },
+    signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
 };
 
 /// Target-local storage for semantic items.
@@ -314,13 +317,13 @@ pub struct FunctionData {
     pub name: Name,
     pub visibility: VisibilityLevel,
     pub docs: Option<Documentation>,
-    pub declaration: FunctionItem,
+    pub signature: FunctionSignature,
 }
 
 impl FunctionData {
     pub fn has_self_receiver(&self) -> bool {
-        self.declaration
-            .params
+        self.signature
+            .params()
             .first()
             .is_some_and(|param| matches!(param.kind, ParamKind::SelfParam))
     }
@@ -330,7 +333,7 @@ impl FunctionData {
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
         }
-        self.declaration.shrink_to_fit();
+        self.signature.shrink_to_fit();
     }
 }
 
@@ -345,7 +348,7 @@ pub struct TypeAliasData {
     pub name: Name,
     pub visibility: VisibilityLevel,
     pub docs: Option<Documentation>,
-    pub declaration: TypeAliasItem,
+    pub signature: TypeAliasSignature,
 }
 
 impl TypeAliasData {
@@ -354,7 +357,7 @@ impl TypeAliasData {
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
         }
-        self.declaration.shrink_to_fit();
+        self.signature.shrink_to_fit();
     }
 }
 
@@ -369,7 +372,7 @@ pub struct ConstData {
     pub name: Name,
     pub visibility: VisibilityLevel,
     pub docs: Option<Documentation>,
-    pub declaration: ConstItem,
+    pub signature: ConstSignature,
 }
 
 impl ConstData {
@@ -378,7 +381,7 @@ impl ConstData {
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
         }
-        self.declaration.shrink_to_fit();
+        self.signature.shrink_to_fit();
     }
 }
 

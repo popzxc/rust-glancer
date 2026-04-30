@@ -12,11 +12,11 @@ use rg_text::NameInterner;
 
 pub use self::item::{
     ConstItem, Documentation, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldKey,
-    FieldList, FunctionItem, GenericArg, GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode,
-    ItemTag, ItemTreeId, ItemTreeRef, ModuleItem, ModuleSource, Mutability, ParamItem, ParamKind,
-    StaticItem, StructItem, TraitItem, TypeAliasItem, TypeBound, TypePath, TypePathSegment,
-    TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
-    UsePathSegmentKind, VisibilityLevel, WherePredicate,
+    FieldList, FunctionItem, FunctionQualifiers, GenericArg, GenericParams, ImplItem, ImportAlias,
+    ItemKind, ItemNode, ItemTag, ItemTreeId, ItemTreeRef, ModuleItem, ModuleSource, Mutability,
+    ParamItem, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem, TypeBound, TypePath,
+    TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath,
+    UsePathSegment, UsePathSegmentKind, VisibilityLevel, WherePredicate,
 };
 pub use rg_text::Name;
 

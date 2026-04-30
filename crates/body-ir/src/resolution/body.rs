@@ -458,7 +458,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         let Some(function_data) = self.semantic_ir.function_data(function_ref) else {
             return BodyTy::Unknown;
         };
-        let Some(ret_ty) = &function_data.declaration.ret_ty else {
+        let Some(ret_ty) = function_data.signature.ret_ty() else {
             return BodyTy::Unit;
         };
 

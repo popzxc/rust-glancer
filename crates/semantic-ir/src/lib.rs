@@ -5,6 +5,7 @@ mod lower;
 mod memsize;
 mod package;
 mod resolution;
+mod signature;
 mod stats;
 mod target;
 
@@ -30,12 +31,13 @@ pub use self::{
     },
     package::PackageIr,
     resolution::{SemanticTypePathResolution, TypePathContext},
+    signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
     stats::SemanticIrStats,
     target::TargetIr,
 };
 pub use rg_item_tree::{
-    ConstItem, Documentation, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,
-    GenericParams, Mutability, ParamItem, TypeAliasItem, TypeBound, TypeRef, VisibilityLevel,
+    Documentation, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,
+    FunctionQualifiers, GenericParams, Mutability, ParamItem, TypeBound, TypeRef, VisibilityLevel,
     WherePredicate,
 };
 

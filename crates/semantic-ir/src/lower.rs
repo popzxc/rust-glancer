@@ -20,6 +20,7 @@ use super::{
     ids::{
         AssocItemId, ConstId, FunctionId, ImplId, ItemId, ItemOwner, StaticId, TraitId, TypeAliasId,
     },
+    signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
 };
 
 pub(super) fn build_db(item_tree: &ItemTreeDb, def_map: &DefMapDb) -> anyhow::Result<SemanticIrDb> {
@@ -338,7 +339,7 @@ impl<'a> TargetLowering<'a> {
             name: item.name.clone().unwrap_or_else(|| Name::new("<missing>")),
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
-            declaration: declaration.clone(),
+            signature: FunctionSignature::from_item(declaration),
         })
     }
 
@@ -359,7 +360,7 @@ impl<'a> TargetLowering<'a> {
             name: item.name.clone().unwrap_or_else(|| Name::new("<missing>")),
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
-            declaration: declaration.clone(),
+            signature: TypeAliasSignature::from_item(declaration),
         })
     }
 
@@ -380,7 +381,7 @@ impl<'a> TargetLowering<'a> {
             name: item.name.clone().unwrap_or_else(|| Name::new("<missing>")),
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
-            declaration: declaration.clone(),
+            signature: ConstSignature::from_item(declaration),
         })
     }
 

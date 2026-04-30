@@ -5,9 +5,9 @@
 
 use rg_body_ir::{BindingData, BodyFieldData, BodyFunctionData, BodyItemData, BodyTy};
 use rg_semantic_ir::{
-    ConstData, ConstItem, EnumData, EnumVariantData, EnumVariantItem, FieldData, FieldItem,
-    FieldKey, FieldList, FunctionData, FunctionItem, GenericParams, Mutability, ParamItem,
-    StaticData, StructData, TraitData, TypeAliasData, TypeAliasItem, TypeBound, TypeRef, UnionData,
+    ConstData, EnumData, EnumVariantData, EnumVariantItem, FieldData, FieldItem, FieldKey,
+    FieldList, FunctionData, FunctionItem, FunctionQualifiers, GenericParams, Mutability,
+    ParamItem, StaticData, StructData, TraitData, TypeAliasData, TypeBound, TypeRef, UnionData,
     VisibilityLevel, WherePredicate,
 };
 
@@ -92,7 +92,13 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         format!(
             "{}{}",
             visibility_prefix(&data.visibility),
-            function_signature(&data.name, &data.declaration)
+            function_signature_from_parts(
+                &data.name,
+                data.signature.generics(),
+                data.signature.params(),
+                data.signature.ret_ty(),
+                data.signature.qualifiers(),
+            )
         )
     }
 
@@ -100,7 +106,12 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         format!(
             "{}{}",
             visibility_prefix(&data.visibility),
-            type_alias_signature(&data.name, &data.declaration)
+            type_alias_signature(
+                &data.name,
+                data.signature.generics(),
+                data.signature.bounds(),
+                data.signature.aliased_ty(),
+            )
         )
     }
 
@@ -108,7 +119,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         format!(
             "{}{}",
             visibility_prefix(&data.visibility),
-            const_signature(&data.name, &data.declaration)
+            const_signature(&data.name, data.signature.ty())
         )
     }
 
@@ -171,37 +182,52 @@ fn visibility_prefix(visibility: &VisibilityLevel) -> String {
 }
 
 fn function_signature(name: &str, item: &FunctionItem) -> String {
+    function_signature_from_parts(
+        name,
+        Some(&item.generics),
+        &item.params,
+        item.ret_ty.as_ref(),
+        item.qualifiers,
+    )
+}
+
+fn function_signature_from_parts(
+    name: &str,
+    generics: Option<&GenericParams>,
+    params: &[ParamItem],
+    ret_ty: Option<&TypeRef>,
+    qualifiers: FunctionQualifiers,
+) -> String {
     let mut signature = String::new();
-    if item.qualifiers.is_const {
+    if qualifiers.is_const {
         signature.push_str("const ");
     }
-    if item.qualifiers.is_unsafe {
+    if qualifiers.is_unsafe {
         signature.push_str("unsafe ");
     }
-    if item.qualifiers.is_async {
+    if qualifiers.is_async {
         signature.push_str("async ");
     }
 
     signature.push_str("fn ");
     signature.push_str(name);
-    signature.push_str(&generic_params(&item.generics));
+    signature.push_str(&generic_params_opt(generics));
     signature.push('(');
     signature.push_str(
-        &item
-            .params
+        &params
             .iter()
             .map(param_signature)
             .collect::<Vec<_>>()
             .join(", "),
     );
     signature.push(')');
-    if let Some(ret_ty) = &item.ret_ty
+    if let Some(ret_ty) = ret_ty
         && !matches!(ret_ty, TypeRef::Unit)
     {
         signature.push_str(" -> ");
         signature.push_str(&ret_ty.to_string());
     }
-    signature.push_str(&where_clause(&item.generics));
+    signature.push_str(&where_clause_opt(generics));
 
     signature
 }
@@ -213,21 +239,32 @@ fn param_signature(param: &ParamItem) -> String {
     }
 }
 
-fn type_alias_signature(name: &str, item: &TypeAliasItem) -> String {
+fn type_alias_signature(
+    name: &str,
+    generics: Option<&GenericParams>,
+    bounds: &[TypeBound],
+    aliased_ty: Option<&TypeRef>,
+) -> String {
+    let bounds = if bounds.is_empty() {
+        String::new()
+    } else {
+        format!(": {}", type_bounds(bounds))
+    };
     let mut signature = format!(
-        "type {name}{}{}",
-        generic_params(&item.generics),
-        where_clause(&item.generics)
+        "type {name}{}{}{}",
+        generic_params_opt(generics),
+        bounds,
+        where_clause_opt(generics),
     );
-    if let Some(ty) = &item.aliased_ty {
+    if let Some(ty) = aliased_ty {
         signature.push_str(" = ");
         signature.push_str(&ty.to_string());
     }
     signature
 }
 
-fn const_signature(name: &str, item: &ConstItem) -> String {
-    match &item.ty {
+fn const_signature(name: &str, ty: Option<&TypeRef>) -> String {
+    match ty {
         Some(ty) => format!("const {name}: {ty}"),
         None => format!("const {name}: _"),
     }
@@ -383,6 +420,10 @@ fn generic_params(generics: &GenericParams) -> String {
     }
 }
 
+fn generic_params_opt(generics: Option<&GenericParams>) -> String {
+    generics.map(generic_params).unwrap_or_default()
+}
+
 fn where_clause(generics: &GenericParams) -> String {
     if generics.where_predicates.is_empty() {
         return String::new();
@@ -397,6 +438,10 @@ fn where_clause(generics: &GenericParams) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+fn where_clause_opt(generics: Option<&GenericParams>) -> String {
+    generics.map(where_clause).unwrap_or_default()
 }
 
 fn where_predicate(predicate: &WherePredicate) -> String {

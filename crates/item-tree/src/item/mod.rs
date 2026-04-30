@@ -6,8 +6,8 @@ use rg_text::Name;
 pub use self::{
     decl::{
         ConstItem, EnumItem, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,
-        GenericParams, ImplItem, ParamItem, ParamKind, StaticItem, StructItem, TraitItem,
-        TypeAliasItem, UnionItem, WherePredicate,
+        FunctionQualifiers, GenericParams, ImplItem, ParamItem, ParamKind, StaticItem, StructItem,
+        TraitItem, TypeAliasItem, UnionItem, WherePredicate,
     },
     docs::Documentation,
     import::{
@@ -20,7 +20,7 @@ pub use self::{
     visibility::VisibilityLevel,
 };
 
-pub(crate) use self::decl::{ConstParamData, FunctionQualifiers, LifetimeParamData, TypeParamData};
+pub(crate) use self::decl::{ConstParamData, LifetimeParamData, TypeParamData};
 
 mod decl;
 mod docs;

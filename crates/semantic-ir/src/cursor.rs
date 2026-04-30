@@ -184,13 +184,15 @@ impl SignatureCursorScanner<'_> {
             let Some(context) = self.owner_context(data.owner) else {
                 continue;
             };
-            self.scan_generic_params(context, &data.declaration.generics);
-            for param in &data.declaration.params {
+            if let Some(generics) = data.signature.generics() {
+                self.scan_generic_params(context, generics);
+            }
+            for param in data.signature.params() {
                 if let Some(ty) = &param.ty {
                     self.push_type_ref(context, ty);
                 }
             }
-            if let Some(ret_ty) = &data.declaration.ret_ty {
+            if let Some(ret_ty) = data.signature.ret_ty() {
                 self.push_type_ref(context, ret_ty);
             }
         }
@@ -204,9 +206,11 @@ impl SignatureCursorScanner<'_> {
             let Some(context) = self.owner_context(data.owner) else {
                 continue;
             };
-            self.scan_generic_params(context, &data.declaration.generics);
-            self.scan_type_bounds(context, &data.declaration.bounds);
-            if let Some(ty) = &data.declaration.aliased_ty {
+            if let Some(generics) = data.signature.generics() {
+                self.scan_generic_params(context, generics);
+            }
+            self.scan_type_bounds(context, data.signature.bounds());
+            if let Some(ty) = data.signature.aliased_ty() {
                 self.push_type_ref(context, ty);
             }
         }
@@ -220,8 +224,7 @@ impl SignatureCursorScanner<'_> {
             let Some(context) = self.owner_context(data.owner) else {
                 continue;
             };
-            self.scan_generic_params(context, &data.declaration.generics);
-            if let Some(ty) = &data.declaration.ty {
+            if let Some(ty) = data.signature.ty() {
                 self.push_type_ref(context, ty);
             }
         }

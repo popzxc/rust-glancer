@@ -1,12 +1,13 @@
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    AssocItemId, ConstData, ConstId, ConstRef, EnumData, EnumId, EnumVariantRef, FieldRef,
-    FunctionData, FunctionId, FunctionRef, ImplData, ImplId, ImplRef, ItemId, ItemOwner, ItemStore,
-    PackageIr, SemanticIrDb, SemanticIrStats, SemanticTypePathResolution, StaticData, StaticId,
-    StaticRef, StructData, StructId, TargetIr, TraitApplicability, TraitId, TraitImplRef, TraitRef,
-    TypeAliasData, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, TypePathContext, UnionData,
-    UnionId,
+    AssocItemId, ConstData, ConstId, ConstRef, ConstSignature, EnumData, EnumId, EnumVariantRef,
+    FieldRef, FunctionData, FunctionId, FunctionRef, FunctionSignature, ImplData, ImplId, ImplRef,
+    ItemId, ItemOwner, ItemStore, PackageIr, SemanticIrDb, SemanticIrStats,
+    SemanticTypePathResolution, StaticData, StaticId, StaticRef, StructData, StructId, TargetIr,
+    TraitApplicability, TraitId, TraitImplRef, TraitRef, TypeAliasData, TypeAliasId, TypeAliasRef,
+    TypeAliasSignature, TypeDefId, TypeDefRef, TypePathContext, UnionData, UnionId,
+    signature::SignatureGenerics,
 };
 
 macro_rules! record_fields {
@@ -134,54 +135,54 @@ impl MemorySize for ImplData {
 impl MemorySize for FunctionData {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         record_fields!(
-            recorder,
-            self,
-            local_def,
-            source,
-            span,
-            name_span,
-            owner,
-            name,
-            visibility,
-            docs,
-            declaration,
+            recorder, self, local_def, source, span, name_span, owner, name, visibility, docs,
+            signature,
         );
+    }
+}
+
+impl MemorySize for FunctionSignature {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        record_fields!(recorder, self, generics, params, ret_ty, qualifiers);
+    }
+}
+
+impl MemorySize for SignatureGenerics {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Empty => {}
+            Self::Present(params) => params.record_memory_children(recorder),
+        }
     }
 }
 
 impl MemorySize for TypeAliasData {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         record_fields!(
-            recorder,
-            self,
-            local_def,
-            source,
-            span,
-            name_span,
-            owner,
-            name,
-            visibility,
-            docs,
-            declaration,
+            recorder, self, local_def, source, span, name_span, owner, name, visibility, docs,
+            signature,
         );
+    }
+}
+
+impl MemorySize for TypeAliasSignature {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        record_fields!(recorder, self, generics, bounds, aliased_ty);
     }
 }
 
 impl MemorySize for ConstData {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         record_fields!(
-            recorder,
-            self,
-            local_def,
-            source,
-            span,
-            name_span,
-            owner,
-            name,
-            visibility,
-            docs,
-            declaration,
+            recorder, self, local_def, source, span, name_span, owner, name, visibility, docs,
+            signature,
         );
+    }
+}
+
+impl MemorySize for ConstSignature {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        record_fields!(recorder, self, ty);
     }
 }
 
