@@ -3,11 +3,10 @@
 //! A clean build is the special case of shared finalization where every package is dirty and
 //! there is no frozen baseline to read from.
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 
 use rg_item_tree::ItemTreeDb;
+use rg_package_store::PackageStore;
 use rg_parse;
 use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
@@ -64,6 +63,6 @@ pub(crate) fn build_db(
         .collect::<Vec<_>>();
 
     Ok(DefMapDb {
-        packages: rg_arena::Arena::from_vec(packages.into_iter().map(Arc::new).collect()),
+        packages: PackageStore::from_vec(packages),
     })
 }

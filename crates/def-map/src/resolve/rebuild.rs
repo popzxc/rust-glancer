@@ -4,8 +4,6 @@
 //! state from that collection and clean state from the previous frozen `DefMapDb`, then this
 //! module swaps only rebuilt package payloads into a cloned database.
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 
 use rg_item_tree::ItemTreeDb;
@@ -104,13 +102,14 @@ pub(crate) fn rebuild_packages(
             )
         })?;
         let rebuilt = freeze_package_states(parse_package, &package_states);
-        let package = next.packages.get_mut(package_slot).with_context(|| {
-            format!(
-                "while attempting to replace def-map package {}",
-                package_slot.0
-            )
-        })?;
-        *package = Arc::new(rebuilt);
+        next.packages
+            .replace(package_slot, rebuilt)
+            .with_context(|| {
+                format!(
+                    "while attempting to replace def-map package {}",
+                    package_slot.0
+                )
+            })?;
     }
 
     Ok(next)

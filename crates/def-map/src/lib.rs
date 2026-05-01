@@ -9,12 +9,12 @@ mod path_resolution;
 mod resolve;
 mod scope;
 
-use std::sync::Arc;
-
 use rg_arena::Arena;
 use rg_item_tree::ItemTreeDb;
+use rg_package_store::PackageStore;
 use rg_parse::{self, TargetId};
 use rg_text::NameInterner;
+pub use rg_workspace::PackageSlot;
 use rg_workspace::WorkspaceMetadata;
 
 pub use self::cursor::DefMapCursorCandidate;
@@ -23,7 +23,7 @@ pub use self::{
     data::{DefMap, LocalDefData, LocalDefKind, LocalImplData, ModuleData, ModuleOrigin},
     ids::{
         DefId, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
-        ModuleRef, PackageSlot, TargetRef,
+        ModuleRef, TargetRef,
     },
     import::{ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath},
     path::{Path, PathSegment},
@@ -34,7 +34,7 @@ pub use self::{
 /// Frozen def maps for all parsed packages and targets.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DefMapDb {
-    packages: Arena<PackageSlot, Arc<Package>>,
+    packages: PackageStore<Package>,
 }
 
 impl DefMapDb {
@@ -89,7 +89,7 @@ impl DefMapDb {
 
     /// Returns all package-level def-map sets.
     pub fn packages(&self) -> impl ExactSizeIterator<Item = &Package> + '_ {
-        self.packages.iter().map(Arc::as_ref)
+        self.packages.iter()
     }
 
     pub fn package_count(&self) -> usize {
@@ -134,7 +134,7 @@ impl DefMapDb {
 
     /// Returns one package def-map set by package slot.
     pub fn package(&self, package_slot: PackageSlot) -> Option<&Package> {
-        self.packages.get(package_slot).map(Arc::as_ref)
+        self.packages.get(package_slot)
     }
 
     /// Returns one target def map by project-wide target reference.
@@ -272,19 +272,15 @@ impl DefMapDb {
 
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
-        for package in self.packages.iter_mut() {
-            if let Some(package) = Arc::get_mut(package) {
-                package.shrink_to_fit();
-            }
+        for package in self.packages.iter_unique_mut() {
+            package.shrink_to_fit();
         }
     }
 
     fn shrink_packages(&mut self, packages: &[PackageSlot]) {
         for package in packages {
-            if let Some(package) = self.packages.get_mut(*package) {
-                if let Some(package) = Arc::get_mut(package) {
-                    package.shrink_to_fit();
-                }
+            if let Some(package) = self.packages.get_unique_mut(*package) {
+                package.shrink_to_fit();
             }
         }
     }

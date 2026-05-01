@@ -379,6 +379,13 @@ impl PackageId {
     }
 }
 
+/// Stable slot of one package inside a normalized workspace metadata snapshot.
+///
+/// Slots are dense and snapshot-local. Rebuild code must rebuild the whole project when Cargo
+/// metadata changes package ordering or membership, so analysis IDs never cross metadata graphs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PackageSlot(pub usize);
+
 /// Where one normalized package came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackageOrigin {

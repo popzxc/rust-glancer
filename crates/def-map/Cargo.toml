@@ -15,6 +15,7 @@ anyhow.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 rg_arena = { workspace = true, features = ["memsize"] }
 rg_memsize.workspace = true
+rg_package_store.workspace = true
 rg_item_tree.workspace = true
 rg_parse.workspace = true
 rg_text = { workspace = true, features = ["memsize"] }

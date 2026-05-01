@@ -4,7 +4,7 @@ use crate::{
     DefId, DefMap, DefMapDb, DefMapStats, ImportBinding, ImportData, ImportId, ImportKind,
     ImportPath, ImportRef, ImportSourcePath, LocalDefData, LocalDefId, LocalDefKind, LocalDefRef,
     LocalImplData, LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleOrigin, ModuleRef,
-    ModuleScope, Package, PackageSlot, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
+    ModuleScope, Package, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
     import::ImportSourcePathSegment, scope::ScopeNameEntry,
 };
 
@@ -223,10 +223,6 @@ impl MemorySize for LocalImplId {
 }
 
 impl MemorySize for ImportId {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for PackageSlot {
     fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
 }
 

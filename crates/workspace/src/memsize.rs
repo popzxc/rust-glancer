@@ -1,8 +1,8 @@
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    Package, PackageDependency, PackageId, PackageOrigin, PackageSource, RustEdition, SysrootCrate,
-    SysrootSources, Target, TargetKind, WorkspaceMetadata,
+    Package, PackageDependency, PackageId, PackageOrigin, PackageSlot, PackageSource, RustEdition,
+    SysrootCrate, SysrootSources, Target, TargetKind, WorkspaceMetadata,
 };
 
 macro_rules! record_fields {
@@ -25,6 +25,10 @@ impl MemorySize for PackageId {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         self.0.record_memory_children(recorder);
     }
+}
+
+impl MemorySize for PackageSlot {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
 }
 
 impl MemorySize for PackageOrigin {

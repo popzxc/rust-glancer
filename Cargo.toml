@@ -13,6 +13,7 @@ members = [
   "crates/text",
   "crates/arena",
   "crates/memsize",
+  "crates/package-store",
   "crates/test-fixture",
 ]
 exclude = [
@@ -63,4 +64,5 @@ rg_project = { path = "crates/project" }
 rg_text = { path = "crates/text" }
 rg_arena = { path = "crates/arena" }
 rg_memsize = { path = "crates/memsize" }
+rg_package_store = { path = "crates/package-store" }
 test_fixture = { path = "crates/test-fixture" }

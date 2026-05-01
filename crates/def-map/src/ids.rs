@@ -1,5 +1,7 @@
 use rg_parse::TargetId;
 
+use rg_workspace::PackageSlot;
+
 macro_rules! impl_arena_id {
     ($($id:ty),+ $(,)?) => {
         $(
@@ -32,11 +34,7 @@ pub struct LocalImplId(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ImportId(pub usize);
 
-/// Stable identifier of one analyzed package inside a project analysis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PackageSlot(pub usize);
-
-impl_arena_id!(ModuleId, LocalDefId, LocalImplId, ImportId, PackageSlot);
+impl_arena_id!(ModuleId, LocalDefId, LocalImplId, ImportId);
 
 /// Stable reference to one target across the whole project analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

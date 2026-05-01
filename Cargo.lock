@@ -701,6 +701,7 @@ dependencies = [
  "rg_def_map",
  "rg_item_tree",
  "rg_memsize",
+ "rg_package_store",
  "rg_parse",
  "rg_semantic_ir",
  "rg_text",
@@ -719,6 +720,7 @@ dependencies = [
  "rg_arena",
  "rg_item_tree",
  "rg_memsize",
+ "rg_package_store",
  "rg_parse",
  "rg_text",
  "rg_workspace",
@@ -767,6 +769,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_package_store"
+version = "0.1.0"
+dependencies = [
+ "rg_memsize",
+ "rg_workspace",
+]
+
+[[package]]
 name = "rg_parse"
 version = "0.1.0"
 dependencies = [
@@ -808,6 +818,7 @@ dependencies = [
  "rg_def_map",
  "rg_item_tree",
  "rg_memsize",
+ "rg_package_store",
  "rg_parse",
  "rg_text",
  "rg_workspace",

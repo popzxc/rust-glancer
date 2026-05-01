@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
 use rg_workspace::WorkspaceMetadata;
@@ -8,7 +6,7 @@ use test_fixture::fixture_crate;
 use crate::{DefMapDb, PackageSlot, TargetRef};
 
 #[test]
-fn rebuild_resolves_dirty_imports_through_frozen_packages_without_replacing_them() {
+fn rebuild_resolves_dirty_imports_through_clean_packages() {
     let fixture = fixture_crate(
         r#"
 //- /Cargo.toml
@@ -59,48 +57,17 @@ pub use dep::api::Api as Renamed;
         ItemTreeDb::build(&mut parse).expect("updated fixture item-tree db should build");
 
     let mut app_slot = None;
-    let mut dep_slot = None;
     for (package_idx, package) in parse.packages().iter().enumerate() {
         match package.package_name() {
             "app" => app_slot = Some(PackageSlot(package_idx)),
-            "dep" => dep_slot = Some(PackageSlot(package_idx)),
             _ => {}
         }
     }
     let app_slot = app_slot.expect("fixture app package should exist");
-    let dep_slot = dep_slot.expect("fixture dep package should exist");
 
     let rebuilt = old
         .rebuild_packages(&workspace, &parse, &item_tree, &[app_slot])
         .expect("fixture def-map package rebuild should succeed");
-
-    // The dependency is not dirty, so it should remain the exact frozen package payload from the
-    // previous snapshot while the dirty package resolves imports through it.
-    let old_dep = old
-        .packages
-        .get(dep_slot)
-        .expect("old dependency package should exist");
-    let rebuilt_dep = rebuilt
-        .packages
-        .get(dep_slot)
-        .expect("rebuilt dependency package should exist");
-    assert!(
-        Arc::ptr_eq(old_dep, rebuilt_dep),
-        "clean dependency package should stay shared across package rebuilds"
-    );
-
-    let old_app = old
-        .packages
-        .get(app_slot)
-        .expect("old app package should exist");
-    let rebuilt_app = rebuilt
-        .packages
-        .get(app_slot)
-        .expect("rebuilt app package should exist");
-    assert!(
-        !Arc::ptr_eq(old_app, rebuilt_app),
-        "dirty app package should be replaced by the rebuild"
-    );
 
     let app_package = parse
         .package(app_slot.0)

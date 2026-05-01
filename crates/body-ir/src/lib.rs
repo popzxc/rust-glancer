@@ -15,12 +15,10 @@ mod ty;
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 
-use rg_arena::Arena;
 use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
+use rg_package_store::PackageStore;
 use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TraitApplicability};
 use rg_text::NameInterner;
 
@@ -49,7 +47,7 @@ pub use self::{
 /// Body-level IR for all analyzed packages and targets.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BodyIrDb {
-    packages: Arena<PackageSlot, Arc<PackageBodies>>,
+    packages: PackageStore<PackageBodies>,
 }
 
 impl BodyIrDb {
@@ -149,10 +147,9 @@ impl BodyIrDb {
                 target_count,
                 interner,
             )?;
-            let slot = next.packages.get_mut(*package).with_context(|| {
+            next.packages.replace(*package, rebuilt).with_context(|| {
                 format!("while attempting to replace body IR package {}", package.0)
             })?;
-            *slot = Arc::new(rebuilt);
         }
 
         resolution::resolve_bodies_for_packages(&mut next, def_map, semantic_ir, &packages);
@@ -162,25 +159,21 @@ impl BodyIrDb {
 
     pub(crate) fn new(packages: Vec<PackageBodies>) -> Self {
         Self {
-            packages: Arena::from_vec(packages.into_iter().map(Arc::new).collect()),
+            packages: PackageStore::from_vec(packages),
         }
     }
 
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
-        for package in self.packages.iter_mut() {
-            if let Some(package) = Arc::get_mut(package) {
-                package.shrink_to_fit();
-            }
+        for package in self.packages.iter_unique_mut() {
+            package.shrink_to_fit();
         }
     }
 
     fn shrink_packages(&mut self, packages: &[PackageSlot]) {
         for package in packages {
-            if let Some(package) = self.packages.get_mut(*package) {
-                if let Some(package) = Arc::get_mut(package) {
-                    package.shrink_to_fit();
-                }
+            if let Some(package) = self.packages.get_unique_mut(*package) {
+                package.shrink_to_fit();
             }
         }
     }
@@ -213,7 +206,7 @@ impl BodyIrDb {
 
     /// Returns all package-level body IR sets.
     pub fn packages(&self) -> impl ExactSizeIterator<Item = &PackageBodies> + '_ {
-        self.packages.iter().map(Arc::as_ref)
+        self.packages.iter()
     }
 
     pub fn package_count(&self) -> usize {
@@ -222,7 +215,7 @@ impl BodyIrDb {
 
     /// Returns one package by package slot.
     pub fn package(&self, package: PackageSlot) -> Option<&PackageBodies> {
-        self.packages.get(package).map(Arc::as_ref)
+        self.packages.get(package)
     }
 
     /// Returns one target body IR by project-wide target reference.
@@ -361,7 +354,7 @@ impl BodyIrDb {
     }
 
     pub(crate) fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageBodies> {
-        self.packages.get_mut(package).map(Arc::make_mut)
+        self.packages.make_mut(package)
     }
 }
 
