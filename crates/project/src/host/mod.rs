@@ -7,14 +7,14 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 
 use rg_analysis::Analysis;
-use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
+use rg_body_ir::BodyIrDb;
 use rg_def_map::{DefMapDb, PackageSlot, TargetRef};
 use rg_parse::{FileId, ParseDb};
 use rg_semantic_ir::SemanticIrDb;
 use rg_workspace::WorkspaceMetadata;
 
 use self::workspace_graph::WorkspaceGraphChanges;
-use crate::Project;
+use crate::{Project, ProjectBuildOptions};
 
 /// Mutable owner for the current analysis state.
 ///
@@ -30,18 +30,18 @@ pub struct AnalysisHost {
 }
 
 impl AnalysisHost {
-    /// Builds a host using the default editor-oriented Body IR policy.
+    /// Builds a host using default project build options.
     pub fn build(workspace: WorkspaceMetadata) -> anyhow::Result<Self> {
-        Self::build_with_body_ir_policy(workspace, BodyIrBuildPolicy::default())
+        Self::build_with_options(workspace, ProjectBuildOptions::default())
     }
 
-    /// Builds a host using an explicit Body IR policy.
-    pub fn build_with_body_ir_policy(
+    /// Builds a host using explicit project build options.
+    pub fn build_with_options(
         workspace: WorkspaceMetadata,
-        body_ir_policy: BodyIrBuildPolicy,
+        build_options: ProjectBuildOptions,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            project: Project::build_with_body_ir_policy(workspace, body_ir_policy)
+            project: Project::build_with_options(workspace, build_options)
                 .context("while attempting to build analysis host")?,
         })
     }

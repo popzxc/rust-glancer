@@ -9,13 +9,24 @@ use rg_semantic_ir::SemanticIrDb;
 use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
-use crate::{BuildProfile, BuildProfileOptions, profile::BuildProfiler};
+use crate::{
+    BuildProfile, BuildProfileOptions, PackageResidencyPlan, PackageResidencyPolicy,
+    profile::BuildProfiler,
+};
+
+/// Configuration that affects how a project snapshot is built and retained.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ProjectBuildOptions {
+    pub body_ir_policy: BodyIrBuildPolicy,
+    pub package_residency_policy: PackageResidencyPolicy,
+}
 
 /// Fully built project pipeline state.
 #[derive(Debug, Clone)]
 pub struct Project {
     pub(crate) workspace: WorkspaceMetadata,
-    pub(crate) body_ir_policy: BodyIrBuildPolicy,
+    pub(crate) build_options: ProjectBuildOptions,
+    pub(crate) package_residency: PackageResidencyPlan,
     pub(crate) names: NameInterner,
     pub(crate) parse: ParseDb,
     pub(crate) def_map: DefMapDb,
@@ -26,21 +37,24 @@ pub struct Project {
 impl Project {
     /// Builds every analysis phase for one metadata graph.
     pub fn build(workspace: WorkspaceMetadata) -> anyhow::Result<Self> {
-        Self::build_with_body_ir_policy(workspace, BodyIrBuildPolicy::default())
+        Self::build_with_options(workspace, ProjectBuildOptions::default())
     }
 
-    /// Builds every analysis phase using an explicit Body IR lowering policy.
-    pub fn build_with_body_ir_policy(
+    /// Builds every analysis phase using explicit project build options.
+    pub fn build_with_options(
         workspace: WorkspaceMetadata,
-        body_ir_policy: BodyIrBuildPolicy,
+        build_options: ProjectBuildOptions,
     ) -> anyhow::Result<Self> {
         let mut profiler = BuildProfiler::disabled();
         let (names, parse, def_map, semantic_ir, body_ir) =
-            Self::build_phases(&workspace, body_ir_policy, &mut profiler)?;
+            Self::build_phases(&workspace, build_options.body_ir_policy, &mut profiler)?;
+        let package_residency =
+            PackageResidencyPlan::build(&workspace, build_options.package_residency_policy);
 
         Ok(Self {
             workspace,
-            body_ir_policy,
+            build_options,
+            package_residency,
             names,
             parse,
             def_map,
@@ -52,24 +66,19 @@ impl Project {
     /// Builds every analysis phase and returns coarse build-time profiling checkpoints.
     pub fn build_profiled(
         workspace: WorkspaceMetadata,
-        options: BuildProfileOptions,
-    ) -> anyhow::Result<(Self, BuildProfile)> {
-        Self::build_profiled_with_body_ir_policy(workspace, BodyIrBuildPolicy::default(), options)
-    }
-
-    /// Builds every analysis phase with explicit Body IR policy and profiling options.
-    pub fn build_profiled_with_body_ir_policy(
-        workspace: WorkspaceMetadata,
-        body_ir_policy: BodyIrBuildPolicy,
+        build_options: ProjectBuildOptions,
         options: BuildProfileOptions,
     ) -> anyhow::Result<(Self, BuildProfile)> {
         let mut profiler = BuildProfiler::new(options);
         let (names, parse, def_map, semantic_ir, body_ir) =
-            Self::build_phases(&workspace, body_ir_policy, &mut profiler)?;
+            Self::build_phases(&workspace, build_options.body_ir_policy, &mut profiler)?;
+        let package_residency =
+            PackageResidencyPlan::build(&workspace, build_options.package_residency_policy);
 
         let project = Self {
             workspace,
-            body_ir_policy,
+            build_options,
+            package_residency,
             names,
             parse,
             def_map,
@@ -120,7 +129,7 @@ impl Project {
                 &self.parse,
                 &def_map,
                 &semantic_ir,
-                self.body_ir_policy,
+                self.build_options.body_ir_policy,
                 packages,
                 &mut self.names,
             )
@@ -256,6 +265,11 @@ impl Project {
     /// Returns the normalized workspace metadata this project was built from.
     pub fn workspace(&self) -> &WorkspaceMetadata {
         &self.workspace
+    }
+
+    /// Returns package residency decisions for this project snapshot.
+    pub fn package_residency_plan(&self) -> &PackageResidencyPlan {
+        &self.package_residency
     }
 
     /// Returns the parse database built for this project.

@@ -1,7 +1,7 @@
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    Package, PackageDependency, PackageId, PackageOrigin, RustEdition, SysrootCrate,
+    Package, PackageDependency, PackageId, PackageOrigin, PackageSource, RustEdition, SysrootCrate,
     SysrootSources, Target, TargetKind, WorkspaceMetadata,
 };
 
@@ -36,6 +36,10 @@ impl MemorySize for PackageOrigin {
     }
 }
 
+impl MemorySize for PackageSource {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+}
+
 impl MemorySize for SysrootCrate {
     fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
 }
@@ -59,6 +63,7 @@ impl MemorySize for Package {
             name,
             edition,
             origin,
+            source,
             is_workspace_member,
             manifest_path,
             targets,

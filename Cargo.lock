@@ -784,6 +784,7 @@ name = "rg_project"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cargo_metadata",
  "expect-test",
  "rg_analysis",
  "rg_body_ir",

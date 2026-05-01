@@ -22,9 +22,9 @@ pub(super) fn rebuild_workspace_graph(
     let workspace = WorkspaceMetadata::from_manifest_path(&manifest_path)
         .with_context(|| format!("while attempting to load {}", manifest_path.display()))?
         .with_sysroot_sources(sysroot);
-    let body_ir_policy = host.project.body_ir_policy;
+    let build_options = host.project.build_options;
 
-    host.project = Project::build_with_body_ir_policy(workspace, body_ir_policy)
+    host.project = Project::build_with_options(workspace, build_options)
         .context("while attempting to build refreshed analysis project")?;
 
     let changed_files = changed_source_files_for_saved_paths(host, changes);

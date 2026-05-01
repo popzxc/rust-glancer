@@ -1,7 +1,8 @@
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    AnalysisChangeSummary, AnalysisHost, ChangedFile, FileContext, Project, SavedFileChange,
+    AnalysisChangeSummary, AnalysisHost, ChangedFile, FileContext, PackageResidency,
+    PackageResidencyPlan, PackageResidencyPolicy, Project, ProjectBuildOptions, SavedFileChange,
 };
 
 macro_rules! record_fields {
@@ -20,7 +21,8 @@ impl MemorySize for Project {
             recorder,
             self,
             workspace,
-            body_ir_policy,
+            build_options,
+            package_residency,
             names,
             parse,
             def_map,
@@ -28,6 +30,26 @@ impl MemorySize for Project {
             body_ir,
         );
     }
+}
+
+impl MemorySize for ProjectBuildOptions {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        record_fields!(recorder, self, body_ir_policy, package_residency_policy);
+    }
+}
+
+impl MemorySize for PackageResidencyPolicy {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+}
+
+impl MemorySize for PackageResidencyPlan {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        record_fields!(recorder, self, policy, packages);
+    }
+}
+
+impl MemorySize for PackageResidency {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
 }
 
 impl MemorySize for AnalysisHost {

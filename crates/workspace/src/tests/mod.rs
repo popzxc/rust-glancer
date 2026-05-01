@@ -5,7 +5,7 @@ use std::{collections::BTreeSet, fs};
 use expect_test::expect;
 use test_fixture::fixture_crate;
 
-use crate::{TargetKind, WorkspaceMetadata};
+use crate::{PackageSource, TargetKind, WorkspaceMetadata, WorkspaceMetadataError};
 
 #[test]
 fn dumps_normalized_workspace_metadata() {
@@ -106,6 +106,7 @@ pub fn dev_helper() {}
 
             package app [member]
             manifest crates/app/Cargo.toml
+            source workspace
             edition 2024
             targets
             - app [lib] crates/app/src/lib.rs
@@ -121,6 +122,7 @@ pub fn dev_helper() {}
 
             package build_helper [member]
             manifest vendor/build_helper/Cargo.toml
+            source workspace
             edition 2024
             targets
             - build_helper [lib] vendor/build_helper/src/lib.rs
@@ -129,6 +131,7 @@ pub fn dev_helper() {}
 
             package dep [member]
             manifest crates/dep/Cargo.toml
+            source workspace
             edition 2024
             targets
             - dep [lib] crates/dep/src/lib.rs
@@ -137,6 +140,7 @@ pub fn dev_helper() {}
 
             package dev_helper [member]
             manifest vendor/dev_helper/Cargo.toml
+            source workspace
             edition 2024
             targets
             - dev_helper [lib] vendor/dev_helper/src/lib.rs
@@ -145,6 +149,7 @@ pub fn dev_helper() {}
 
             package helper [member]
             manifest vendor/helper/Cargo.toml
+            source workspace
             edition 2024
             targets
             - helper [lib] vendor/helper/src/lib.rs
@@ -264,6 +269,91 @@ fn main() {}
 }
 
 #[test]
+fn classifies_known_cargo_package_sources() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "source_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Lib;
+"#,
+    );
+    let cases = [
+        (None, PackageSource::Path),
+        (Some("path+file:///tmp/source_fixture"), PackageSource::Path),
+        (
+            Some("registry+https://github.com/rust-lang/crates.io-index"),
+            PackageSource::Registry,
+        ),
+        (
+            Some("sparse+https://index.crates.io/"),
+            PackageSource::SparseRegistry,
+        ),
+        (Some("git+https://example.com/repo.git"), PackageSource::Git),
+        (
+            Some("local-registry+file:///tmp/registry"),
+            PackageSource::LocalRegistry,
+        ),
+        (
+            Some("directory+file:///tmp/vendor"),
+            PackageSource::Directory,
+        ),
+    ];
+
+    for (source, expected_source) in cases {
+        let mut metadata = fixture.metadata();
+        metadata.workspace_members.clear();
+        metadata.packages[0].source = source.map(|source| cargo_metadata::Source {
+            repr: source.to_string(),
+        });
+
+        let workspace =
+            WorkspaceMetadata::from_cargo(metadata).expect("known package source should normalize");
+        assert_eq!(
+            workspace.packages()[0].source,
+            expected_source,
+            "source {source:?} should be classified as {expected_source}"
+        );
+    }
+}
+
+#[test]
+fn rejects_unknown_cargo_package_sources() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "unknown_source_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Lib;
+"#,
+    );
+    let mut metadata = fixture.metadata();
+    metadata.workspace_members.clear();
+    metadata.packages[0].source = Some(cargo_metadata::Source {
+        repr: "mystery+https://example.com".to_string(),
+    });
+
+    let error =
+        WorkspaceMetadata::from_cargo(metadata).expect_err("unknown source should be rejected");
+
+    assert!(
+        matches!(
+            error,
+            WorkspaceMetadataError::UnsupportedPackageSource { .. }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn injects_sysroot_packages_as_normalized_dependencies() {
     utils::check_workspace_metadata_with_sysroot(
         r#"
@@ -296,6 +386,7 @@ pub mod marker {
 
             package alloc [sysroot]
             manifest sysroot/library/alloc/Cargo.toml
+            source sysroot
             edition 2024
             targets
             - alloc [lib] sysroot/library/alloc/src/lib.rs
@@ -304,6 +395,7 @@ pub mod marker {
 
             package app [member]
             manifest Cargo.toml
+            source workspace
             edition 2024
             targets
             - app [lib] src/lib.rs
@@ -314,6 +406,7 @@ pub mod marker {
 
             package core [sysroot]
             manifest sysroot/library/core/Cargo.toml
+            source sysroot
             edition 2024
             targets
             - core [lib] sysroot/library/core/src/lib.rs
@@ -322,6 +415,7 @@ pub mod marker {
 
             package std [sysroot]
             manifest sysroot/library/std/Cargo.toml
+            source sysroot
             edition 2024
             targets
             - std [lib] sysroot/library/std/src/lib.rs

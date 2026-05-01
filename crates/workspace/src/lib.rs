@@ -35,12 +35,13 @@ impl WorkspaceMetadata {
             .exec()
             .map_err(WorkspaceMetadataError::CargoMetadata)?;
 
-        Self::from_cargo(metadata).map_err(WorkspaceMetadataError::Path)
+        Self::from_cargo(metadata)
     }
 
     /// Lowers raw `cargo metadata` output into the project's normalized metadata model.
-    pub fn from_cargo(metadata: cargo_metadata::Metadata) -> io::Result<Self> {
-        let workspace_root = canonicalize_path(metadata.workspace_root.as_std_path())?;
+    pub fn from_cargo(metadata: cargo_metadata::Metadata) -> WorkspaceMetadataResult<Self> {
+        let workspace_root = canonicalize_path(metadata.workspace_root.as_std_path())
+            .map_err(WorkspaceMetadataError::Path)?;
         let workspace_members = metadata
             .workspace_members
             .iter()
@@ -59,13 +60,19 @@ impl WorkspaceMetadata {
                 let package_id = PackageId::from_cargo(&package.id);
                 let is_workspace_member = workspace_members.contains(&package_id);
                 let raw_manifest_path = package.manifest_path.as_std_path();
-                let manifest_path = canonicalize_path(raw_manifest_path)?;
+                let manifest_path =
+                    canonicalize_path(raw_manifest_path).map_err(WorkspaceMetadataError::Path)?;
                 let raw_package_root = raw_manifest_path
                     .parent()
                     .expect("Cargo package manifest path should have a parent directory");
                 let package_root = manifest_path
                     .parent()
                     .expect("canonical package manifest path should have a parent directory");
+                let source = PackageSource::from_cargo_source(
+                    &package_id,
+                    is_workspace_member,
+                    package.source.as_ref(),
+                )?;
                 let targets = package
                     .targets
                     .iter()
@@ -76,10 +83,11 @@ impl WorkspaceMetadata {
                             package_root,
                             is_workspace_member,
                         )
-                        .transpose()
                     })
+                    .collect::<WorkspaceMetadataResult<Vec<_>>>()?
+                    .into_iter()
                     .flatten()
-                    .collect::<io::Result<Vec<_>>>()?;
+                    .collect();
 
                 Ok(Package {
                     id: package_id.clone(),
@@ -90,6 +98,7 @@ impl WorkspaceMetadata {
                     } else {
                         PackageOrigin::Dependency
                     },
+                    source,
                     is_workspace_member,
                     manifest_path,
                     targets,
@@ -99,7 +108,7 @@ impl WorkspaceMetadata {
                         .unwrap_or_default(),
                 })
             })
-            .collect::<io::Result<Vec<_>>>()?;
+            .collect::<WorkspaceMetadataResult<Vec<_>>>()?;
 
         let package_by_id = packages
             .iter()
@@ -192,6 +201,7 @@ impl WorkspaceMetadata {
             name: krate.name().to_string(),
             edition: RustEdition::Edition2024,
             origin: PackageOrigin::Sysroot(krate),
+            source: PackageSource::Sysroot,
             is_workspace_member: false,
             manifest_path: sources.library_root().join(krate.name()).join("Cargo.toml"),
             targets: vec![Target {
@@ -314,6 +324,7 @@ pub type WorkspaceMetadataResult<T> = Result<T, WorkspaceMetadataError>;
 pub enum WorkspaceMetadataError {
     CargoMetadata(cargo_metadata::Error),
     Path(io::Error),
+    UnsupportedPackageSource { package: PackageId, source: String },
 }
 
 impl fmt::Display for WorkspaceMetadataError {
@@ -323,6 +334,10 @@ impl fmt::Display for WorkspaceMetadataError {
                 write!(f, "while attempting to load Cargo metadata: {error}")
             }
             Self::Path(error) => write!(f, "{error}"),
+            Self::UnsupportedPackageSource { package, source } => write!(
+                f,
+                "unsupported Cargo source `{source}` for package {package}"
+            ),
         }
     }
 }
@@ -332,6 +347,7 @@ impl Error for WorkspaceMetadataError {
         match self {
             Self::CargoMetadata(error) => Some(error),
             Self::Path(error) => Some(error),
+            Self::UnsupportedPackageSource { .. } => None,
         }
     }
 }
@@ -374,6 +390,63 @@ pub enum PackageOrigin {
 impl PackageOrigin {
     pub fn is_sysroot(&self) -> bool {
         matches!(self, Self::Sysroot(_))
+    }
+}
+
+/// Cargo source kind used to classify packages for future residency/cache policies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
+pub enum PackageSource {
+    #[display("workspace")]
+    Workspace,
+    #[display("path")]
+    Path,
+    #[display("registry")]
+    Registry,
+    #[display("sparse-registry")]
+    SparseRegistry,
+    #[display("git")]
+    Git,
+    #[display("local-registry")]
+    LocalRegistry,
+    #[display("directory")]
+    Directory,
+    #[display("sysroot")]
+    Sysroot,
+}
+
+impl PackageSource {
+    fn from_cargo_source(
+        package: &PackageId,
+        is_workspace_member: bool,
+        source: Option<&cargo_metadata::Source>,
+    ) -> WorkspaceMetadataResult<Self> {
+        if is_workspace_member {
+            return Ok(Self::Workspace);
+        }
+
+        let Some(source) = source else {
+            return Ok(Self::Path);
+        };
+        let source = source.repr.as_str();
+
+        if source.starts_with("path+") {
+            Ok(Self::Path)
+        } else if source.starts_with("registry+") {
+            Ok(Self::Registry)
+        } else if source.starts_with("sparse+") {
+            Ok(Self::SparseRegistry)
+        } else if source.starts_with("git+") {
+            Ok(Self::Git)
+        } else if source.starts_with("local-registry+") {
+            Ok(Self::LocalRegistry)
+        } else if source.starts_with("directory+") {
+            Ok(Self::Directory)
+        } else {
+            Err(WorkspaceMetadataError::UnsupportedPackageSource {
+                package: package.clone(),
+                source: source.to_string(),
+            })
+        }
     }
 }
 
@@ -423,6 +496,7 @@ pub struct Package {
     pub name: String,
     pub edition: RustEdition,
     pub origin: PackageOrigin,
+    pub source: PackageSource,
     pub is_workspace_member: bool,
     pub manifest_path: PathBuf,
     pub targets: Vec<Target>,
@@ -456,7 +530,7 @@ impl Target {
         raw_package_root: &Path,
         package_root: &Path,
         is_workspace_member: bool,
-    ) -> io::Result<Option<Self>> {
+    ) -> WorkspaceMetadataResult<Option<Self>> {
         let Some(src_path) = normalize_target_src_path(
             target.src_path.as_std_path(),
             raw_package_root,
@@ -480,7 +554,7 @@ fn normalize_target_src_path(
     raw_package_root: &Path,
     package_root: &Path,
     is_workspace_member: bool,
-) -> io::Result<Option<PathBuf>> {
+) -> WorkspaceMetadataResult<Option<PathBuf>> {
     match canonicalize_path(path) {
         Ok(path) => Ok(Some(path)),
         Err(error) if error.kind() == io::ErrorKind::NotFound && !is_workspace_member => Ok(None),
@@ -488,10 +562,12 @@ fn normalize_target_src_path(
             // Keep workspace target identity stable across the edit that declares a target and the
             // later edit that materializes its file. Non-workspace targets do not participate in
             // that save flow, so missing ones are filtered out above.
-            let relative_path = path.strip_prefix(raw_package_root).map_err(|_| error)?;
+            let relative_path = path
+                .strip_prefix(raw_package_root)
+                .map_err(|_| WorkspaceMetadataError::Path(error))?;
             Ok(Some(package_root.join(relative_path)))
         }
-        Err(error) => Err(error),
+        Err(error) => Err(WorkspaceMetadataError::Path(error)),
     }
 }
 

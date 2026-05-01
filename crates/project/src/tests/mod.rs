@@ -5,7 +5,7 @@ use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
 use self::utils::{HostFixture, HostObservation};
-use crate::{BuildProfileOptions, Project};
+use crate::{BuildProfileOptions, Project, ProjectBuildOptions};
 
 #[test]
 fn profiled_build_reports_phase_checkpoints_without_exposing_phase_dbs() {
@@ -25,6 +25,7 @@ pub struct User;
         .expect("fixture workspace metadata should build");
     let (_project, profile) = Project::build_profiled(
         workspace,
+        ProjectBuildOptions::default(),
         BuildProfileOptions {
             retained_memory: true,
             resident_memory_sampler: None,

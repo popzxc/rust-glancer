@@ -66,3 +66,12 @@ Rules of thumb:
 - user should not need to go to other places to understand the comment, it should keep reading with more knowledge
 - user should not have special knowledge to understand the comment (e.g. project roadmap/tasks/private discussions)
 - user should get a knowledge from comment that otherwise would require them to spend time reasoning about codebase.
+
+## `reference/` folder
+
+This folder may or may not exist in the repository, and it is intentionally in `.gitignore`.
+It is meant to store dev-specific files, reference materials, or any other information that
+helps with the development on the project on a concrete PC. Materials from this folder
+should never be referenced in the source code, though they can be discussed with the user.
+
+If it exists, treat it as "files that make sense for this developer on this machine".

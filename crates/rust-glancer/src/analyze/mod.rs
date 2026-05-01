@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use rg_lsp::MemoryControl as _;
-use rg_project::{BuildProfileOptions, Project};
+use rg_project::{BuildProfileOptions, Project, ProjectBuildOptions};
 use rg_workspace::{SysrootSources, WorkspaceMetadata};
 
 mod fmt;
@@ -33,8 +33,9 @@ pub(super) fn analyze(path: PathBuf, include_memory: bool) -> anyhow::Result<()>
             retained_memory: true,
             resident_memory_sampler: Some(Box::new(move || memory_control.resident_bytes())),
         };
-        let (project, profile) = Project::build_profiled(workspace, options)
-            .context("while attempting to build profiled project")?;
+        let (project, profile) =
+            Project::build_profiled(workspace, ProjectBuildOptions::default(), options)
+                .context("while attempting to build profiled project")?;
         (project, Some(profile))
     } else {
         (

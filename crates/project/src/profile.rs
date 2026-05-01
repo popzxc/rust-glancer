@@ -36,7 +36,7 @@ pub struct BuildCheckpoint {
 
 pub type ResidentMemorySampler = Box<dyn FnMut() -> Option<usize>>;
 
-/// Optional profiling knobs for `Project::build_profiled*`.
+/// Optional profiling knobs for `Project::build_profiled`.
 #[derive(Default)]
 pub struct BuildProfileOptions {
     pub retained_memory: bool,
