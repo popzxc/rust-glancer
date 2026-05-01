@@ -1,11 +1,11 @@
 mod utils;
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, fs};
 
 use expect_test::expect;
 use test_fixture::fixture_crate;
 
-use crate::WorkspaceMetadata;
+use crate::{TargetKind, WorkspaceMetadata};
 
 #[test]
 fn dumps_normalized_workspace_metadata() {
@@ -155,6 +155,115 @@ pub fn dev_helper() {}
 }
 
 #[test]
+fn retains_missing_workspace_target_path_during_metadata_normalization() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "missing_target_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[[example]]
+name = "demo"
+path = "examples/demo.rs"
+
+//- /src/lib.rs
+pub struct Lib;
+
+//- /examples/demo.rs
+fn main() {}
+"#,
+    );
+    let metadata = fixture.metadata();
+    fs::remove_file(fixture.path("examples/demo.rs"))
+        .expect("fixture example file should be removable after metadata is loaded");
+
+    let workspace =
+        WorkspaceMetadata::from_cargo(metadata).expect("missing optional target should normalize");
+    let package = workspace
+        .workspace_packages()
+        .find(|package| package.name == "missing_target_fixture")
+        .expect("fixture package should be present");
+    let package_root = fixture
+        .path("Cargo.toml")
+        .canonicalize()
+        .expect("fixture manifest should canonicalize")
+        .parent()
+        .expect("fixture manifest should have a parent")
+        .to_path_buf();
+
+    assert!(
+        package.targets.iter().any(|target| {
+            target.kind == TargetKind::Example
+                && target.src_path == package_root.join("examples/demo.rs")
+        }),
+        "missing example target path should remain rooted at the canonical package directory"
+    );
+}
+
+#[test]
+fn skips_missing_non_workspace_target_sources() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct App;
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+[[example]]
+name = "demo"
+path = "examples/demo.rs"
+
+//- /dep/src/lib.rs
+pub struct Dep;
+
+//- /dep/examples/demo.rs
+fn main() {}
+"#,
+    );
+    let metadata = fixture.metadata();
+    fs::remove_file(fixture.path("dep/examples/demo.rs"))
+        .expect("fixture dependency example file should be removable after metadata is loaded");
+
+    let workspace = WorkspaceMetadata::from_cargo(metadata)
+        .expect("missing dependency target should normalize");
+    let package = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "dep")
+        .expect("dependency package should be present");
+
+    assert!(
+        package
+            .targets
+            .iter()
+            .any(|target| target.kind == TargetKind::Lib),
+        "dependency library target should remain available"
+    );
+    assert!(
+        !package
+            .targets
+            .iter()
+            .any(|target| target.kind == TargetKind::Example),
+        "missing dependency example target should be omitted"
+    );
+}
+
+#[test]
 fn injects_sysroot_packages_as_normalized_dependencies() {
     utils::check_workspace_metadata_with_sysroot(
         r#"
@@ -275,7 +384,8 @@ edition = "2024"
 pub struct Independent;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should build");
     let dep_id = workspace
         .packages()
         .iter()
@@ -324,10 +434,22 @@ edition = "2024"
 pub struct Dep;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should build");
+
+    let app_api = fixture
+        .path("crates/app/src")
+        .canonicalize()
+        .expect("fixture src dir should canonicalize")
+        .join("api.rs");
+    let generated_api = fixture
+        .path("")
+        .canonicalize()
+        .expect("fixture root should canonicalize")
+        .join("generated/api.rs");
 
     let package_names = workspace
-        .package_slots_containing_path(&fixture.path("crates/app/src/api.rs"))
+        .package_slots_containing_path(&app_api)
         .into_iter()
         .map(|slot| workspace.packages()[slot].name.clone())
         .collect::<BTreeSet<_>>();
@@ -339,7 +461,7 @@ pub struct Dep;
     );
     assert!(
         workspace
-            .package_slots_containing_path(&fixture.path("generated/api.rs"))
+            .package_slots_containing_path(&generated_api)
             .is_empty(),
         "paths outside every package root should not force a package rebuild"
     );

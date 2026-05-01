@@ -1,5 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
+    error::Error,
+    fmt, io,
     path::{Path, PathBuf},
 };
 
@@ -15,6 +17,9 @@ pub use self::sysroot::{SysrootCrate, SysrootSources};
 ///
 /// This is our internal view of `cargo metadata`: it keeps only the fields and semantics the
 /// later phases care about and avoids leaking Cargo's transport types throughout the codebase.
+/// Filesystem roots are canonicalized at construction so save handling can compare paths directly
+/// without each phase defending against Cargo's original path spelling. Missing non-workspace
+/// targets are omitted because they cannot be parsed or reached through local save handling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceMetadata {
     workspace_root: PathBuf,
@@ -23,9 +28,19 @@ pub struct WorkspaceMetadata {
 }
 
 impl WorkspaceMetadata {
+    /// Loads Cargo metadata from a manifest path and lowers it into the analysis metadata model.
+    pub fn from_manifest_path(manifest_path: impl AsRef<Path>) -> WorkspaceMetadataResult<Self> {
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(manifest_path.as_ref().to_path_buf())
+            .exec()
+            .map_err(WorkspaceMetadataError::CargoMetadata)?;
+
+        Self::from_cargo(metadata).map_err(WorkspaceMetadataError::Path)
+    }
+
     /// Lowers raw `cargo metadata` output into the project's normalized metadata model.
-    pub fn from_cargo(metadata: cargo_metadata::Metadata) -> Self {
-        let workspace_root = metadata.workspace_root.as_std_path().to_path_buf();
+    pub fn from_cargo(metadata: cargo_metadata::Metadata) -> io::Result<Self> {
+        let workspace_root = canonicalize_path(metadata.workspace_root.as_std_path())?;
         let workspace_members = metadata
             .workspace_members
             .iter()
@@ -43,7 +58,30 @@ impl WorkspaceMetadata {
             .map(|package| {
                 let package_id = PackageId::from_cargo(&package.id);
                 let is_workspace_member = workspace_members.contains(&package_id);
-                Package {
+                let raw_manifest_path = package.manifest_path.as_std_path();
+                let manifest_path = canonicalize_path(raw_manifest_path)?;
+                let raw_package_root = raw_manifest_path
+                    .parent()
+                    .expect("Cargo package manifest path should have a parent directory");
+                let package_root = manifest_path
+                    .parent()
+                    .expect("canonical package manifest path should have a parent directory");
+                let targets = package
+                    .targets
+                    .iter()
+                    .map(|target| {
+                        Target::from_cargo(
+                            target,
+                            raw_package_root,
+                            package_root,
+                            is_workspace_member,
+                        )
+                        .transpose()
+                    })
+                    .flatten()
+                    .collect::<io::Result<Vec<_>>>()?;
+
+                Ok(Package {
                     id: package_id.clone(),
                     name: package.name.to_string(),
                     edition: RustEdition::from_cargo(package.edition),
@@ -53,15 +91,15 @@ impl WorkspaceMetadata {
                         PackageOrigin::Dependency
                     },
                     is_workspace_member,
-                    manifest_path: package.manifest_path.as_std_path().to_path_buf(),
-                    targets: package.targets.iter().map(Target::from_cargo).collect(),
+                    manifest_path,
+                    targets,
                     dependencies: dependencies_by_package
                         .get(&package_id)
                         .cloned()
                         .unwrap_or_default(),
-                }
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<io::Result<Vec<_>>>()?;
 
         let package_by_id = packages
             .iter()
@@ -69,11 +107,11 @@ impl WorkspaceMetadata {
             .map(|(idx, package)| (package.id.clone(), idx))
             .collect();
 
-        Self {
+        Ok(Self {
             workspace_root,
             packages,
             package_by_id,
-        }
+        })
     }
 
     /// Returns this workspace with sysroot crates modeled as ordinary packages.
@@ -82,6 +120,16 @@ impl WorkspaceMetadata {
             self.add_sysroot_sources(sources);
         }
         self
+    }
+
+    /// Returns sysroot source roots that were previously injected into this metadata graph.
+    pub fn sysroot_sources(&self) -> Option<SysrootSources> {
+        self.packages
+            .iter()
+            .find(|package| package.origin.is_sysroot())
+            .and_then(|package| package.manifest_path.parent())
+            .and_then(|crate_root| crate_root.parent())
+            .and_then(SysrootSources::from_library_root)
     }
 
     /// Adds `core`, `alloc`, and `std` from rust-src and injects them into normal packages.
@@ -260,6 +308,46 @@ impl WorkspaceMetadata {
     }
 }
 
+pub type WorkspaceMetadataResult<T> = Result<T, WorkspaceMetadataError>;
+
+#[derive(Debug)]
+pub enum WorkspaceMetadataError {
+    CargoMetadata(cargo_metadata::Error),
+    Path(io::Error),
+}
+
+impl fmt::Display for WorkspaceMetadataError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CargoMetadata(error) => {
+                write!(f, "while attempting to load Cargo metadata: {error}")
+            }
+            Self::Path(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl Error for WorkspaceMetadataError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::CargoMetadata(error) => Some(error),
+            Self::Path(error) => Some(error),
+        }
+    }
+}
+
+fn canonicalize_path(path: &Path) -> io::Result<PathBuf> {
+    path.canonicalize().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "while attempting to canonicalize {}: {error}",
+                path.display()
+            ),
+        )
+    })
+}
+
 /// Stable package identifier derived from Cargo metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display)]
 #[display("{_0}")]
@@ -350,16 +438,7 @@ impl Package {
     }
 
     fn contains_path(&self, path: &Path) -> bool {
-        if path.starts_with(self.root_dir()) {
-            return true;
-        }
-
-        // Save events are canonicalized by the analysis host, while Cargo metadata can preserve a
-        // non-canonical spelling of the same temp/source directory. Canonicalizing the package root
-        // here keeps this query about filesystem ownership instead of string-prefix spelling.
-        self.root_dir()
-            .canonicalize()
-            .is_ok_and(|root| path.starts_with(root))
+        path.starts_with(self.root_dir())
     }
 }
 
@@ -372,12 +451,47 @@ pub struct Target {
 }
 
 impl Target {
-    fn from_cargo(target: &cargo_metadata::Target) -> Self {
-        Self {
+    fn from_cargo(
+        target: &cargo_metadata::Target,
+        raw_package_root: &Path,
+        package_root: &Path,
+        is_workspace_member: bool,
+    ) -> io::Result<Option<Self>> {
+        let Some(src_path) = normalize_target_src_path(
+            target.src_path.as_std_path(),
+            raw_package_root,
+            package_root,
+            is_workspace_member,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self {
             name: target.name.to_string(),
             kind: TargetKind::from_cargo(target),
-            src_path: target.src_path.as_std_path().to_path_buf(),
+            src_path,
+        }))
+    }
+}
+
+fn normalize_target_src_path(
+    path: &Path,
+    raw_package_root: &Path,
+    package_root: &Path,
+    is_workspace_member: bool,
+) -> io::Result<Option<PathBuf>> {
+    match canonicalize_path(path) {
+        Ok(path) => Ok(Some(path)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound && !is_workspace_member => Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // Keep workspace target identity stable across the edit that declares a target and the
+            // later edit that materializes its file. Non-workspace targets do not participate in
+            // that save flow, so missing ones are filtered out above.
+            let relative_path = path.strip_prefix(raw_package_root).map_err(|_| error)?;
+            Ok(Some(package_root.join(relative_path)))
         }
+        Err(error) => Err(error),
     }
 }
 

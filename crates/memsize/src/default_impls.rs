@@ -5,6 +5,7 @@ use std::{
     hash::{BuildHasher, Hash},
     mem,
     path::PathBuf,
+    sync::Arc,
 };
 
 use crate::{MemoryRecorder, MemorySize, approximate_allocation_overhead};
@@ -76,6 +77,20 @@ where
             let payload = mem::size_of::<T>();
             recorder.record_heap::<T>(payload);
             recorder.record_approximate::<Box<T>>(approximate_allocation_overhead(payload));
+            (**self).record_memory_children(recorder);
+        });
+    }
+}
+
+impl<T> MemorySize for Arc<T>
+where
+    T: MemorySize,
+{
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        recorder.scope("arc", |recorder| {
+            let payload = mem::size_of::<T>();
+            recorder.record_heap::<T>(payload);
+            recorder.record_approximate::<Arc<T>>(approximate_allocation_overhead(payload));
             (**self).record_memory_children(recorder);
         });
     }
@@ -345,7 +360,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{any, collections::BTreeMap, mem};
+    use std::{any, collections::BTreeMap, mem, sync::Arc};
 
     use crate::{MemoryRecordKind, MemoryRecorder, MemorySize, approximate_allocation_overhead};
 
@@ -424,6 +439,43 @@ mod tests {
         assert_eq!(
             totals.get(&MemoryRecordKind::Shallow),
             Some(&mem::size_of::<Box<String>>())
+        );
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Heap),
+            Some(&(mem::size_of::<String>() + 4))
+        );
+        assert_eq!(totals.get(&MemoryRecordKind::SpareCapacity), Some(&1));
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Approximate),
+            Some(
+                &(approximate_allocation_overhead(mem::size_of::<String>())
+                    + approximate_allocation_overhead(5))
+            )
+        );
+    }
+
+    #[test]
+    fn arc_records_pointee_storage_as_heap() {
+        let mut value = String::with_capacity(5);
+        value.push_str("tool");
+        let value = Arc::new(value);
+
+        assert_eq!(
+            value.memory_size(),
+            mem::size_of::<Arc<String>>()
+                + mem::size_of::<String>()
+                + 5
+                + approximate_allocation_overhead(mem::size_of::<String>())
+                + approximate_allocation_overhead(5)
+        );
+
+        let mut recorder = MemoryRecorder::new("arc");
+        value.record_memory_size(&mut recorder);
+        let totals = recorder.totals_by_kind();
+
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Shallow),
+            Some(&mem::size_of::<Arc<String>>())
         );
         assert_eq!(
             totals.get(&MemoryRecordKind::Heap),

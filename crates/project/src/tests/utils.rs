@@ -18,7 +18,8 @@ pub(super) struct HostFixture {
 impl HostFixture {
     pub(super) fn build(spec: &str) -> Self {
         let (fixture, markers) = fixture_crate_with_markers(spec);
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build");
         let host = AnalysisHost::build(workspace).expect("analysis host should build");
 
         Self {

@@ -84,7 +84,8 @@ struct SemanticIrFixtureDb {
 impl SemanticIrFixtureDb {
     fn build(fixture: &str) -> Self {
         let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build");
         let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
         let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
         let def_map = DefMapDb::build(&workspace, &parse, &item_tree)

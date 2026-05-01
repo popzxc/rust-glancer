@@ -23,7 +23,8 @@ pub(super) fn analyze(path: PathBuf, include_memory: bool) -> anyhow::Result<()>
         .exec()
         .context("cargo metadata failed")?;
 
-    let workspace = WorkspaceMetadata::from_cargo(metadata);
+    let workspace = WorkspaceMetadata::from_cargo(metadata)
+        .context("while attempting to normalize Cargo metadata")?;
     let sysroot = SysrootSources::discover(workspace.workspace_root());
     let workspace = workspace.with_sysroot_sources(sysroot);
     let memory_control = crate::runtime::memory_control();

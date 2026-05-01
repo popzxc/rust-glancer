@@ -12,6 +12,8 @@ mod target;
 #[cfg(test)]
 mod tests;
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 
 use rg_arena::Arena;
@@ -48,7 +50,7 @@ pub use rg_item_tree::{
 /// again. Bodies live in `rg_body_ir`; this layer intentionally stops at item/signature facts.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SemanticIrDb {
-    packages: Arena<PackageSlot, PackageIr>,
+    packages: Arena<PackageSlot, Arc<PackageIr>>,
 }
 
 impl SemanticIrDb {
@@ -81,7 +83,7 @@ impl SemanticIrDb {
                     package.0
                 )
             })?;
-            *slot = rebuilt;
+            *slot = Arc::new(rebuilt);
         }
 
         resolution::resolve_impl_headers_for_packages(&mut next, def_map, &packages);
@@ -91,21 +93,25 @@ impl SemanticIrDb {
 
     pub(crate) fn new(packages: Vec<PackageIr>) -> Self {
         Self {
-            packages: Arena::from_vec(packages),
+            packages: Arena::from_vec(packages.into_iter().map(Arc::new).collect()),
         }
     }
 
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
         for package in self.packages.iter_mut() {
-            package.shrink_to_fit();
+            if let Some(package) = Arc::get_mut(package) {
+                package.shrink_to_fit();
+            }
         }
     }
 
     fn shrink_packages(&mut self, packages: &[PackageSlot]) {
         for package in packages {
             if let Some(package) = self.packages.get_mut(*package) {
-                package.shrink_to_fit();
+                if let Some(package) = Arc::get_mut(package) {
+                    package.shrink_to_fit();
+                }
             }
         }
     }
@@ -134,13 +140,17 @@ impl SemanticIrDb {
     }
 
     /// Returns all package-level semantic IR sets.
-    pub fn packages(&self) -> &[PackageIr] {
-        self.packages.as_slice()
+    pub fn packages(&self) -> impl ExactSizeIterator<Item = &PackageIr> + '_ {
+        self.packages.iter().map(Arc::as_ref)
+    }
+
+    pub fn package_count(&self) -> usize {
+        self.packages.len()
     }
 
     /// Returns one package by package slot.
     pub fn package(&self, package: PackageSlot) -> Option<&PackageIr> {
-        self.packages.get(package)
+        self.packages.get(package).map(Arc::as_ref)
     }
 
     /// Returns one target semantic IR by project-wide target reference.
@@ -756,7 +766,7 @@ impl SemanticIrDb {
     }
 
     fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageIr> {
-        self.packages.get_mut(package)
+        self.packages.get_mut(package).map(Arc::make_mut)
     }
 }
 

@@ -81,7 +81,8 @@ pub(super) struct DefMapFixtureDb {
 impl DefMapFixtureDb {
     pub(super) fn build(fixture: &str) -> Self {
         let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build");
         Self::build_from_workspace(workspace)
     }
 
@@ -89,8 +90,9 @@ impl DefMapFixtureDb {
         let fixture = fixture_crate(fixture);
         let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
             .expect("fixture sysroot should be complete");
-        let workspace =
-            WorkspaceMetadata::from_cargo(fixture.metadata()).with_sysroot_sources(Some(sysroot));
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build")
+            .with_sysroot_sources(Some(sysroot));
         Self::build_from_workspace(workspace)
     }
 

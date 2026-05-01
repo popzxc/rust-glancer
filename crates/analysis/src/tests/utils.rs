@@ -19,7 +19,10 @@ use test_fixture::{FixtureMarkers, fixture_crate, fixture_crate_with_markers};
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
-    let db = AnalysisFixtureDb::build(WorkspaceMetadata::from_cargo(fixture.metadata()));
+    let db = AnalysisFixtureDb::build(
+        WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build"),
+    );
     let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
     expect.assert_eq(&actual);
@@ -33,8 +36,9 @@ pub(super) fn check_analysis_queries_with_sysroot(
     let (fixture, markers) = fixture_crate_with_markers(fixture);
     let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
         .expect("fixture sysroot should be complete");
-    let workspace =
-        WorkspaceMetadata::from_cargo(fixture.metadata()).with_sysroot_sources(Some(sysroot));
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should build")
+        .with_sysroot_sources(Some(sysroot));
     let db = AnalysisFixtureDb::build(workspace);
     let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
@@ -43,7 +47,10 @@ pub(super) fn check_analysis_queries_with_sysroot(
 
 pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery, expect: Expect) {
     let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build(WorkspaceMetadata::from_cargo(fixture.metadata()));
+    let db = AnalysisFixtureDb::build(
+        WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build"),
+    );
     let renderer = AnalysisSymbolSnapshot::new(&db);
     let actual = format!("{}\n", renderer.render_document_symbols(&query).trim_end());
     expect.assert_eq(&actual);
@@ -51,7 +58,10 @@ pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery,
 
 pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build(WorkspaceMetadata::from_cargo(fixture.metadata()));
+    let db = AnalysisFixtureDb::build(
+        WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build"),
+    );
     let renderer = AnalysisSymbolSnapshot::new(&db);
     let actual = format!("{}\n", renderer.render_workspace_symbols(query).trim_end());
     expect.assert_eq(&actual);
@@ -59,7 +69,10 @@ pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect
 
 pub(super) fn check_type_hints(fixture: &str, query: TypeHintsQuery, expect: Expect) {
     let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build(WorkspaceMetadata::from_cargo(fixture.metadata()));
+    let db = AnalysisFixtureDb::build(
+        WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build"),
+    );
     let renderer = AnalysisSymbolSnapshot::new(&db);
     let actual = format!("{}\n", renderer.render_type_hints(&query).trim_end());
     expect.assert_eq(&actual);

@@ -24,9 +24,9 @@ use super::{
 };
 
 pub(super) fn build_db(item_tree: &ItemTreeDb, def_map: &DefMapDb) -> anyhow::Result<SemanticIrDb> {
-    let mut packages = Vec::with_capacity(def_map.packages().len());
+    let mut packages = Vec::with_capacity(def_map.package_count());
 
-    for (package_idx, _) in def_map.packages().iter().enumerate() {
+    for package_idx in 0..def_map.package_count() {
         packages.push(build_package(item_tree, def_map, PackageSlot(package_idx))?);
     }
 

@@ -86,6 +86,13 @@ impl ParseDb {
         self.packages.get_mut(package_slot)
     }
 
+    /// Returns whether a canonical path is already known to any parsed package.
+    pub fn contains_file_path(&self, file_path: &Path) -> bool {
+        self.packages
+            .iter()
+            .any(|package| package.parsed_files().any(|file| file.path() == file_path))
+    }
+
     /// Drops retained syntax trees from all packages after AST-consuming phases have finished.
     pub fn evict_syntax_trees(&mut self) {
         for package in &mut self.packages {

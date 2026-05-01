@@ -9,6 +9,8 @@ mod path_resolution;
 mod resolve;
 mod scope;
 
+use std::sync::Arc;
+
 use rg_arena::Arena;
 use rg_item_tree::ItemTreeDb;
 use rg_parse::{self, TargetId};
@@ -32,7 +34,7 @@ pub use self::{
 /// Frozen def maps for all parsed packages and targets.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DefMapDb {
-    packages: Arena<PackageSlot, Package>,
+    packages: Arena<PackageSlot, Arc<Package>>,
 }
 
 impl DefMapDb {
@@ -86,14 +88,17 @@ impl DefMapDb {
     }
 
     /// Returns all package-level def-map sets.
-    pub fn packages(&self) -> &[Package] {
-        self.packages.as_slice()
+    pub fn packages(&self) -> impl ExactSizeIterator<Item = &Package> + '_ {
+        self.packages.iter().map(Arc::as_ref)
+    }
+
+    pub fn package_count(&self) -> usize {
+        self.packages.len()
     }
 
     /// Iterates over every target def map together with its project-wide target reference.
     pub fn target_maps(&self) -> impl Iterator<Item = (TargetRef, &DefMap)> {
         self.packages()
-            .iter()
             .enumerate()
             .flat_map(move |(package_idx, package)| {
                 (0..package.targets().len()).filter_map(move |target_idx| {
@@ -129,7 +134,7 @@ impl DefMapDb {
 
     /// Returns one package def-map set by package slot.
     pub fn package(&self, package_slot: PackageSlot) -> Option<&Package> {
-        self.packages.get(package_slot)
+        self.packages.get(package_slot).map(Arc::as_ref)
     }
 
     /// Returns one target def map by project-wide target reference.
@@ -268,14 +273,18 @@ impl DefMapDb {
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
         for package in self.packages.iter_mut() {
-            package.shrink_to_fit();
+            if let Some(package) = Arc::get_mut(package) {
+                package.shrink_to_fit();
+            }
         }
     }
 
     fn shrink_packages(&mut self, packages: &[PackageSlot]) {
         for package in packages {
             if let Some(package) = self.packages.get_mut(*package) {
-                package.shrink_to_fit();
+                if let Some(package) = Arc::get_mut(package) {
+                    package.shrink_to_fit();
+                }
             }
         }
     }

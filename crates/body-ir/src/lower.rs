@@ -36,9 +36,9 @@ pub(super) fn build_db(
     policy: BodyIrBuildPolicy,
     interner: &mut NameInterner,
 ) -> anyhow::Result<BodyIrDb> {
-    let mut packages = Vec::with_capacity(semantic_ir.packages().len());
+    let mut packages = Vec::with_capacity(semantic_ir.package_count());
 
-    for (package_idx, package_ir) in semantic_ir.packages().iter().enumerate() {
+    for (package_idx, package_ir) in semantic_ir.packages().enumerate() {
         packages.push(build_package(
             parse,
             semantic_ir,

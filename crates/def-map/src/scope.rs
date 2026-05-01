@@ -28,17 +28,6 @@ impl ModuleScope {
         self.entries.iter().map(|entry| (&entry.name, &entry.entry))
     }
 
-    pub(crate) fn to_builder(&self) -> ModuleScopeBuilder {
-        let mut names = HashMap::with_capacity(self.entries.len());
-        for entry in &self.entries {
-            names.insert(
-                entry.name.clone(),
-                ScopeEntryBuilder::from_entry(&entry.entry),
-            );
-        }
-        ModuleScopeBuilder { names }
-    }
-
     pub(crate) fn shrink_to_fit(&mut self) {
         for entry in &mut self.entries {
             entry.name.shrink_to_fit();
@@ -224,14 +213,6 @@ impl ScopeEntryBuilder {
             types: self.types.clone().into_boxed_slice(),
             values: self.values.clone().into_boxed_slice(),
             macros: self.macros.clone().into_boxed_slice(),
-        }
-    }
-
-    fn from_entry(entry: &ScopeEntry) -> Self {
-        Self {
-            types: entry.types.to_vec(),
-            values: entry.values.to_vec(),
-            macros: entry.macros.to_vec(),
         }
     }
 }

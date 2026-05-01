@@ -7,7 +7,7 @@
 //! - raw import directives
 //! - immediate bindings such as child modules and `extern crate`
 //!
-//! Import resolution itself happens later in `resolve.rs`, using the `base_scopes` produced here.
+//! Import resolution itself happens later in `resolve`, using the `base_scopes` produced here.
 
 use std::collections::HashMap;
 

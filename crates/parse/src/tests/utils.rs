@@ -13,7 +13,8 @@ pub(super) fn check_parse_db(fixture: &str, expect: Expect) {
         .canonicalize()
         .expect("fixture root should be canonicalizable");
     let display_root = fixture.path("");
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata());
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should build");
     let parse = ParseDb::build(&workspace).expect("fixture parse db should build");
     let actual = ProjectParseSnapshot::new(&parse, &root, &display_root).render();
     let actual = format!("{}\n", actual.trim_end());

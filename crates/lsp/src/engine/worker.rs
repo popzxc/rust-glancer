@@ -166,7 +166,8 @@ impl EngineWorker {
             "cargo metadata finished"
         );
 
-        let workspace = WorkspaceMetadata::from_cargo(metadata);
+        let workspace = WorkspaceMetadata::from_cargo(metadata)
+            .context("while attempting to normalize Cargo metadata")?;
         let workspace_root = workspace.workspace_root().to_path_buf();
         let sysroot = SysrootSources::discover(workspace.workspace_root());
         match &sysroot {

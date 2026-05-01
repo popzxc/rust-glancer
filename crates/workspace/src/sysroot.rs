@@ -94,6 +94,8 @@ impl SysrootSources {
     }
 
     fn from_roots(sysroot_root: PathBuf, library_root: PathBuf) -> Option<Self> {
+        let sysroot_root = sysroot_root.canonicalize().ok()?;
+        let library_root = library_root.canonicalize().ok()?;
         let sources = Self {
             sysroot_root,
             library_root,

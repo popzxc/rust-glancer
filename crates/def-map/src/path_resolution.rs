@@ -9,11 +9,12 @@
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
 use super::{
-    DefId, DefMapDb, ModuleData, ModuleId, ModuleRef, Path, ScopeBinding, TargetRef,
-    collect::TargetState,
+    DefId, DefMapDb, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleRef, Path,
+    ScopeBinding, TargetRef,
     scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
 };
 use rg_item_tree::VisibilityLevel;
+use rg_text::Name;
 
 /// Result of resolving a path against the frozen def-map graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,7 +24,7 @@ pub struct ResolvePathResult {
 }
 
 /// Minimal scope graph required by the path resolver.
-trait PathResolutionEnv {
+pub(super) trait PathResolutionEnv {
     fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef>;
 
     fn prelude_module(&self, target: TargetRef) -> Option<ModuleRef>;
@@ -38,6 +39,13 @@ trait PathResolutionEnv {
         name: &str,
     ) -> Option<ScopeEntryRef<'a>>;
 
+    fn module_scope_entries<'a>(
+        &'a self,
+        module_ref: ModuleRef,
+    ) -> Vec<(&'a Name, ScopeEntryRef<'a>)>;
+
+    fn local_def_kind(&self, local_def_ref: LocalDefRef) -> Option<LocalDefKind>;
+
     fn parent_module(&self, target: TargetRef, module_id: ModuleId) -> Option<ModuleRef> {
         let module = self.module_data(ModuleRef {
             target,
@@ -51,94 +59,24 @@ trait PathResolutionEnv {
     }
 }
 
-/// Resolution environment used while imports are being fixed up.
-struct BuildResolutionEnv<'a> {
-    states: &'a [Vec<TargetState>],
-    current_scopes: &'a [Vec<Vec<ModuleScopeBuilder>>],
-}
-
-impl<'a> BuildResolutionEnv<'a> {
-    fn new(
-        states: &'a [Vec<TargetState>],
-        current_scopes: &'a [Vec<Vec<ModuleScopeBuilder>>],
-    ) -> Self {
-        Self {
-            states,
-            current_scopes,
-        }
-    }
-
-    fn target_state(&self, target: TargetRef) -> Option<&'a TargetState> {
-        self.states.get(target.package.0)?.get(target.target.0)
-    }
-}
-
-impl PathResolutionEnv for BuildResolutionEnv<'_> {
+impl PathResolutionEnv for DefMapDb {
     fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef> {
-        self.target_state(target)?.implicit_roots.get(name).copied()
+        self.def_map(target)?.extern_prelude().get(name).copied()
     }
 
     fn prelude_module(&self, target: TargetRef) -> Option<ModuleRef> {
-        self.target_state(target)?.prelude
+        self.def_map(target)?.prelude()
     }
 
     fn root_module(&self, target: TargetRef) -> Option<ModuleRef> {
         Some(ModuleRef {
             target,
-            module: self.target_state(target)?.def_map.root_module()?,
+            module: self.def_map(target)?.root_module()?,
         })
     }
 
     fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData> {
-        self.target_state(module_ref.target)?
-            .def_map
-            .module(module_ref.module)
-    }
-
-    fn module_scope_entry<'a>(
-        &'a self,
-        module_ref: ModuleRef,
-        name: &str,
-    ) -> Option<ScopeEntryRef<'a>> {
-        self.current_scopes
-            .get(module_ref.target.package.0)?
-            .get(module_ref.target.target.0)?
-            .get(module_ref.module.0)
-            .and_then(|scope| scope.entry(name))
-    }
-}
-
-/// Resolution environment used by frozen query APIs.
-struct FrozenResolutionEnv<'a> {
-    db: &'a DefMapDb,
-}
-
-impl<'a> FrozenResolutionEnv<'a> {
-    fn new(db: &'a DefMapDb) -> Self {
-        Self { db }
-    }
-}
-
-impl PathResolutionEnv for FrozenResolutionEnv<'_> {
-    fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef> {
-        self.db.def_map(target)?.extern_prelude().get(name).copied()
-    }
-
-    fn prelude_module(&self, target: TargetRef) -> Option<ModuleRef> {
-        self.db.def_map(target)?.prelude()
-    }
-
-    fn root_module(&self, target: TargetRef) -> Option<ModuleRef> {
-        Some(ModuleRef {
-            target,
-            module: self.db.def_map(target)?.root_module()?,
-        })
-    }
-
-    fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData> {
-        self.db
-            .def_map(module_ref.target)?
-            .module(module_ref.module)
+        self.def_map(module_ref.target)?.module(module_ref.module)
     }
 
     fn module_scope_entry<'a>(
@@ -151,43 +89,49 @@ impl PathResolutionEnv for FrozenResolutionEnv<'_> {
             .entry(name)
             .map(|entry| entry.as_ref())
     }
+
+    fn module_scope_entries<'a>(
+        &'a self,
+        module_ref: ModuleRef,
+    ) -> Vec<(&'a Name, ScopeEntryRef<'a>)> {
+        self.module_data(module_ref)
+            .map(|module| {
+                module
+                    .scope
+                    .entries()
+                    .map(|(name, entry)| (name, entry.as_ref()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn local_def_kind(&self, local_def_ref: LocalDefRef) -> Option<LocalDefKind> {
+        self.local_def(local_def_ref)
+            .map(|local_def| local_def.kind)
+    }
 }
 
-/// Returns the subset of one module scope that is visible to the importing target.
-///
-/// Glob imports need a mutable scope-shaped result because they copy every visible namespace
-/// bucket from the source module into the importing module under the same textual names.
-pub(super) fn visible_module_scope_entry_set(
-    states: &[Vec<TargetState>],
-    current_scopes: &[Vec<Vec<ModuleScopeBuilder>>],
+pub(super) fn visible_module_scope_entry_set_with_env(
+    env: &impl PathResolutionEnv,
     importing_module: ModuleRef,
     source_module: ModuleRef,
 ) -> ModuleScopeBuilder {
-    let env = BuildResolutionEnv::new(states, current_scopes);
-    let Some(module_scope) = current_scopes
-        .get(source_module.target.package.0)
-        .and_then(|package_scopes| package_scopes.get(source_module.target.target.0))
-        .and_then(|target_scopes| target_scopes.get(source_module.module.0))
-    else {
-        return ModuleScopeBuilder::default();
-    };
-
     let mut visible_scope = ModuleScopeBuilder::default();
-    for (name, entry) in module_scope.entries() {
+    for (name, entry) in env.module_scope_entries(source_module) {
         for binding in entry.types() {
-            if binding_is_visible(&env, importing_module, binding) {
+            if binding_is_visible(env, importing_module, binding) {
                 visible_scope.insert_binding(name, Namespace::Types, binding.clone());
             }
         }
 
         for binding in entry.values() {
-            if binding_is_visible(&env, importing_module, binding) {
+            if binding_is_visible(env, importing_module, binding) {
                 visible_scope.insert_binding(name, Namespace::Values, binding.clone());
             }
         }
 
         for binding in entry.macros() {
-            if binding_is_visible(&env, importing_module, binding) {
+            if binding_is_visible(env, importing_module, binding) {
                 visible_scope.insert_binding(name, Namespace::Macros, binding.clone());
             }
         }
@@ -200,16 +144,14 @@ pub(super) fn visible_module_scope_entry_set(
 ///
 /// The return type is a list rather than a single value because one textual name may resolve in
 /// multiple namespaces at once.
-pub(super) fn resolve_path_to_defs(
-    states: &[Vec<TargetState>],
-    current_scopes: &[Vec<Vec<ModuleScopeBuilder>>],
+pub(super) fn resolve_path_to_defs_with_env(
+    env: &impl PathResolutionEnv,
     importing_target: TargetRef,
     importing_module: ModuleId,
     path: &super::ImportPath,
 ) -> Vec<DefId> {
     resolve_path_to_defs_with_filter(
-        states,
-        current_scopes,
+        env,
         importing_target,
         importing_module,
         path,
@@ -218,16 +160,14 @@ pub(super) fn resolve_path_to_defs(
 }
 
 fn resolve_path_to_defs_with_filter(
-    states: &[Vec<TargetState>],
-    current_scopes: &[Vec<Vec<ModuleScopeBuilder>>],
+    env: &impl PathResolutionEnv,
     importing_target: TargetRef,
     importing_module: ModuleId,
     path: &super::ImportPath,
     terminal_filter: NameResolutionFilter,
 ) -> Vec<DefId> {
-    let env = BuildResolutionEnv::new(states, current_scopes);
     let result = resolve_path_with_env(
-        &env,
+        env,
         ModuleRef {
             target: importing_target,
             module: importing_module,
@@ -244,16 +184,14 @@ fn resolve_path_to_defs_with_filter(
 ///
 /// This is used by glob imports, where the path must denote one or more source modules whose
 /// contents will be copied into the importing scope.
-pub(super) fn resolve_path_to_modules(
-    states: &[Vec<TargetState>],
-    current_scopes: &[Vec<Vec<ModuleScopeBuilder>>],
+pub(super) fn resolve_path_to_modules_with_env(
+    env: &impl PathResolutionEnv,
     importing_target: TargetRef,
     importing_module: ModuleId,
     path: &super::ImportPath,
 ) -> Vec<ModuleRef> {
     let resolved_defs = resolve_path_to_defs_with_filter(
-        states,
-        current_scopes,
+        env,
         importing_target,
         importing_module,
         path,
@@ -278,9 +216,8 @@ pub fn resolve_path_in_db(
     importing_module: ModuleRef,
     path: &Path,
 ) -> ResolvePathResult {
-    let env = FrozenResolutionEnv::new(db);
     resolve_path_with_env(
-        &env,
+        db,
         importing_module,
         path.absolute,
         &path.segments,
@@ -294,9 +231,8 @@ pub fn resolve_path_in_type_namespace(
     importing_module: ModuleRef,
     path: &Path,
 ) -> ResolvePathResult {
-    let env = FrozenResolutionEnv::new(db);
     resolve_path_with_env(
-        &env,
+        db,
         importing_module,
         path.absolute,
         &path.segments,
@@ -304,19 +240,13 @@ pub fn resolve_path_in_type_namespace(
     )
 }
 
-/// Maps a resolved definition to the namespace bucket it occupies in scope.
-pub(super) fn namespace_for_def(states: &[Vec<TargetState>], def: DefId) -> Option<Namespace> {
+pub(super) fn namespace_for_def_with_env(
+    env: &impl PathResolutionEnv,
+    def: DefId,
+) -> Option<Namespace> {
     match def {
         DefId::Module(_) => Some(Namespace::Types),
-        DefId::Local(local_def_ref) => {
-            let local_def = states
-                .get(local_def_ref.target.package.0)?
-                .get(local_def_ref.target.target.0)?
-                .def_map
-                .local_defs
-                .get(local_def_ref.local_def)?;
-            Some(local_def.kind.namespace())
-        }
+        DefId::Local(local_def_ref) => Some(env.local_def_kind(local_def_ref)?.namespace()),
     }
 }
 
