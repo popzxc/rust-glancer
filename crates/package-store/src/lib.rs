@@ -5,7 +5,7 @@
 //! container directly, so later cache work can replace selected payloads with disk-backed entries
 //! without rewriting every query API.
 
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_workspace::PackageSlot;
@@ -30,6 +30,11 @@ impl<T> PackageStore<T> {
 
     pub fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
+    }
+
+    /// Starts a read transaction over this store.
+    pub fn read_txn(&self) -> PackageStoreReadTxn<'_, T> {
+        PackageStoreReadTxn { store: self }
     }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &T> + '_ {
@@ -66,6 +71,68 @@ impl<T> PackageStore<T> {
     }
 }
 
+/// Read-only package-store view used by query transactions.
+#[derive(Debug)]
+pub struct PackageStoreReadTxn<'db, T> {
+    store: &'db PackageStore<T>,
+}
+
+impl<T> Clone for PackageStoreReadTxn<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for PackageStoreReadTxn<'_, T> {}
+
+impl<'db, T> PackageStoreReadTxn<'db, T> {
+    pub fn read(&self, package: PackageSlot) -> Option<PackageRead<'db, T>> {
+        self.store
+            .packages
+            .get(package.0)
+            .map(|package| PackageRead::Resident(package.as_ref()))
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = PackageRead<'db, T>> + '_ {
+        self.store
+            .packages
+            .iter()
+            .map(|package| PackageRead::Resident(package.as_ref()))
+    }
+}
+
+/// One package payload read through a package-store transaction.
+#[derive(Debug)]
+pub enum PackageRead<'db, T> {
+    Resident(&'db T),
+}
+
+impl<T> Clone for PackageRead<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for PackageRead<'_, T> {}
+
+impl<'db, T> PackageRead<'db, T> {
+    pub fn into_ref(self) -> &'db T {
+        match self {
+            Self::Resident(package) => package,
+        }
+    }
+}
+
+impl<T> Deref for PackageRead<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Resident(package) => package,
+        }
+    }
+}
+
 impl<T> MemorySize for PackageStore<T>
 where
     T: MemorySize,
@@ -94,5 +161,16 @@ mod tests {
         assert_eq!(original.get(PackageSlot(1)), Some(&"dependency"));
         assert_eq!(changed.get(PackageSlot(0)), Some(&"workspace"));
         assert_eq!(changed.get(PackageSlot(1)), Some(&"rebuilt"));
+    }
+
+    #[test]
+    fn read_transactions_return_package_handles() {
+        let store = PackageStore::from_vec(vec!["workspace"]);
+        let txn = store.read_txn();
+
+        let package = txn.read(PackageSlot(0)).expect("package slot should exist");
+
+        assert_eq!(*package, "workspace");
+        assert_eq!(package.into_ref(), &"workspace");
     }
 }

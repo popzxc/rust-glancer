@@ -59,8 +59,8 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
 
         for function in self.0.semantic_ir.inherent_functions_for_type(ty.def) {
             if !self.0.body_ir.semantic_function_applies_to_receiver(
-                self.0.def_map,
-                self.0.semantic_ir,
+                &self.0.def_map,
+                &self.0.semantic_ir,
                 function,
                 ty,
             ) {
@@ -78,7 +78,11 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         for (function, applicability) in self
             .0
             .body_ir
-            .semantic_trait_function_candidates_for_receiver(self.0.def_map, self.0.semantic_ir, ty)
+            .semantic_trait_function_candidates_for_receiver(
+                &self.0.def_map,
+                &self.0.semantic_ir,
+                ty,
+            )
         {
             self.push_function_completion(
                 ResolvedFunctionRef::Semantic(function),
@@ -102,8 +106,8 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
 
         for function in self.0.body_ir.inherent_functions_for_local_type(ty.item) {
             if !self.0.body_ir.local_function_applies_to_receiver(
-                self.0.def_map,
-                self.0.semantic_ir,
+                &self.0.def_map,
+                &self.0.semantic_ir,
                 function,
                 ty,
             ) {

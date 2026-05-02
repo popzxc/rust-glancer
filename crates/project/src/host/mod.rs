@@ -14,7 +14,7 @@ use rg_semantic_ir::SemanticIrDb;
 use rg_workspace::WorkspaceMetadata;
 
 use self::workspace_graph::WorkspaceGraphChanges;
-use crate::{Project, ProjectBuildOptions};
+use crate::{Project, ProjectBuildOptions, ProjectReadTxn};
 
 /// Mutable owner for the current analysis state.
 ///
@@ -150,9 +150,14 @@ pub struct AnalysisSnapshot<'a> {
 }
 
 impl<'a> AnalysisSnapshot<'a> {
+    /// Starts a read transaction over retained package data.
+    pub fn read_txn(&self) -> ProjectReadTxn<'a> {
+        self.project.read_txn()
+    }
+
     /// Returns the high-level frozen query API.
-    pub fn analysis(&self) -> Analysis<'a> {
-        self.project.analysis()
+    pub fn analysis(&self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
+        self.project.analysis(txn)
     }
 
     pub fn parse_db(&self) -> &'a ParseDb {

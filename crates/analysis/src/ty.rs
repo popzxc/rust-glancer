@@ -50,8 +50,8 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
                     self.0
                         .body_ir
                         .resolve_value_path_in_scope(
-                            self.0.def_map,
-                            self.0.semantic_ir,
+                            &self.0.def_map,
+                            &self.0.semantic_ir,
                             body,
                             scope,
                             &path,
@@ -73,7 +73,7 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
 
     pub(super) fn ty_for_type_path(&self, context: TypePathContext, path: &Path) -> BodyTy {
         semantic_type_path_resolution_to_ty(self.0.semantic_ir.resolve_type_path(
-            self.0.def_map,
+            &self.0.def_map,
             context,
             path,
         ))
@@ -86,8 +86,8 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         path: &Path,
     ) -> BodyTy {
         body_type_path_resolution_to_ty(self.0.body_ir.resolve_type_path_in_scope(
-            self.0.def_map,
-            self.0.semantic_ir,
+            &self.0.def_map,
+            &self.0.semantic_ir,
             body_ref,
             scope,
             path,
@@ -107,7 +107,7 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
     fn ty_for_field(&self, field: FieldRef) -> Option<BodyTy> {
         self.0
             .body_ir
-            .ty_for_field(self.0.def_map, self.0.semantic_ir, field)
+            .ty_for_field(&self.0.def_map, &self.0.semantic_ir, field)
     }
 
     fn ty_for_enum_variant(&self, variant: rg_semantic_ir::EnumVariantRef) -> Option<BodyTy> {

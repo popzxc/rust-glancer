@@ -15,10 +15,12 @@ mod ty;
 #[cfg(test)]
 mod tests;
 
+use std::ops::Deref;
+
 use anyhow::Context as _;
 
 use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
-use rg_package_store::PackageStore;
+use rg_package_store::{PackageRead, PackageStore, PackageStoreReadTxn};
 use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TraitApplicability};
 use rg_text::NameInterner;
 
@@ -155,6 +157,14 @@ impl BodyIrDb {
         resolution::resolve_bodies_for_packages(&mut next, def_map, semantic_ir, &packages);
         next.shrink_packages(&packages);
         Ok(next)
+    }
+
+    /// Starts a read transaction over package-level Body IR data.
+    pub fn read_txn(&self) -> BodyIrReadTxn<'_> {
+        BodyIrReadTxn {
+            db: self,
+            packages: self.packages.read_txn(),
+        }
     }
 
     pub(crate) fn new(packages: Vec<PackageBodies>) -> Self {
@@ -355,6 +365,37 @@ impl BodyIrDb {
 
     pub(crate) fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageBodies> {
         self.packages.make_mut(package)
+    }
+}
+
+/// Read-only Body IR access for one query transaction.
+#[derive(Debug, Clone)]
+pub struct BodyIrReadTxn<'db> {
+    db: &'db BodyIrDb,
+    packages: PackageStoreReadTxn<'db, PackageBodies>,
+}
+
+impl<'db> BodyIrReadTxn<'db> {
+    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'db, PackageBodies>> + '_ {
+        self.packages.iter()
+    }
+
+    pub fn package(&self, package: PackageSlot) -> Option<PackageRead<'db, PackageBodies>> {
+        self.packages.read(package)
+    }
+
+    pub fn target_bodies(&self, target: TargetRef) -> Option<&'db TargetBodies> {
+        self.package(target.package)?
+            .into_ref()
+            .target(target.target)
+    }
+}
+
+impl Deref for BodyIrReadTxn<'_> {
+    type Target = BodyIrDb;
+
+    fn deref(&self) -> &Self::Target {
+        self.db
     }
 }
 

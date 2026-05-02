@@ -186,7 +186,9 @@ impl HostFixture {
     fn render_workspace_symbols(&self, query: &str, dump: &mut String) {
         writeln!(dump, "workspace symbols `{query}`").expect("string writes should not fail");
 
-        let mut symbols = self.host.snapshot().analysis().workspace_symbols(query);
+        let snapshot = self.host.snapshot();
+        let txn = snapshot.read_txn();
+        let mut symbols = snapshot.analysis(&txn).workspace_symbols(query);
         symbols.sort_by(|left, right| {
             self.workspace_symbol_key(left)
                 .cmp(&self.workspace_symbol_key(right))
@@ -394,7 +396,8 @@ fn nominal_type_names_at(
         .into_iter()
         .next()
         .expect("fixture file should be owned by a target");
-    let Some(ty) = snapshot.analysis().type_at(target, file_id, offset) else {
+    let txn = snapshot.read_txn();
+    let Some(ty) = snapshot.analysis(&txn).type_at(target, file_id, offset) else {
         return Vec::new();
     };
 

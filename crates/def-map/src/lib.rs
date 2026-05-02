@@ -9,9 +9,11 @@ mod path_resolution;
 mod resolve;
 mod scope;
 
+use std::ops::Deref;
+
 use rg_arena::Arena;
 use rg_item_tree::ItemTreeDb;
-use rg_package_store::PackageStore;
+use rg_package_store::{PackageRead, PackageStore, PackageStoreReadTxn};
 use rg_parse::{self, TargetId};
 use rg_text::NameInterner;
 pub use rg_workspace::PackageSlot;
@@ -85,6 +87,14 @@ impl DefMapDb {
             resolve::rebuild_packages(self, workspace, parse, item_tree, packages, interner)?;
         db.shrink_packages(packages);
         Ok(db)
+    }
+
+    /// Starts a read transaction over package-level def-map data.
+    pub fn read_txn(&self) -> DefMapReadTxn<'_> {
+        DefMapReadTxn {
+            db: self,
+            packages: self.packages.read_txn(),
+        }
     }
 
     /// Returns all package-level def-map sets.
@@ -283,6 +293,52 @@ impl DefMapDb {
                 package.shrink_to_fit();
             }
         }
+    }
+}
+
+/// Read-only def-map access for one query transaction.
+#[derive(Debug, Clone)]
+pub struct DefMapReadTxn<'db> {
+    db: &'db DefMapDb,
+    packages: PackageStoreReadTxn<'db, Package>,
+}
+
+impl<'db> DefMapReadTxn<'db> {
+    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'db, Package>> + '_ {
+        self.packages.iter()
+    }
+
+    pub fn package(&self, package_slot: PackageSlot) -> Option<PackageRead<'db, Package>> {
+        self.packages.read(package_slot)
+    }
+
+    pub fn def_map(&self, target: TargetRef) -> Option<&'db DefMap> {
+        self.package(target.package)?
+            .into_ref()
+            .target(target.target)
+    }
+
+    pub fn target_maps(&self) -> impl Iterator<Item = (TargetRef, &'db DefMap)> + '_ {
+        self.packages()
+            .enumerate()
+            .flat_map(move |(package_idx, package)| {
+                (0..package.targets().len()).filter_map(move |target_idx| {
+                    let target_ref = TargetRef {
+                        package: PackageSlot(package_idx),
+                        target: TargetId(target_idx),
+                    };
+                    self.def_map(target_ref)
+                        .map(|def_map| (target_ref, def_map))
+                })
+            })
+    }
+}
+
+impl Deref for DefMapReadTxn<'_> {
+    type Target = DefMapDb;
+
+    fn deref(&self) -> &Self::Target {
+        self.db
     }
 }
 

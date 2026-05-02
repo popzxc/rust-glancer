@@ -10,7 +10,7 @@ pub use self::{
         SavedFileChange,
     },
     profile::{BuildCheckpoint, BuildProfile, BuildProfileOptions, ResidentMemorySampler},
-    project::{Project, ProjectBuildOptions},
+    project::{Project, ProjectBuildOptions, ProjectReadTxn},
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };
 

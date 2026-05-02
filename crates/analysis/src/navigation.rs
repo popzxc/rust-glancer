@@ -339,7 +339,7 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         let resolution = self
             .0
             .semantic_ir
-            .resolve_type_path(self.0.def_map, context, path);
+            .resolve_type_path(&self.0.def_map, context, path);
 
         let targets = self.navigation_targets_for_semantic_type_path_resolution(resolution);
         if targets.is_empty() {
@@ -373,8 +373,8 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         path: &Path,
     ) -> Vec<NavigationTarget> {
         let resolution = self.0.body_ir.resolve_type_path_in_scope(
-            self.0.def_map,
-            self.0.semantic_ir,
+            &self.0.def_map,
+            &self.0.semantic_ir,
             body_ref,
             scope,
             path,
@@ -400,8 +400,8 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         path: &Path,
     ) -> Vec<NavigationTarget> {
         let (resolution, _) = self.0.body_ir.resolve_value_path_in_scope(
-            self.0.def_map,
-            self.0.semantic_ir,
+            &self.0.def_map,
+            &self.0.semantic_ir,
             body_ref,
             scope,
             path,

@@ -3,8 +3,8 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    Analysis, CompletionApplicability, CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget,
-    SymbolAt, TypeHint, WorkspaceSymbol,
+    Analysis, AnalysisReadTxn, CompletionApplicability, CompletionItem, DocumentSymbol, HoverInfo,
+    NavigationTarget, SymbolAt, TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{
     BodyGenericArg, BodyIrDb, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyTy, ExprData,
@@ -259,7 +259,8 @@ impl AnalysisFixtureDb {
     }
 
     fn analysis(&self) -> Analysis<'_> {
-        Analysis::new(&self.def_map, &self.semantic_ir, &self.body_ir)
+        let txn = AnalysisReadTxn::new(&self.def_map, &self.semantic_ir, &self.body_ir);
+        Analysis::new(&txn)
     }
 
     fn target_and_file_for_path(

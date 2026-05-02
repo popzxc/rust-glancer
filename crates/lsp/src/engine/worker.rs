@@ -251,10 +251,11 @@ impl EngineWorker {
     ) -> anyhow::Result<Vec<ls_types::CompletionItem>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
+        let txn = snapshot.read_txn();
+        let analysis = snapshot.analysis(&txn);
         let mut completions = Vec::new();
 
         for (context, target, offset) in self.target_offsets(snapshot, &path, position)? {
-            let analysis = snapshot.analysis();
             for item in analysis.completions_at_dot(target, context.file, offset) {
                 let item = completion::completion_item(item);
                 if !completions.contains(&item) {
@@ -282,9 +283,11 @@ impl EngineWorker {
     ) -> anyhow::Result<Option<ls_types::Hover>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
+        let txn = snapshot.read_txn();
+        let analysis = snapshot.analysis(&txn);
 
         for (context, target, offset) in self.target_offsets(snapshot, &path, position)? {
-            let Some(info) = snapshot.analysis().hover(target, context.file, offset) else {
+            let Some(info) = analysis.hover(target, context.file, offset) else {
                 continue;
             };
             let Some(package) = snapshot.parse_db().package(context.package.0) else {
@@ -321,11 +324,13 @@ impl EngineWorker {
     fn document_symbol(&self, path: PathBuf) -> anyhow::Result<Vec<ls_types::DocumentSymbol>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
+        let txn = snapshot.read_txn();
+        let analysis = snapshot.analysis(&txn);
         let mut lsp_symbols = Vec::new();
 
         for context in self.file_contexts(snapshot, &path)? {
             for target in context.targets {
-                let symbols = snapshot.analysis().document_symbols(target, context.file);
+                let symbols = analysis.document_symbols(target, context.file);
                 for symbol in symbols {
                     let symbol =
                         symbols::document_symbol(snapshot.parse_db(), context.package.0, symbol)?;
@@ -353,6 +358,8 @@ impl EngineWorker {
     ) -> anyhow::Result<Vec<ls_types::InlayHint>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
+        let txn = snapshot.read_txn();
+        let analysis = snapshot.analysis(&txn);
         let mut hints = Vec::<(rg_def_map::PackageSlot, TypeHint)>::new();
 
         for context in self.file_contexts(snapshot, &path)? {
@@ -361,10 +368,7 @@ impl EngineWorker {
             };
 
             for target in context.targets {
-                for hint in snapshot
-                    .analysis()
-                    .type_hints(target, context.file, Some(range))
-                {
+                for hint in analysis.type_hints(target, context.file, Some(range)) {
                     if !hints
                         .iter()
                         .any(|(_, existing_hint)| existing_hint == &hint)
@@ -396,9 +400,11 @@ impl EngineWorker {
     fn workspace_symbol(&self, query: &str) -> anyhow::Result<Vec<ls_types::WorkspaceSymbol>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
+        let txn = snapshot.read_txn();
+        let analysis = snapshot.analysis(&txn);
         let mut lsp_symbols = Vec::new();
 
-        for symbol in snapshot.analysis().workspace_symbols(query) {
+        for symbol in analysis.workspace_symbols(query) {
             let Some(symbol) = symbols::workspace_symbol(snapshot.parse_db(), symbol)? else {
                 continue;
             };
@@ -425,19 +431,17 @@ impl EngineWorker {
     ) -> anyhow::Result<Vec<ls_types::Location>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
+        let txn = snapshot.read_txn();
+        let analysis = snapshot.analysis(&txn);
         let mut locations = Vec::new();
 
         for (context, target, offset) in self.target_offsets(snapshot, &path, position)? {
             let targets = match query {
                 NavigationQuery::Definition => {
-                    snapshot
-                        .analysis()
-                        .goto_definition(target, context.file, offset)
+                    analysis.goto_definition(target, context.file, offset)
                 }
                 NavigationQuery::TypeDefinition => {
-                    snapshot
-                        .analysis()
-                        .goto_type_definition(target, context.file, offset)
+                    analysis.goto_type_definition(target, context.file, offset)
                 }
             };
 

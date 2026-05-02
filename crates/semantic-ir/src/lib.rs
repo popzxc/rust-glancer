@@ -9,10 +9,12 @@ mod signature;
 mod stats;
 mod target;
 
+use std::ops::Deref;
+
 use anyhow::Context as _;
 
 use rg_def_map::{DefMapDb, LocalDefRef, ModuleRef, PackageSlot, Path, TargetRef};
-use rg_package_store::PackageStore;
+use rg_package_store::{PackageRead, PackageStore, PackageStoreReadTxn};
 use rg_parse::TargetId;
 
 #[cfg(test)]
@@ -86,6 +88,14 @@ impl SemanticIrDb {
         resolution::resolve_impl_headers_for_packages(&mut next, def_map, &packages);
         next.shrink_packages(&packages);
         Ok(next)
+    }
+
+    /// Starts a read transaction over package-level semantic IR data.
+    pub fn read_txn(&self) -> SemanticIrReadTxn<'_> {
+        SemanticIrReadTxn {
+            db: self,
+            packages: self.packages.read_txn(),
+        }
     }
 
     pub(crate) fn new(packages: Vec<PackageIr>) -> Self {
@@ -760,6 +770,58 @@ impl SemanticIrDb {
 
     fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageIr> {
         self.packages.make_mut(package)
+    }
+}
+
+/// Read-only semantic IR access for one query transaction.
+#[derive(Debug, Clone)]
+pub struct SemanticIrReadTxn<'db> {
+    db: &'db SemanticIrDb,
+    packages: PackageStoreReadTxn<'db, PackageIr>,
+}
+
+impl<'db> SemanticIrReadTxn<'db> {
+    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'db, PackageIr>> + '_ {
+        self.packages.iter()
+    }
+
+    pub fn package(&self, package: PackageSlot) -> Option<PackageRead<'db, PackageIr>> {
+        self.packages.read(package)
+    }
+
+    pub fn target_ir(&self, target: TargetRef) -> Option<&'db TargetIr> {
+        self.package(target.package)?
+            .into_ref()
+            .target(target.target)
+    }
+
+    pub fn target_irs(&self) -> impl Iterator<Item = (TargetRef, &'db TargetIr)> + '_ {
+        self.packages()
+            .enumerate()
+            .flat_map(|(package_idx, package)| {
+                let package = package.into_ref();
+                package
+                    .targets()
+                    .iter()
+                    .enumerate()
+                    .map(move |(target_idx, target_ir)| {
+                        (
+                            TargetRef {
+                                package: PackageSlot(package_idx),
+                                target: TargetId(target_idx),
+                            },
+                            target_ir,
+                        )
+                    })
+            })
+    }
+}
+
+impl Deref for SemanticIrReadTxn<'_> {
+    type Target = SemanticIrDb;
+
+    fn deref(&self) -> &Self::Target {
+        self.db
     }
 }
 
