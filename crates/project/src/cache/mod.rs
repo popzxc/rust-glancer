@@ -1,10 +1,13 @@
 //! Cache artifact identities planned from normalized workspace metadata.
 //!
-//! This module deliberately stores fingerprint inputs instead of computing hashes. Project-level
-//! code owns invalidation because only it can see Cargo metadata, workspace graph changes, and the
-//! selected residency policy; lower storage layers should receive already-vetted artifact handles.
+//! This module deliberately stores fingerprint inputs as readable fields. Project-level code owns
+//! invalidation because only it can see Cargo metadata, workspace graph changes, and the selected
+//! residency policy; lower storage layers should receive already-vetted artifact handles.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+mod fingerprint;
+mod store;
 
 use rg_body_ir::BodyIrPackageBundle;
 use rg_def_map::DefMapPackageBundle;
@@ -12,6 +15,8 @@ use rg_semantic_ir::SemanticIrPackageBundle;
 use rg_workspace::{
     PackageId, PackageSlot, PackageSource, RustEdition, TargetKind, WorkspaceMetadata,
 };
+
+pub use self::{fingerprint::Fingerprint, store::PackageCacheStore};
 
 #[cfg(test)]
 mod tests;
@@ -162,12 +167,39 @@ pub struct PackageCacheIdentity {
     pub dependencies: Vec<PackageCacheDependency>,
 }
 
+impl PackageCacheIdentity {
+    /// Returns the canonical package identity fingerprint for one workspace root.
+    ///
+    /// The workspace root is explicit because Cargo package IDs and source paths can contain
+    /// absolute workspace paths that should not become part of the stable cache key.
+    pub fn fingerprint(&self, workspace_root: &Path) -> Fingerprint {
+        fingerprint::FingerprintBuilder::package_identity(workspace_root, self)
+    }
+}
+
 /// Target metadata that can affect package-local analysis artifacts.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PackageCacheTarget {
     pub name: String,
     pub kind: TargetKind,
     pub src_path: PathBuf,
+}
+
+impl PackageCacheTarget {
+    /// Returns targets in the deterministic order used by cache fingerprints and snapshots.
+    pub fn sorted(targets: &[Self]) -> Vec<&Self> {
+        let mut targets = targets.iter().collect::<Vec<_>>();
+        targets.sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
+        targets
+    }
+
+    fn sort_key(&self) -> (u8, &str, &Path) {
+        (
+            self.kind.sort_order(),
+            self.name.as_str(),
+            self.src_path.as_path(),
+        )
+    }
 }
 
 /// Dependency edge metadata that can affect package-local path resolution.
@@ -178,4 +210,23 @@ pub struct PackageCacheDependency {
     pub is_normal: bool,
     pub is_build: bool,
     pub is_dev: bool,
+}
+
+impl PackageCacheDependency {
+    /// Returns dependencies in the deterministic order used by cache fingerprints and snapshots.
+    pub fn sorted(dependencies: &[Self]) -> Vec<&Self> {
+        let mut dependencies = dependencies.iter().collect::<Vec<_>>();
+        dependencies.sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
+        dependencies
+    }
+
+    fn sort_key(&self) -> (&str, String, bool, bool, bool) {
+        (
+            self.name.as_str(),
+            self.package_id.to_string(),
+            self.is_normal,
+            self.is_build,
+            self.is_dev,
+        )
+    }
 }

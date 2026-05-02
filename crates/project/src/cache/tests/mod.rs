@@ -127,3 +127,51 @@ pub struct DevHelper;
         "#]],
     );
 }
+
+#[test]
+fn plans_package_artifact_paths_from_cache_store() {
+    utils::check_cache_store_paths(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep_alias = { path = "dep", package = "dep-pkg" }
+
+//- /src/lib.rs
+pub struct App;
+
+//- /src/main.rs
+fn main() {}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep-pkg"
+version = "0.1.0"
+edition = "2021"
+
+//- /dep/src/lib.rs
+pub struct Dep;
+"#,
+        expect![[r#"
+            cache store `workspace target`
+            root target/rust_glancer/<workspace>
+            artifacts
+            - #0 app a64a418c3750f4192bf6c1c07e4b4053307a5e7e58cd8d1de0a74ca571c59b9b
+              target/rust_glancer/<workspace>/packages/package-0-app-a64a418c3750f4192bf6c1c07e4b4053307a5e7e58cd8d1de0a74ca571c59b9b.rgpkg
+            - #1 dep-pkg 4fab8a4495a92cf24f5756ab41dd3167f5c05a54961703e0988b5361e86ed651
+              target/rust_glancer/<workspace>/packages/package-1-dep-pkg-4fab8a4495a92cf24f5756ab41dd3167f5c05a54961703e0988b5361e86ed651.rgpkg
+
+            cache store `custom target`
+            root custom-target/rust_glancer/<workspace>
+            artifacts
+            - #0 app a64a418c3750f4192bf6c1c07e4b4053307a5e7e58cd8d1de0a74ca571c59b9b
+              custom-target/rust_glancer/<workspace>/packages/package-0-app-a64a418c3750f4192bf6c1c07e4b4053307a5e7e58cd8d1de0a74ca571c59b9b.rgpkg
+            - #1 dep-pkg 4fab8a4495a92cf24f5756ab41dd3167f5c05a54961703e0988b5361e86ed651
+              custom-target/rust_glancer/<workspace>/packages/package-1-dep-pkg-4fab8a4495a92cf24f5756ab41dd3167f5c05a54961703e0988b5361e86ed651.rgpkg
+        "#]],
+    );
+}

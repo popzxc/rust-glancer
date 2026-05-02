@@ -8,9 +8,10 @@ mod txn;
 
 pub use self::{
     cache::{
-        CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheArtifact, PackageCacheBodyIrState,
-        PackageCacheDependency, PackageCacheHeader, PackageCacheIdentity, PackageCachePayload,
-        PackageCachePlan, PackageCacheSchemaVersion, PackageCacheTarget,
+        CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, Fingerprint, PackageCacheArtifact,
+        PackageCacheBodyIrState, PackageCacheDependency, PackageCacheHeader, PackageCacheIdentity,
+        PackageCachePayload, PackageCachePlan, PackageCacheSchemaVersion, PackageCacheStore,
+        PackageCacheTarget,
     },
     host::{
         AnalysisChangeSummary, AnalysisHost, AnalysisSnapshot, ChangedFile, FileContext,

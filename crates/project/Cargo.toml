@@ -12,6 +12,7 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+blake3.workspace = true
 rg_analysis.workspace = true
 rg_body_ir.workspace = true
 rg_def_map.workspace = true

@@ -1,10 +1,16 @@
-use std::{fmt::Write as _, path::Path};
+use std::{
+    fmt::Write as _,
+    path::{Path, PathBuf},
+};
 
 use expect_test::Expect;
 use rg_workspace::{PackageId, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
-use crate::{PackageCacheDependency, PackageCacheIdentity, PackageCachePlan, PackageCacheTarget};
+use crate::{
+    PackageCacheDependency, PackageCacheIdentity, PackageCachePlan, PackageCacheStore,
+    PackageCacheTarget,
+};
 
 pub(super) fn check_cache_plan(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
@@ -14,6 +20,38 @@ pub(super) fn check_cache_plan(fixture: &str, expect: Expect) {
     let actual = render_cache_plan(&workspace, &plan);
 
     expect.assert_eq(&format!("{}\n", actual.trim_end()));
+}
+
+pub(super) fn check_cache_store_paths(fixture: &str, expect: Expect) {
+    let fixture = fixture_crate(fixture);
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should normalize");
+    let plan = PackageCachePlan::build(&workspace);
+
+    let mut dump = String::new();
+    render_cache_store(
+        "workspace target",
+        &workspace,
+        &plan,
+        &PackageCacheStore::for_workspace_with_target_dir(
+            &workspace,
+            workspace.workspace_root().join("target"),
+        ),
+        &mut dump,
+    );
+    writeln!(&mut dump).expect("string writes should not fail");
+    render_cache_store(
+        "custom target",
+        &workspace,
+        &plan,
+        &PackageCacheStore::for_workspace_with_target_dir(
+            &workspace,
+            PathBuf::from("custom-target"),
+        ),
+        &mut dump,
+    );
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
 fn render_cache_plan(workspace: &WorkspaceMetadata, plan: &PackageCachePlan) -> String {
@@ -26,6 +64,40 @@ fn render_cache_plan(workspace: &WorkspaceMetadata, plan: &PackageCachePlan) -> 
     }
 
     dump
+}
+
+fn render_cache_store(
+    label: &str,
+    workspace: &WorkspaceMetadata,
+    plan: &PackageCachePlan,
+    store: &PackageCacheStore,
+    dump: &mut String,
+) {
+    writeln!(dump, "cache store `{label}`").expect("string writes should not fail");
+    writeln!(
+        dump,
+        "root {}",
+        cache_path(workspace, store.root().to_path_buf()),
+    )
+    .expect("string writes should not fail");
+    writeln!(dump, "artifacts").expect("string writes should not fail");
+
+    for package in plan.packages() {
+        writeln!(
+            dump,
+            "- #{} {} {}",
+            package.package.0,
+            package.name,
+            store.package_fingerprint(package),
+        )
+        .expect("string writes should not fail");
+        writeln!(
+            dump,
+            "  {}",
+            cache_path(workspace, store.package_artifact_path(package)),
+        )
+        .expect("string writes should not fail");
+    }
 }
 
 fn render_package(
@@ -69,8 +141,7 @@ fn render_targets(
 ) {
     writeln!(dump, "targets").expect("string writes should not fail");
 
-    let mut targets = package.targets.iter().collect::<Vec<_>>();
-    targets.sort_by(|left, right| target_sort_key(left).cmp(&target_sort_key(right)));
+    let targets = PackageCacheTarget::sorted(&package.targets);
 
     if targets.is_empty() {
         writeln!(dump, "- <none>").expect("string writes should not fail");
@@ -89,14 +160,6 @@ fn render_targets(
     }
 }
 
-fn target_sort_key(target: &PackageCacheTarget) -> (u8, &str, &Path) {
-    (
-        target.kind.sort_order(),
-        target.name.as_str(),
-        target.src_path.as_path(),
-    )
-}
-
 fn render_dependencies(
     workspace: &WorkspaceMetadata,
     plan: &PackageCachePlan,
@@ -110,8 +173,7 @@ fn render_dependencies(
         return;
     }
 
-    let mut dependencies = package.dependencies.iter().collect::<Vec<_>>();
-    dependencies.sort_by(|left, right| dependency_sort_key(left).cmp(&dependency_sort_key(right)));
+    let dependencies = PackageCacheDependency::sorted(&package.dependencies);
 
     for dependency in dependencies {
         writeln!(
@@ -123,16 +185,6 @@ fn render_dependencies(
         )
         .expect("string writes should not fail");
     }
-}
-
-fn dependency_sort_key(dependency: &PackageCacheDependency) -> (&str, String, bool, bool, bool) {
-    (
-        dependency.name.as_str(),
-        dependency.package_id.to_string(),
-        dependency.is_normal,
-        dependency.is_build,
-        dependency.is_dev,
-    )
 }
 
 fn render_dependency_package(
@@ -195,4 +247,15 @@ fn relative_path(root: &Path, path: &Path) -> String {
     } else {
         relative_path.display().to_string()
     }
+}
+
+fn cache_path(workspace: &WorkspaceMetadata, path: PathBuf) -> String {
+    let path = relative_path(workspace.workspace_root(), &path);
+    let workspace_name = workspace
+        .workspace_root()
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "workspace".into());
+
+    path.replace(workspace_name.as_ref(), "<workspace>")
 }
