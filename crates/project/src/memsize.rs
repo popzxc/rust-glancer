@@ -1,9 +1,10 @@
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    AnalysisChangeSummary, AnalysisHost, ChangedFile, FileContext, PackageCacheArtifact,
-    PackageCacheBodyIrState, PackageCacheDependency, PackageCacheHeader, PackageCacheIdentity,
-    PackageCachePayload, PackageCachePlan, PackageCacheSchemaVersion, PackageCacheTarget,
+    AnalysisChangeSummary, AnalysisHost, CachedDependency, CachedPackage, CachedPackageId,
+    CachedPackageSlot, CachedPackageSource, CachedPath, CachedRustEdition, CachedTarget,
+    CachedTargetKind, CachedWorkspace, ChangedFile, FileContext, PackageCacheArtifact,
+    PackageCacheBodyIrState, PackageCacheHeader, PackageCachePayload, PackageCacheSchemaVersion,
     PackageResidency, PackageResidencyPlan, PackageResidencyPolicy, Project, ProjectBuildOptions,
     SavedFileChange,
 };
@@ -41,7 +42,7 @@ impl MemorySize for ProjectBuildOptions {
     }
 }
 
-impl MemorySize for PackageCachePlan {
+impl MemorySize for CachedWorkspace {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         recorder.scope("packages", |recorder| {
             self.packages.record_memory_children(recorder);
@@ -49,7 +50,7 @@ impl MemorySize for PackageCachePlan {
     }
 }
 
-impl MemorySize for PackageCacheIdentity {
+impl MemorySize for CachedPackage {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         record_fields!(
             recorder,
@@ -66,13 +67,53 @@ impl MemorySize for PackageCacheIdentity {
     }
 }
 
-impl MemorySize for PackageCacheTarget {
+impl MemorySize for CachedTarget {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         record_fields!(recorder, self, name, kind, src_path);
     }
 }
 
-impl MemorySize for PackageCacheDependency {
+impl MemorySize for CachedPackageSlot {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        self.0.record_memory_children(recorder);
+    }
+}
+
+impl MemorySize for CachedPackageId {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        self.0.record_memory_children(recorder);
+    }
+}
+
+impl MemorySize for CachedPath {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        self.0.record_memory_children(recorder);
+    }
+}
+
+impl MemorySize for CachedPackageSource {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+}
+
+impl MemorySize for CachedRustEdition {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+}
+
+impl MemorySize for CachedTargetKind {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Other(kind) => kind.record_memory_children(recorder),
+            Self::Lib
+            | Self::Bin
+            | Self::Example
+            | Self::Test
+            | Self::Bench
+            | Self::CustomBuild => {}
+        }
+    }
+}
+
+impl MemorySize for CachedDependency {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         record_fields!(
             recorder, self, package_id, name, is_normal, is_build, is_dev,

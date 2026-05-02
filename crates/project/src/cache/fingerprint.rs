@@ -5,7 +5,7 @@
 
 use std::{fmt, path::Path};
 
-use super::{PackageCacheDependency, PackageCacheIdentity, PackageCacheTarget};
+use super::{CachedDependency, CachedPackage, CachedPackageId, CachedTarget};
 
 /// Stable BLAKE3 fingerprint used by cache keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -32,13 +32,10 @@ pub(super) struct FingerprintBuilder {
 }
 
 impl FingerprintBuilder {
-    pub(super) fn package_identity(
-        workspace_root: &Path,
-        package: &PackageCacheIdentity,
-    ) -> Fingerprint {
+    pub(super) fn package_identity(workspace_root: &Path, package: &CachedPackage) -> Fingerprint {
         let mut builder = Self::new("package-identity");
 
-        builder.usize("package.slot", package.package.0);
+        builder.u64("package.slot", package.package.0);
         builder.package_id("package.id", workspace_root, &package.package_id);
         builder.str("package.name", &package.name);
         builder.str("package.source", &package.source.to_string());
@@ -46,16 +43,16 @@ impl FingerprintBuilder {
         builder.path(
             "package.manifest_path",
             workspace_root,
-            &package.manifest_path,
+            package.manifest_path.as_path(),
         );
 
-        let targets = PackageCacheTarget::sorted(&package.targets);
+        let targets = CachedTarget::sorted(&package.targets);
         builder.usize("targets.len", targets.len());
         for target in targets {
             builder.target(workspace_root, target);
         }
 
-        let dependencies = PackageCacheDependency::sorted(&package.dependencies);
+        let dependencies = CachedDependency::sorted(&package.dependencies);
         builder.usize("dependencies.len", dependencies.len());
         for dependency in dependencies {
             builder.dependency(workspace_root, dependency);
@@ -72,13 +69,13 @@ impl FingerprintBuilder {
         this
     }
 
-    fn target(&mut self, workspace_root: &Path, target: &PackageCacheTarget) {
+    fn target(&mut self, workspace_root: &Path, target: &CachedTarget) {
         self.str("target.name", &target.name);
         self.str("target.kind", &target.kind.to_string());
-        self.path("target.src_path", workspace_root, &target.src_path);
+        self.path("target.src_path", workspace_root, target.src_path.as_path());
     }
 
-    fn dependency(&mut self, workspace_root: &Path, dependency: &PackageCacheDependency) {
+    fn dependency(&mut self, workspace_root: &Path, dependency: &CachedDependency) {
         self.package_id(
             "dependency.package_id",
             workspace_root,
@@ -95,19 +92,14 @@ impl FingerprintBuilder {
         self.str(field, &path.display().to_string());
     }
 
-    fn package_id(
-        &mut self,
-        field: &str,
-        workspace_root: &Path,
-        package_id: &rg_workspace::PackageId,
-    ) {
+    fn package_id(&mut self, field: &str, workspace_root: &Path, package_id: &CachedPackageId) {
         self.str(
             field,
             &Self::normalize_package_id(workspace_root, package_id),
         );
     }
 
-    fn normalize_package_id(workspace_root: &Path, package_id: &rg_workspace::PackageId) -> String {
+    fn normalize_package_id(workspace_root: &Path, package_id: &CachedPackageId) -> String {
         let root_path = workspace_root.display().to_string();
         let mut root_paths = vec![root_path];
 

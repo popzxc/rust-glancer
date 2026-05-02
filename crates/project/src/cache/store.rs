@@ -1,14 +1,15 @@
 //! Filesystem path planning for future package cache artifacts.
 //!
 //! This module is intentionally inert: it decides where artifacts would live and how package
-//! identities are fingerprinted, but it does not read, write, or validate serialized bytes yet.
+//! cached package metadata is fingerprinted, but it does not read, write, or validate serialized
+//! bytes yet.
 
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
 };
 
-use super::{Fingerprint, PackageCacheIdentity};
+use super::{CachedPackage, Fingerprint};
 use rg_workspace::WorkspaceMetadata;
 
 const CACHE_DIR_NAME: &str = "rust_glancer";
@@ -51,7 +52,7 @@ impl PackageCacheStore {
         &self.root
     }
 
-    pub fn package_artifact_path(&self, package: &PackageCacheIdentity) -> PathBuf {
+    pub fn package_artifact_path(&self, package: &CachedPackage) -> PathBuf {
         let fingerprint = self.package_fingerprint(package);
         let file_name = format!(
             "package-{}-{}-{}.{}",
@@ -61,7 +62,7 @@ impl PackageCacheStore {
         self.root.join("packages").join(file_name)
     }
 
-    pub fn package_fingerprint(&self, package: &PackageCacheIdentity) -> Fingerprint {
+    pub fn package_fingerprint(&self, package: &CachedPackage) -> Fingerprint {
         package.fingerprint(&self.workspace_root)
     }
 }

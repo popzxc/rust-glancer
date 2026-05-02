@@ -4,20 +4,21 @@ use std::{
 };
 
 use expect_test::Expect;
-use rg_workspace::{PackageId, WorkspaceMetadata};
+use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
 use crate::{
-    PackageCacheDependency, PackageCacheIdentity, PackageCachePlan, PackageCacheStore,
-    PackageCacheTarget,
+    CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
+    CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, CachedWorkspace,
+    PackageCacheCodec, PackageCacheHeader, PackageCacheStore,
 };
 
-pub(super) fn check_cache_plan(fixture: &str, expect: Expect) {
+pub(super) fn check_cached_workspace(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let plan = PackageCachePlan::build(&workspace);
-    let actual = render_cache_plan(&workspace, &plan);
+    let cached_workspace = CachedWorkspace::build(&workspace);
+    let actual = render_cached_workspace(&workspace, &cached_workspace);
 
     expect.assert_eq(&format!("{}\n", actual.trim_end()));
 }
@@ -26,13 +27,13 @@ pub(super) fn check_cache_store_paths(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let plan = PackageCachePlan::build(&workspace);
+    let cached_workspace = CachedWorkspace::build(&workspace);
 
     let mut dump = String::new();
     render_cache_store(
         "workspace target",
         &workspace,
-        &plan,
+        &cached_workspace,
         &PackageCacheStore::for_workspace_with_target_dir(
             &workspace,
             workspace.workspace_root().join("target"),
@@ -43,7 +44,7 @@ pub(super) fn check_cache_store_paths(fixture: &str, expect: Expect) {
     render_cache_store(
         "custom target",
         &workspace,
-        &plan,
+        &cached_workspace,
         &PackageCacheStore::for_workspace_with_target_dir(
             &workspace,
             PathBuf::from("custom-target"),
@@ -54,13 +55,61 @@ pub(super) fn check_cache_store_paths(fixture: &str, expect: Expect) {
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
-fn render_cache_plan(workspace: &WorkspaceMetadata, plan: &PackageCachePlan) -> String {
-    let mut dump = String::new();
-    writeln!(&mut dump, "package cache plan").expect("string writes should not fail");
+pub(super) fn check_cache_header_codec(expect: Expect) {
+    let header = PackageCacheHeader::new(CachedPackage {
+        package: CachedPackageSlot(7),
+        package_id: CachedPackageId::from_stable_text("path+file:///workspace#app@0.1.0"),
+        name: "app".to_string(),
+        source: CachedPackageSource::Workspace,
+        edition: CachedRustEdition::Edition2024,
+        manifest_path: CachedPath::from_stable_text("/workspace/Cargo.toml"),
+        targets: vec![
+            CachedTarget {
+                name: "app".to_string(),
+                kind: CachedTargetKind::Lib,
+                src_path: CachedPath::from_stable_text("/workspace/src/lib.rs"),
+            },
+            CachedTarget {
+                name: "app-cli".to_string(),
+                kind: CachedTargetKind::Bin,
+                src_path: CachedPath::from_stable_text("/workspace/src/main.rs"),
+            },
+        ],
+        dependencies: vec![CachedDependency {
+            package_id: CachedPackageId::from_stable_text("path+file:///workspace/dep#dep@0.1.0"),
+            name: "dep".to_string(),
+            is_normal: true,
+            is_build: false,
+            is_dev: false,
+        }],
+    });
 
-    for package in plan.packages() {
+    let bytes =
+        PackageCacheCodec::encode_header(&header).expect("package cache header should serialize");
+    let decoded =
+        PackageCacheCodec::decode_header(&bytes).expect("package cache header should deserialize");
+    assert_eq!(decoded, header);
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "encoded header bytes {}", bytes.len())
+        .expect("string writes should not fail");
+    render_hex(&bytes, &mut dump);
+    writeln!(&mut dump).expect("string writes should not fail");
+    render_header("decoded header", &decoded, &mut dump);
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
+fn render_cached_workspace(
+    workspace: &WorkspaceMetadata,
+    cached_workspace: &CachedWorkspace,
+) -> String {
+    let mut dump = String::new();
+    writeln!(&mut dump, "cached workspace").expect("string writes should not fail");
+
+    for package in cached_workspace.packages() {
         writeln!(&mut dump).expect("string writes should not fail");
-        render_package(workspace, plan, package, &mut dump);
+        render_package(workspace, cached_workspace, package, &mut dump);
     }
 
     dump
@@ -69,7 +118,7 @@ fn render_cache_plan(workspace: &WorkspaceMetadata, plan: &PackageCachePlan) -> 
 fn render_cache_store(
     label: &str,
     workspace: &WorkspaceMetadata,
-    plan: &PackageCachePlan,
+    cached_workspace: &CachedWorkspace,
     store: &PackageCacheStore,
     dump: &mut String,
 ) {
@@ -82,7 +131,7 @@ fn render_cache_store(
     .expect("string writes should not fail");
     writeln!(dump, "artifacts").expect("string writes should not fail");
 
-    for package in plan.packages() {
+    for package in cached_workspace.packages() {
         writeln!(
             dump,
             "- #{} {} {}",
@@ -102,15 +151,20 @@ fn render_cache_store(
 
 fn render_package(
     workspace: &WorkspaceMetadata,
-    plan: &PackageCachePlan,
-    package: &PackageCacheIdentity,
+    cached_workspace: &CachedWorkspace,
+    package: &CachedPackage,
     dump: &mut String,
 ) {
-    // The header is rendered together with the identity because the artifact boundary is the unit
-    // future cache readers will validate before loading any package payload.
-    let header = plan
-        .artifact_header(package.package)
-        .expect("package from cache plan should have an artifact header");
+    // The header is rendered together with the cached package because artifact metadata is the
+    // unit future cache readers will validate before loading any package payload.
+    let header = cached_workspace
+        .artifact_header(
+            package
+                .package
+                .workspace_slot()
+                .expect("cached package slots should fit into workspace slots"),
+        )
+        .expect("cached package should have an artifact header");
 
     writeln!(dump, "package #{} {}", package.package.0, package.name)
         .expect("string writes should not fail");
@@ -118,7 +172,7 @@ fn render_package(
     writeln!(
         dump,
         "id {}",
-        normalize_package_id(workspace.workspace_root(), &package.package_id),
+        normalize_package_id(workspace.workspace_root(), package.package_id.as_str()),
     )
     .expect("string writes should not fail");
     writeln!(dump, "source {}", package.source).expect("string writes should not fail");
@@ -126,22 +180,56 @@ fn render_package(
     writeln!(
         dump,
         "manifest {}",
-        relative_path(workspace.workspace_root(), &package.manifest_path)
+        relative_path(workspace.workspace_root(), package.manifest_path.as_path())
     )
     .expect("string writes should not fail");
 
     render_targets(workspace, package, dump);
-    render_dependencies(workspace, plan, package, dump);
+    render_dependencies(workspace, cached_workspace, package, dump);
 }
 
-fn render_targets(
-    workspace: &WorkspaceMetadata,
-    package: &PackageCacheIdentity,
-    dump: &mut String,
-) {
+fn render_header(label: &str, header: &PackageCacheHeader, dump: &mut String) {
+    writeln!(dump, "{label}").expect("string writes should not fail");
+    writeln!(dump, "schema {}", header.schema_version.0).expect("string writes should not fail");
+    writeln!(
+        dump,
+        "package #{} {}",
+        header.package.package.0, header.package.name,
+    )
+    .expect("string writes should not fail");
+    writeln!(dump, "id {}", header.package.package_id).expect("string writes should not fail");
+    writeln!(dump, "source {}", header.package.source).expect("string writes should not fail");
+    writeln!(dump, "edition {}", header.package.edition).expect("string writes should not fail");
+    writeln!(dump, "manifest {}", header.package.manifest_path)
+        .expect("string writes should not fail");
+
+    writeln!(dump, "targets").expect("string writes should not fail");
+    for target in CachedTarget::sorted(&header.package.targets) {
+        writeln!(
+            dump,
+            "- {} [{}] {}",
+            target.name, target.kind, target.src_path,
+        )
+        .expect("string writes should not fail");
+    }
+
+    writeln!(dump, "dependencies").expect("string writes should not fail");
+    for dependency in CachedDependency::sorted(&header.package.dependencies) {
+        writeln!(
+            dump,
+            "- {} -> {} {}",
+            dependency.name,
+            dependency.package_id,
+            render_dependency_kinds(dependency),
+        )
+        .expect("string writes should not fail");
+    }
+}
+
+fn render_targets(workspace: &WorkspaceMetadata, package: &CachedPackage, dump: &mut String) {
     writeln!(dump, "targets").expect("string writes should not fail");
 
-    let targets = PackageCacheTarget::sorted(&package.targets);
+    let targets = CachedTarget::sorted(&package.targets);
 
     if targets.is_empty() {
         writeln!(dump, "- <none>").expect("string writes should not fail");
@@ -154,7 +242,7 @@ fn render_targets(
             "- {} [{}] {}",
             target.name,
             target.kind,
-            relative_path(workspace.workspace_root(), &target.src_path),
+            relative_path(workspace.workspace_root(), target.src_path.as_path()),
         )
         .expect("string writes should not fail");
     }
@@ -162,8 +250,8 @@ fn render_targets(
 
 fn render_dependencies(
     workspace: &WorkspaceMetadata,
-    plan: &PackageCachePlan,
-    package: &PackageCacheIdentity,
+    cached_workspace: &CachedWorkspace,
+    package: &CachedPackage,
     dump: &mut String,
 ) {
     writeln!(dump, "dependencies").expect("string writes should not fail");
@@ -173,14 +261,14 @@ fn render_dependencies(
         return;
     }
 
-    let dependencies = PackageCacheDependency::sorted(&package.dependencies);
+    let dependencies = CachedDependency::sorted(&package.dependencies);
 
     for dependency in dependencies {
         writeln!(
             dump,
             "- {} -> {} {}",
             dependency.name,
-            render_dependency_package(workspace, plan, &dependency.package_id),
+            render_dependency_package(workspace, cached_workspace, &dependency.package_id),
             render_dependency_kinds(dependency),
         )
         .expect("string writes should not fail");
@@ -189,17 +277,18 @@ fn render_dependencies(
 
 fn render_dependency_package(
     workspace: &WorkspaceMetadata,
-    plan: &PackageCachePlan,
-    package_id: &PackageId,
+    cached_workspace: &CachedWorkspace,
+    package_id: &CachedPackageId,
 ) -> String {
-    plan.packages()
+    cached_workspace
+        .packages()
         .iter()
         .find(|package| &package.package_id == package_id)
         .map(|package| format!("{} (#{})", package.name, package.package.0))
-        .unwrap_or_else(|| normalize_package_id(workspace.workspace_root(), package_id))
+        .unwrap_or_else(|| normalize_package_id(workspace.workspace_root(), package_id.as_str()))
 }
 
-fn render_dependency_kinds(dependency: &PackageCacheDependency) -> String {
+fn render_dependency_kinds(dependency: &CachedDependency) -> String {
     let mut kinds = Vec::new();
 
     if dependency.is_normal {
@@ -215,7 +304,7 @@ fn render_dependency_kinds(dependency: &PackageCacheDependency) -> String {
     format!("[{}]", kinds.join(", "))
 }
 
-fn normalize_package_id(root: &Path, package_id: &PackageId) -> String {
+fn normalize_package_id(root: &Path, package_id: &str) -> String {
     let root_path = root.display().to_string();
     let mut root_paths = vec![root_path];
 
@@ -258,4 +347,13 @@ fn cache_path(workspace: &WorkspaceMetadata, path: PathBuf) -> String {
         .unwrap_or_else(|| "workspace".into());
 
     path.replace(workspace_name.as_ref(), "<workspace>")
+}
+
+fn render_hex(bytes: &[u8], dump: &mut String) {
+    for chunk in bytes.chunks(32) {
+        for byte in chunk {
+            write!(dump, "{byte:02x}").expect("string writes should not fail");
+        }
+        writeln!(dump).expect("string writes should not fail");
+    }
 }

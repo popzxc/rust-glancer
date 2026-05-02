@@ -44,6 +44,7 @@ cargo_metadata = "0.23"
 derive_more = { version = "2.1.1" }
 expect-test = "1.5.1"
 ls_types = { package = "ls-types", version = "0.0.6" }
+rkyv = "0.8.12"
 tokio = "1.48"
 tower-lsp-server = "0.23"
 tracing = "0.1"

@@ -4,7 +4,7 @@ use expect_test::expect;
 
 #[test]
 fn plans_cache_artifacts_from_workspace_metadata() {
-    utils::check_cache_plan(
+    utils::check_cached_workspace(
         r#"
 //- /Cargo.toml
 [package]
@@ -73,7 +73,7 @@ edition = "2018"
 pub struct DevHelper;
 "#,
         expect![[r#"
-            package cache plan
+            cached workspace
 
             package #0 app
             schema 1
@@ -174,4 +174,33 @@ pub struct Dep;
               custom-target/rust_glancer/<workspace>/packages/package-1-dep-pkg-4fab8a4495a92cf24f5756ab41dd3167f5c05a54961703e0988b5361e86ed651.rgpkg
         "#]],
     );
+}
+
+#[test]
+fn roundtrips_package_cache_header_codec() {
+    utils::check_cache_header_codec(expect![[r#"
+        encoded header bytes 272
+        706174682b66696c653a2f2f2f776f726b73706163652361707040302e312e30
+        2f776f726b73706163652f436172676f2e746f6d6c2f776f726b73706163652f
+        7372632f6c69622e72732f776f726b73706163652f7372632f6d61696e2e7273
+        617070ffffffffff00000000000000000000000095000000c1ffffff6170702d
+        636c69ff01000000000000000000000096000000baffffff706174682b66696c
+        653a2f2f2f776f726b73706163652f6465702364657040302e312e30a4000000
+        dcffffff646570ffffffffff0100000001000000000000000700000000000000
+        a000000020ffffff617070ffffffffff00030000950000002cffffff64ffffff
+        02000000b8ffffff0100000000000000
+
+        decoded header
+        schema 1
+        package #7 app
+        id path+file:///workspace#app@0.1.0
+        source workspace
+        edition 2024
+        manifest /workspace/Cargo.toml
+        targets
+        - app [lib] /workspace/src/lib.rs
+        - app-cli [bin] /workspace/src/main.rs
+        dependencies
+        - dep -> path+file:///workspace/dep#dep@0.1.0 [normal]
+    "#]]);
 }
