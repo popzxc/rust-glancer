@@ -9,8 +9,8 @@
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
 use super::{
-    DefId, DefMapDb, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleRef, Path,
-    ScopeBinding, TargetRef,
+    DefId, DefMapDb, DefMapReadTxn, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleRef,
+    Path, ScopeBinding, TargetRef,
     scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
 };
 use rg_item_tree::VisibilityLevel;
@@ -77,6 +77,58 @@ impl PathResolutionEnv for DefMapDb {
 
     fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData> {
         self.def_map(module_ref.target)?.module(module_ref.module)
+    }
+
+    fn module_scope_entry<'a>(
+        &'a self,
+        module_ref: ModuleRef,
+        name: &str,
+    ) -> Option<ScopeEntryRef<'a>> {
+        self.module_data(module_ref)?
+            .scope
+            .entry(name)
+            .map(|entry| entry.as_ref())
+    }
+
+    fn module_scope_entries<'a>(
+        &'a self,
+        module_ref: ModuleRef,
+    ) -> Vec<(&'a Name, ScopeEntryRef<'a>)> {
+        self.module_data(module_ref)
+            .map(|module| {
+                module
+                    .scope
+                    .entries()
+                    .map(|(name, entry)| (name, entry.as_ref()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn local_def_kind(&self, local_def_ref: LocalDefRef) -> Option<LocalDefKind> {
+        self.local_def(local_def_ref)
+            .map(|local_def| local_def.kind)
+    }
+}
+
+impl PathResolutionEnv for DefMapReadTxn<'_> {
+    fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef> {
+        self.def_map(target)?.extern_prelude().get(name).copied()
+    }
+
+    fn prelude_module(&self, target: TargetRef) -> Option<ModuleRef> {
+        self.def_map(target)?.prelude()
+    }
+
+    fn root_module(&self, target: TargetRef) -> Option<ModuleRef> {
+        Some(ModuleRef {
+            target,
+            module: self.def_map(target)?.root_module()?,
+        })
+    }
+
+    fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData> {
+        self.module(module_ref)
     }
 
     fn module_scope_entry<'a>(
@@ -225,6 +277,21 @@ pub fn resolve_path_in_db(
     )
 }
 
+/// Resolves a path against one read transaction.
+pub fn resolve_path_in_txn(
+    txn: &DefMapReadTxn<'_>,
+    importing_module: ModuleRef,
+    path: &Path,
+) -> ResolvePathResult {
+    resolve_path_with_env(
+        txn,
+        importing_module,
+        path.absolute,
+        &path.segments,
+        NameResolutionFilter::AllNamespaces,
+    )
+}
+
 /// Resolves a path whose terminal segment is being used in the type namespace.
 pub fn resolve_path_in_type_namespace(
     db: &DefMapDb,
@@ -233,6 +300,21 @@ pub fn resolve_path_in_type_namespace(
 ) -> ResolvePathResult {
     resolve_path_with_env(
         db,
+        importing_module,
+        path.absolute,
+        &path.segments,
+        NameResolutionFilter::TypesOnly,
+    )
+}
+
+/// Resolves a type-position path against one read transaction.
+pub fn resolve_path_in_type_namespace_txn(
+    txn: &DefMapReadTxn<'_>,
+    importing_module: ModuleRef,
+    path: &Path,
+) -> ResolvePathResult {
+    resolve_path_with_env(
+        txn,
         importing_module,
         path.absolute,
         &path.segments,

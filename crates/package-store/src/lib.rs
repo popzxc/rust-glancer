@@ -5,10 +5,14 @@
 //! container directly, so later cache work can replace selected payloads with disk-backed entries
 //! without rewriting every query API.
 
-use std::{ops::Deref, sync::Arc};
+mod txn;
+
+use std::sync::Arc;
 
 use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_workspace::PackageSlot;
+
+pub use self::txn::{PackageRead, PackageStoreReadTxn};
 
 /// Resident package storage keyed by the stable package slots of one workspace snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -34,7 +38,7 @@ impl<T> PackageStore<T> {
 
     /// Starts a read transaction over this store.
     pub fn read_txn(&self) -> PackageStoreReadTxn<'_, T> {
-        PackageStoreReadTxn { store: self }
+        PackageStoreReadTxn::new(self)
     }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &T> + '_ {
@@ -68,68 +72,6 @@ impl<T> PackageStore<T> {
     /// Iterates over package payloads that this snapshot uniquely owns.
     pub fn iter_unique_mut(&mut self) -> impl Iterator<Item = &mut T> + '_ {
         self.packages.iter_mut().filter_map(Arc::get_mut)
-    }
-}
-
-/// Read-only package-store view used by query transactions.
-#[derive(Debug)]
-pub struct PackageStoreReadTxn<'db, T> {
-    store: &'db PackageStore<T>,
-}
-
-impl<T> Clone for PackageStoreReadTxn<'_, T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for PackageStoreReadTxn<'_, T> {}
-
-impl<'db, T> PackageStoreReadTxn<'db, T> {
-    pub fn read(&self, package: PackageSlot) -> Option<PackageRead<'db, T>> {
-        self.store
-            .packages
-            .get(package.0)
-            .map(|package| PackageRead::Resident(package.as_ref()))
-    }
-
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = PackageRead<'db, T>> + '_ {
-        self.store
-            .packages
-            .iter()
-            .map(|package| PackageRead::Resident(package.as_ref()))
-    }
-}
-
-/// One package payload read through a package-store transaction.
-#[derive(Debug)]
-pub enum PackageRead<'db, T> {
-    Resident(&'db T),
-}
-
-impl<T> Clone for PackageRead<'_, T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for PackageRead<'_, T> {}
-
-impl<'db, T> PackageRead<'db, T> {
-    pub fn into_ref(self) -> &'db T {
-        match self {
-            Self::Resident(package) => package,
-        }
-    }
-}
-
-impl<T> Deref for PackageRead<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Resident(package) => package,
-        }
     }
 }
 

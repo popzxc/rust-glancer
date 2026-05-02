@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 
-use rg_analysis::{Analysis, AnalysisReadTxn};
+use rg_analysis::Analysis;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
 use rg_def_map::{DefMapDb, PackageSlot};
 use rg_item_tree::ItemTreeDb;
@@ -11,7 +11,7 @@ use rg_workspace::WorkspaceMetadata;
 
 use crate::{
     BuildProfile, BuildProfileOptions, PackageResidencyPlan, PackageResidencyPolicy,
-    profile::BuildProfiler,
+    profile::BuildProfiler, txn::ProjectReadTxn,
 };
 
 /// Configuration that affects how a project snapshot is built and retained.
@@ -32,15 +32,6 @@ pub struct Project {
     pub(crate) def_map: DefMapDb,
     pub(crate) semantic_ir: SemanticIrDb,
     pub(crate) body_ir: BodyIrDb,
-}
-
-/// Read transaction for project-level query APIs.
-///
-/// The transaction is request-scoped: query callers create it once, build an `Analysis` view from
-/// it, and reuse that view for the duration of the request.
-#[derive(Debug, Clone)]
-pub struct ProjectReadTxn<'a> {
-    analysis: AnalysisReadTxn<'a>,
 }
 
 impl Project {
@@ -307,18 +298,12 @@ impl Project {
 
     /// Starts a read transaction over retained package data.
     pub fn read_txn(&self) -> ProjectReadTxn<'_> {
-        ProjectReadTxn {
-            analysis: AnalysisReadTxn::new(
-                self.def_map_db(),
-                self.semantic_ir_db(),
-                self.body_ir_db(),
-            ),
-        }
+        ProjectReadTxn::new(self.def_map_db(), self.semantic_ir_db(), self.body_ir_db())
     }
 
     /// Returns the high-level query API for this frozen project analysis.
     #[allow(dead_code)]
     pub fn analysis<'a>(&'a self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
-        Analysis::new(&txn.analysis)
+        Analysis::new(txn.analysis())
     }
 }

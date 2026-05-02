@@ -1,90 +1,44 @@
-//! Cursor-oriented queries over lowered function bodies.
-//!
-//! Analysis owns the public query vocabulary, but Body IR owns body source layout: expression
-//! spans, binding spans, body-local item names, let annotations, and dot-completion receiver
-//! ranges. Keeping those scans here makes the later crate boundary much less leaky.
+//! Private scanners that translate body source spans into cursor candidates.
 
 use rg_def_map::{Path, TargetRef};
 use rg_item_tree::{GenericArg, TypeBound, TypePath, TypeRef};
 use rg_parse::{FileId, Span};
 
 use crate::{
-    BindingId, BodyData, BodyId, BodyIrDb, BodyItemId, BodyItemRef, BodyRef, BodyTy, ExprData,
-    ExprId, ExprKind, ScopeId, StmtKind, ids::PatId, pat::PatKind, path::BodyPath,
+    BindingId, BodyData, BodyId, BodyIrReadTxn, BodyItemId, BodyItemRef, BodyRef, ExprData, ExprId,
+    ExprKind, ScopeId, StmtKind, ids::PatId, pat::PatKind, path::BodyPath,
 };
 
-/// Receiver expression selected for a dot-completion query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DotReceiver {
-    pub body: BodyRef,
-    pub receiver: ExprId,
+use super::{BodyCursorCandidate, DotReceiver};
+
+/// Scans one Body IR transaction for all cursor candidates at a source offset.
+pub(super) struct BodyCursorScanner<'txn, 'db> {
+    body_ir: &'txn BodyIrReadTxn<'db>,
+    target: TargetRef,
+    file_id: FileId,
+    offset: u32,
 }
 
-/// One body source node that can participate in cursor queries.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BodyCursorCandidate {
-    Body {
-        body: BodyRef,
-        span: Span,
-    },
-    Binding {
-        body: BodyRef,
-        binding: BindingId,
-        span: Span,
-    },
-    Expr {
-        body: BodyRef,
-        expr: ExprId,
-        span: Span,
-    },
-    LocalItem {
-        item: BodyItemRef,
-        span: Span,
-    },
-    TypePath {
-        body: BodyRef,
-        scope: ScopeId,
-        path: Path,
-        span: Span,
-    },
-    /// A value-namespace path segment inside a body expression or pattern.
-    ///
-    /// Type annotations have their own candidate kind because `Self` and body-local items need
-    /// type resolution. This variant is for value-looking paths such as associated functions and
-    /// enum variants, where a cursor on each segment can mean a different target.
-    ValuePath {
-        body: BodyRef,
-        scope: ScopeId,
-        path: Path,
-        span: Span,
-    },
-}
-
-impl BodyCursorCandidate {
-    pub fn span(&self) -> Span {
-        match self {
-            Self::Body { span, .. }
-            | Self::Binding { span, .. }
-            | Self::Expr { span, .. }
-            | Self::LocalItem { span, .. }
-            | Self::TypePath { span, .. }
-            | Self::ValuePath { span, .. } => *span,
-        }
-    }
-}
-
-impl BodyIrDb {
-    /// Returns body-local cursor candidates at `offset`, including let-annotation type paths.
-    pub fn cursor_candidates(
-        &self,
+impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
+    pub(super) fn new(
+        body_ir: &'txn BodyIrReadTxn<'db>,
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Vec<BodyCursorCandidate> {
-        let Some(source_node) = self.source_node_at(target, file_id, offset) else {
+    ) -> Self {
+        Self {
+            body_ir,
+            target,
+            file_id,
+            offset,
+        }
+    }
+
+    pub(super) fn scan(&self) -> Vec<BodyCursorCandidate> {
+        let Some(source_node) = self.source_node_at() else {
             return Vec::new();
         };
-        let Some(body) = self.body_data(source_node.body) else {
+        let Some(body) = self.body_ir.body_data(source_node.body) else {
             return Vec::new();
         };
 
@@ -93,16 +47,16 @@ impl BodyIrDb {
         TypePathCursorScanner {
             body_ref: source_node.body,
             body,
-            file_id,
-            offset,
+            file_id: self.file_id,
+            offset: self.offset,
             candidates: &mut candidates,
         }
         .scan();
         ValuePathCursorScanner {
             body_ref: source_node.body,
             body,
-            file_id,
-            offset,
+            file_id: self.file_id,
+            offset: self.offset,
             candidates: &mut candidates,
         }
         .scan();
@@ -110,47 +64,24 @@ impl BodyIrDb {
         candidates
     }
 
-    /// Returns the inferred receiver type for a dot-completion site.
-    /// Returns the receiver expression for a dot-completion site.
-    pub fn receiver_at_dot(
-        &self,
-        target: TargetRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> Option<DotReceiver> {
-        let (body, receiver) = self.receiver_expr_at_dot(target, file_id, offset)?;
-        Some(DotReceiver { body, receiver })
-    }
-
-    pub fn receiver_ty(&self, receiver: DotReceiver) -> Option<&BodyTy> {
-        self.body_data(receiver.body)?
-            .expr(receiver.receiver)
-            .map(|expr| &expr.ty)
-    }
-
-    fn source_node_at(
-        &self,
-        target: TargetRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> Option<SourceNodeAt> {
-        let target_bodies = self.target_bodies(target)?;
+    fn source_node_at(&self) -> Option<SourceNodeAt> {
+        let target_bodies = self.body_ir.target_bodies(self.target)?;
         let mut best = None;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if body.source.file_id != file_id || !body.source.span.contains(offset) {
+            if body.source.file_id != self.file_id || !body.source.span.contains(self.offset) {
                 continue;
             }
 
             let body_ref = BodyRef {
-                target,
+                target: self.target,
                 body: BodyId(body_idx),
             };
             best = Some(SourceNodeAt {
                 body: body_ref,
-                expr: Self::smallest_expr_at(body, file_id, offset),
-                binding: Self::smallest_binding_at(body, file_id, offset),
-                local_item: Self::smallest_local_item_at(body, file_id, offset),
+                expr: Self::smallest_expr_at(body, self.file_id, self.offset),
+                binding: Self::smallest_binding_at(body, self.file_id, self.offset),
+                local_item: Self::smallest_local_item_at(body, self.file_id, self.offset),
             });
         }
 
@@ -192,43 +123,43 @@ impl BodyIrDb {
         source_node: SourceNodeAt,
     ) -> BodyCursorCandidate {
         let mut candidates = Vec::new();
-        if let Some(expr) = source_node.expr {
-            if let Some(data) = body.expr(expr) {
-                candidates.push((
-                    data.source.span.len(),
-                    BodyCursorCandidate::Expr {
-                        body: source_node.body,
-                        expr,
-                        span: data.source.span,
-                    },
-                ));
-            }
+        if let Some(expr) = source_node.expr
+            && let Some(data) = body.expr(expr)
+        {
+            candidates.push((
+                data.source.span.len(),
+                BodyCursorCandidate::Expr {
+                    body: source_node.body,
+                    expr,
+                    span: data.source.span,
+                },
+            ));
         }
-        if let Some(binding) = source_node.binding {
-            if let Some(data) = body.binding(binding) {
-                candidates.push((
-                    data.source.span.len(),
-                    BodyCursorCandidate::Binding {
-                        body: source_node.body,
-                        binding,
-                        span: data.source.span,
-                    },
-                ));
-            }
+        if let Some(binding) = source_node.binding
+            && let Some(data) = body.binding(binding)
+        {
+            candidates.push((
+                data.source.span.len(),
+                BodyCursorCandidate::Binding {
+                    body: source_node.body,
+                    binding,
+                    span: data.source.span,
+                },
+            ));
         }
-        if let Some(item) = source_node.local_item {
-            if let Some(data) = body.local_item(item) {
-                candidates.push((
-                    data.name_source.span.len(),
-                    BodyCursorCandidate::LocalItem {
-                        item: BodyItemRef {
-                            body: source_node.body,
-                            item,
-                        },
-                        span: data.name_source.span,
+        if let Some(item) = source_node.local_item
+            && let Some(data) = body.local_item(item)
+        {
+            candidates.push((
+                data.name_source.span.len(),
+                BodyCursorCandidate::LocalItem {
+                    item: BodyItemRef {
+                        body: source_node.body,
+                        item,
                     },
-                ));
-            }
+                    span: data.name_source.span,
+                },
+            ));
         }
 
         candidates
@@ -240,31 +171,57 @@ impl BodyIrDb {
                 span: body.source.span,
             })
     }
+}
 
-    fn receiver_expr_at_dot(
-        &self,
+/// Finds the receiver expression that belongs to a dot-completion offset.
+pub(super) struct DotReceiverScanner<'txn, 'db> {
+    body_ir: &'txn BodyIrReadTxn<'db>,
+    target: TargetRef,
+    file_id: FileId,
+    offset: u32,
+}
+
+impl<'txn, 'db> DotReceiverScanner<'txn, 'db> {
+    pub(super) fn new(
+        body_ir: &'txn BodyIrReadTxn<'db>,
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Option<(BodyRef, ExprId)> {
-        let target_bodies = self.target_bodies(target)?;
+    ) -> Self {
+        Self {
+            body_ir,
+            target,
+            file_id,
+            offset,
+        }
+    }
+
+    pub(super) fn receiver_at_dot(&self) -> Option<DotReceiver> {
+        let (body, receiver) = self.receiver_expr_at_dot()?;
+        Some(DotReceiver { body, receiver })
+    }
+
+    fn receiver_expr_at_dot(&self) -> Option<(BodyRef, ExprId)> {
+        let target_bodies = self.body_ir.target_bodies(self.target)?;
         let mut best = None::<(BodyRef, ExprId, u32)>;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if body.source.file_id != file_id || !body.source.span.contains(offset) {
+            if body.source.file_id != self.file_id || !body.source.span.contains(self.offset) {
                 continue;
             }
 
             let body_ref = BodyRef {
-                target,
+                target: self.target,
                 body: BodyId(body_idx),
             };
             for expr in body.exprs.iter() {
-                if expr.source.file_id != file_id || !offset_in_dot_expr(expr, body, offset) {
+                if expr.source.file_id != self.file_id
+                    || !Self::offset_in_dot_expr(expr, body, self.offset)
+                {
                     continue;
                 }
 
-                let Some(receiver) = receiver_expr(expr) else {
+                let Some(receiver) = Self::receiver_expr(expr) else {
                     continue;
                 };
                 let len = expr.source.span.len();
@@ -275,6 +232,57 @@ impl BodyIrDb {
         }
 
         best.map(|(body, receiver, _)| (body, receiver))
+    }
+
+    fn offset_in_dot_expr(expr: &ExprData, body: &BodyData, offset: u32) -> bool {
+        let Some(receiver) = Self::receiver_expr(expr) else {
+            return false;
+        };
+        let Some(receiver_data) = body.expr(receiver) else {
+            return false;
+        };
+        let Some(dot_span) = Self::dot_span(expr) else {
+            return false;
+        };
+        let completion_end = Self::member_name_span(expr)
+            .map(|span| span.text.end)
+            .unwrap_or(expr.source.span.text.end);
+
+        receiver_data.source.span.text.end <= dot_span.text.start
+            && dot_span.text.end <= offset
+            && offset <= completion_end
+    }
+
+    fn receiver_expr(expr: &ExprData) -> Option<ExprId> {
+        match &expr.kind {
+            ExprKind::MethodCall {
+                receiver: Some(receiver),
+                ..
+            }
+            | ExprKind::Field {
+                base: Some(receiver),
+                ..
+            } => Some(*receiver),
+            _ => None,
+        }
+    }
+
+    fn member_name_span(expr: &ExprData) -> Option<Span> {
+        match &expr.kind {
+            ExprKind::MethodCall {
+                method_name_span, ..
+            } => *method_name_span,
+            ExprKind::Field { field_span, .. } => *field_span,
+            _ => None,
+        }
+    }
+
+    fn dot_span(expr: &ExprData) -> Option<Span> {
+        match &expr.kind {
+            ExprKind::MethodCall { dot_span, .. } => *dot_span,
+            ExprKind::Field { dot_span, .. } => *dot_span,
+            _ => None,
+        }
     }
 }
 
@@ -490,56 +498,5 @@ impl ValuePathCursorScanner<'_> {
                 });
             }
         }
-    }
-}
-
-fn offset_in_dot_expr(expr: &ExprData, body: &BodyData, offset: u32) -> bool {
-    let Some(receiver) = receiver_expr(expr) else {
-        return false;
-    };
-    let Some(receiver_data) = body.expr(receiver) else {
-        return false;
-    };
-    let Some(dot_span) = dot_span(expr) else {
-        return false;
-    };
-    let completion_end = member_name_span(expr)
-        .map(|span| span.text.end)
-        .unwrap_or(expr.source.span.text.end);
-
-    receiver_data.source.span.text.end <= dot_span.text.start
-        && dot_span.text.end <= offset
-        && offset <= completion_end
-}
-
-fn receiver_expr(expr: &ExprData) -> Option<ExprId> {
-    match &expr.kind {
-        ExprKind::MethodCall {
-            receiver: Some(receiver),
-            ..
-        }
-        | ExprKind::Field {
-            base: Some(receiver),
-            ..
-        } => Some(*receiver),
-        _ => None,
-    }
-}
-
-fn member_name_span(expr: &ExprData) -> Option<Span> {
-    match &expr.kind {
-        ExprKind::MethodCall {
-            method_name_span, ..
-        } => *method_name_span,
-        ExprKind::Field { field_span, .. } => *field_span,
-        _ => None,
-    }
-}
-
-fn dot_span(expr: &ExprData) -> Option<Span> {
-    match &expr.kind {
-        ExprKind::MethodCall { dot_span, .. } => *dot_span,
-        ExprKind::Field { dot_span, .. } => *dot_span,
-        _ => None,
     }
 }

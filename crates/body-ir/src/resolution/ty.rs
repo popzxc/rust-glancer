@@ -3,12 +3,13 @@
 //! These helpers preserve known nominal/generic facts. They do not infer missing generic
 //! arguments, solve bounds, or inspect expression bodies to discover return types.
 
-use rg_def_map::{DefMapDb, Path};
+use rg_def_map::Path;
 use rg_item_tree::{GenericArg, GenericParams, TypeRef};
-use rg_semantic_ir::{SemanticIrDb, TypePathContext};
+use rg_semantic_ir::TypePathContext;
 use rg_text::Name;
 
 use crate::{
+    query::{DefMapQuery, SemanticIrQuery},
     resolved::BodyTypePathResolution,
     ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
@@ -23,8 +24,8 @@ pub(super) type TypeSubst = Vec<(Name, BodyTy)>;
 /// Converts syntax-level type data into the small Body IR type vocabulary in one module/impl
 /// context, applying direct generic substitutions where they are already known.
 pub(super) fn ty_from_type_ref_in_context(
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     ty: &TypeRef,
     context: TypePathContext,
     unresolved_path_fallback: BodyTy,
@@ -163,8 +164,8 @@ pub(super) fn type_ref_is_self(ty: &TypeRef) -> bool {
 }
 
 fn generic_args_from_type_path_in_context(
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     type_path: &rg_item_tree::TypePath,
     context: TypePathContext,
     subst: &TypeSubst,
@@ -187,8 +188,8 @@ fn generic_args_from_type_path_in_context(
 }
 
 fn generic_args_from_item_tree_args_in_context(
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     args: &[GenericArg],
     context: TypePathContext,
     subst: &TypeSubst,
@@ -201,8 +202,8 @@ fn generic_args_from_item_tree_args_in_context(
 }
 
 fn generic_arg_from_item_tree_arg_in_context(
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     arg: &GenericArg,
     context: TypePathContext,
     subst: &TypeSubst,

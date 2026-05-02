@@ -3,6 +3,7 @@ mod memsize;
 mod profile;
 mod project;
 mod residency;
+mod txn;
 
 pub use self::{
     host::{
@@ -10,8 +11,9 @@ pub use self::{
         SavedFileChange,
     },
     profile::{BuildCheckpoint, BuildProfile, BuildProfileOptions, ResidentMemorySampler},
-    project::{Project, ProjectBuildOptions, ProjectReadTxn},
+    project::{Project, ProjectBuildOptions},
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
+    txn::ProjectReadTxn,
 };
 
 #[cfg(test)]

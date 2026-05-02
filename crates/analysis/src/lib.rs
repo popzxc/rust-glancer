@@ -2,10 +2,10 @@
 // yet. Snapshot tests exercise it until that production entrypoint exists.
 #![allow(dead_code)]
 
-use rg_body_ir::{BodyIrDb, BodyIrReadTxn, BodyTy};
-use rg_def_map::{DefMapDb, DefMapReadTxn, TargetRef};
+use rg_body_ir::{BodyIrReadTxn, BodyTy};
+use rg_def_map::{DefMapReadTxn, TargetRef};
 use rg_parse::FileId;
-use rg_semantic_ir::{SemanticIrDb, SemanticIrReadTxn};
+use rg_semantic_ir::SemanticIrReadTxn;
 
 mod completion;
 mod cursor;
@@ -18,6 +18,7 @@ mod path_render;
 mod signature;
 mod symbol;
 mod symbols;
+mod txn;
 mod ty;
 mod type_render;
 
@@ -30,6 +31,7 @@ pub use self::data::{
 };
 #[allow(unused_imports)]
 pub use self::data::{CompletionKind, CompletionTarget, NavigationTargetKind, SymbolKind};
+pub use self::txn::AnalysisReadTxn;
 
 /// High-level query API over the frozen phase databases.
 pub struct Analysis<'a> {
@@ -38,37 +40,12 @@ pub struct Analysis<'a> {
     body_ir: BodyIrReadTxn<'a>,
 }
 
-/// Read transaction shared by all analysis queries in one request.
-///
-/// The resident implementation is deliberately small. Once packages can be offloaded, this object
-/// becomes the request-scoped owner of any packages loaded back from disk.
-#[derive(Debug, Clone)]
-pub struct AnalysisReadTxn<'a> {
-    def_map: DefMapReadTxn<'a>,
-    semantic_ir: SemanticIrReadTxn<'a>,
-    body_ir: BodyIrReadTxn<'a>,
-}
-
-impl<'a> AnalysisReadTxn<'a> {
-    pub fn new(
-        def_map: &'a DefMapDb,
-        semantic_ir: &'a SemanticIrDb,
-        body_ir: &'a BodyIrDb,
-    ) -> Self {
-        Self {
-            def_map: def_map.read_txn(),
-            semantic_ir: semantic_ir.read_txn(),
-            body_ir: body_ir.read_txn(),
-        }
-    }
-}
-
 impl<'a> Analysis<'a> {
     pub fn new(txn: &AnalysisReadTxn<'a>) -> Self {
         Self {
-            def_map: txn.def_map.clone(),
-            semantic_ir: txn.semantic_ir.clone(),
-            body_ir: txn.body_ir.clone(),
+            def_map: txn.def_map().clone(),
+            semantic_ir: txn.semantic_ir().clone(),
+            body_ir: txn.body_ir().clone(),
         }
     }
 

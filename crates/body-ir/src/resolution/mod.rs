@@ -18,6 +18,7 @@ use crate::{
     BodyIrDb, BodyResolution,
     body::TargetBodiesStatus,
     ids::{BodyFunctionRef, BodyId, BodyRef, ScopeId},
+    query::{BodyIrQuery, DefMapQuery, SemanticIrQuery},
     resolved::BodyTypePathResolution,
     ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
@@ -78,9 +79,9 @@ pub(super) fn resolve_bodies_for_packages(
 }
 
 pub(super) fn resolve_type_path_in_scope(
-    db: &BodyIrDb,
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    db: &impl BodyIrQuery,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     body_ref: BodyRef,
     scope: ScopeId,
     path: &Path,
@@ -93,9 +94,9 @@ pub(super) fn resolve_type_path_in_scope(
 }
 
 pub(super) fn resolve_value_path_in_scope(
-    db: &BodyIrDb,
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    db: &impl BodyIrQuery,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     body_ref: BodyRef,
     scope: ScopeId,
     path: &Path,
@@ -109,8 +110,8 @@ pub(super) fn resolve_value_path_in_scope(
 }
 
 pub(super) fn ty_for_field(
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     field_ref: FieldRef,
 ) -> Option<BodyTy> {
     // Field declarations live in Semantic IR, but Analysis expects Body IR's small type
@@ -127,8 +128,8 @@ pub(super) fn ty_for_field(
 }
 
 pub(super) fn semantic_function_applies_to_receiver(
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     function_ref: FunctionRef,
     receiver_ty: &BodyNominalTy,
 ) -> bool {
@@ -136,17 +137,17 @@ pub(super) fn semantic_function_applies_to_receiver(
 }
 
 pub(super) fn semantic_trait_function_candidates_for_receiver(
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     receiver_ty: &BodyNominalTy,
 ) -> Vec<(FunctionRef, TraitApplicability)> {
     semantic_trait_function_candidates_for_receiver_impl(def_map, semantic_ir, receiver_ty)
 }
 
 pub(super) fn local_function_applies_to_receiver(
-    db: &BodyIrDb,
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    db: &impl BodyIrQuery,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     function_ref: BodyFunctionRef,
     receiver_ty: &BodyLocalNominalTy,
 ) -> bool {

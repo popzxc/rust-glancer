@@ -11,7 +11,7 @@ use rg_item_tree::{
 use rg_parse::{FileId, Span};
 
 use crate::{
-    EnumVariantRef, FieldRef, FunctionRef, ItemOwner, SemanticIrDb, TypeDefId, TypeDefRef,
+    EnumVariantRef, FieldRef, FunctionRef, ItemOwner, SemanticIrReadTxn, TypeDefId, TypeDefRef,
     TypePathContext,
 };
 
@@ -48,7 +48,8 @@ impl SemanticCursorCandidate {
     }
 }
 
-impl SemanticIrDb {
+impl SemanticIrReadTxn<'_> {
+    /// Returns cursor candidates inside semantic item signatures.
     pub fn signature_cursor_candidates(
         &self,
         target: TargetRef,
@@ -69,15 +70,16 @@ impl SemanticIrDb {
     }
 }
 
-struct SignatureCursorScanner<'a> {
-    semantic_ir: &'a SemanticIrDb,
+/// Scans semantic item signatures for names and type paths under the cursor.
+struct SignatureCursorScanner<'txn, 'db> {
+    semantic_ir: &'txn SemanticIrReadTxn<'db>,
     target: TargetRef,
     file_id: FileId,
     offset: u32,
-    candidates: &'a mut Vec<SemanticCursorCandidate>,
+    candidates: &'txn mut Vec<SemanticCursorCandidate>,
 }
 
-impl SignatureCursorScanner<'_> {
+impl SignatureCursorScanner<'_, '_> {
     fn scan(&mut self) {
         self.scan_structs();
         self.scan_unions();

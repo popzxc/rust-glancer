@@ -3,15 +3,14 @@
 //! Semantic IR can resolve module items, but body-local structs live in lexical scopes. This
 //! resolver checks those scopes first and then falls back to the semantic/def-map context.
 
-use rg_def_map::{DefMapDb, ModuleRef, Path};
+use rg_def_map::{ModuleRef, Path};
 use rg_item_tree::{GenericArg, TypeRef};
-use rg_semantic_ir::{
-    FunctionRef, SemanticIrDb, SemanticTypePathResolution, TypeDefRef, TypePathContext,
-};
+use rg_semantic_ir::{FunctionRef, SemanticTypePathResolution, TypeDefRef, TypePathContext};
 
 use crate::{
     body::BodyData,
     ids::{BodyItemId, BodyItemRef, BodyRef, ScopeId},
+    query::{DefMapQuery, SemanticIrQuery},
     resolved::BodyTypePathResolution,
     ty::{BodyGenericArg, BodyTy},
 };
@@ -20,17 +19,25 @@ use super::ty::{
     TypeSubst, substitute_type_param, ty_from_body_resolution, ty_from_type_ref_in_context,
 };
 
-pub(super) struct BodyTypePathResolver<'db, 'body> {
-    def_map: &'db DefMapDb,
-    semantic_ir: &'db SemanticIrDb,
+pub(super) struct BodyTypePathResolver<'db, 'body, D, S>
+where
+    D: DefMapQuery,
+    S: SemanticIrQuery,
+{
+    def_map: &'db D,
+    semantic_ir: &'db S,
     body_ref: BodyRef,
     body: &'body BodyData,
 }
 
-impl<'db, 'body> BodyTypePathResolver<'db, 'body> {
+impl<'db, 'body, D, S> BodyTypePathResolver<'db, 'body, D, S>
+where
+    D: DefMapQuery,
+    S: SemanticIrQuery,
+{
     pub(super) fn new(
-        def_map: &'db DefMapDb,
-        semantic_ir: &'db SemanticIrDb,
+        def_map: &'db D,
+        semantic_ir: &'db S,
         body_ref: BodyRef,
         body: &'body BodyData,
     ) -> Self {
@@ -246,8 +253,8 @@ impl<'db, 'body> BodyTypePathResolver<'db, 'body> {
 }
 
 pub(super) fn resolve_type_path_in_context(
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     context: TypePathContext,
     path: &Path,
 ) -> BodyTypePathResolution {

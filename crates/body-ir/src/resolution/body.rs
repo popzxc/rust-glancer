@@ -14,6 +14,7 @@ use crate::{
         BindingId, BodyFieldRef, BodyFunctionRef, BodyImplId, BodyItemRef, BodyRef, ExprId, ScopeId,
     },
     item::BodyFunctionOwner,
+    query::{DefMapQuery, SemanticIrQuery},
     resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
     stmt::BindingKind,
     ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
@@ -54,7 +55,7 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
         }
     }
 
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'db, '_> {
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'db, '_, DefMapDb, SemanticIrDb> {
         BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
@@ -616,17 +617,25 @@ impl<'db, 'body> BodyResolver<'db, 'body> {
 /// The main resolver uses this during the fixed-point pass, and analysis reuses it for cursor
 /// queries over path prefixes. Keeping it read-only avoids cloning bodies just to answer
 /// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
-pub(super) struct BodyValuePathResolver<'db, 'body> {
-    def_map: &'db DefMapDb,
-    semantic_ir: &'db SemanticIrDb,
+pub(super) struct BodyValuePathResolver<'db, 'body, D, S>
+where
+    D: DefMapQuery,
+    S: SemanticIrQuery,
+{
+    def_map: &'db D,
+    semantic_ir: &'db S,
     body_ref: BodyRef,
     body: &'body BodyData,
 }
 
-impl<'db, 'body> BodyValuePathResolver<'db, 'body> {
+impl<'db, 'body, D, S> BodyValuePathResolver<'db, 'body, D, S>
+where
+    D: DefMapQuery,
+    S: SemanticIrQuery,
+{
     pub(super) fn new(
-        def_map: &'db DefMapDb,
-        semantic_ir: &'db SemanticIrDb,
+        def_map: &'db D,
+        semantic_ir: &'db S,
         body_ref: BodyRef,
         body: &'body BodyData,
     ) -> Self {
@@ -677,7 +686,7 @@ impl<'db, 'body> BodyValuePathResolver<'db, 'body> {
         (BodyResolution::Item(result.resolved), ty)
     }
 
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'db, '_> {
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'db, '_, D, S> {
         BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
