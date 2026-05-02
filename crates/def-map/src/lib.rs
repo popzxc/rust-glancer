@@ -1,3 +1,4 @@
+mod cache;
 mod collect;
 mod cursor;
 mod data;
@@ -18,6 +19,7 @@ pub use rg_workspace::PackageSlot;
 pub use self::cursor::DefMapCursorCandidate;
 
 pub use self::{
+    cache::DefMapPackageBundle,
     data::{DefMap, LocalDefData, LocalDefKind, LocalImplData, ModuleData, ModuleOrigin},
     db::{DefMapDb, DefMapStats},
     ids::{

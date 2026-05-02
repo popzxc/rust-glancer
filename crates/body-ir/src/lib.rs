@@ -1,4 +1,5 @@
 mod body;
+mod cache;
 mod cursor;
 mod db;
 mod expr;
@@ -23,6 +24,7 @@ pub use self::{
         BodyData, BodyIrStats, BodySource, PackageBodies, ScopeData, TargetBodies,
         TargetBodiesStatus,
     },
+    cache::BodyIrPackageBundle,
     cursor::{BodyCursorCandidate, DotReceiver},
     db::BodyIrDb,
     expr::{ExprData, ExprKind, LiteralKind},

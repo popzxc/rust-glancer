@@ -1,10 +1,10 @@
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    DefId, DefMap, DefMapDb, DefMapStats, ImportBinding, ImportData, ImportId, ImportKind,
-    ImportPath, ImportRef, ImportSourcePath, LocalDefData, LocalDefId, LocalDefKind, LocalDefRef,
-    LocalImplData, LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleOrigin, ModuleRef,
-    ModuleScope, Package, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
+    DefId, DefMap, DefMapDb, DefMapPackageBundle, DefMapStats, ImportBinding, ImportData, ImportId,
+    ImportKind, ImportPath, ImportRef, ImportSourcePath, LocalDefData, LocalDefId, LocalDefKind,
+    LocalDefRef, LocalImplData, LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleOrigin,
+    ModuleRef, ModuleScope, Package, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
     import::ImportSourcePathSegment, scope::ScopeNameEntry,
 };
 
@@ -22,6 +22,14 @@ impl MemorySize for DefMapDb {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         recorder.scope("packages", |recorder| {
             self.packages.record_memory_children(recorder);
+        });
+    }
+}
+
+impl MemorySize for DefMapPackageBundle {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        recorder.scope("package", |recorder| {
+            self.package().record_memory_children(recorder);
         });
     }
 }

@@ -1,3 +1,4 @@
+mod cache;
 mod cursor;
 mod db;
 mod ids;
@@ -15,6 +16,7 @@ mod txn;
 mod tests;
 
 pub use self::{
+    cache::SemanticIrPackageBundle,
     cursor::SemanticCursorCandidate,
     db::SemanticIrDb,
     ids::{

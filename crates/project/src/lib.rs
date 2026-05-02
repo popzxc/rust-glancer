@@ -1,3 +1,4 @@
+mod cache;
 mod host;
 mod memsize;
 mod profile;
@@ -6,6 +7,11 @@ mod residency;
 mod txn;
 
 pub use self::{
+    cache::{
+        CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheArtifact, PackageCacheBodyIrState,
+        PackageCacheDependency, PackageCacheHeader, PackageCacheIdentity, PackageCachePayload,
+        PackageCachePlan, PackageCacheSchemaVersion, PackageCacheTarget,
+    },
     host::{
         AnalysisChangeSummary, AnalysisHost, AnalysisSnapshot, ChangedFile, FileContext,
         SavedFileChange,
