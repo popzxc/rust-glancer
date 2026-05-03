@@ -58,10 +58,6 @@ impl ProcessMemoryControl {
         }
     }
 
-    pub(crate) fn resident_bytes(&self) -> Option<usize> {
-        Self::allocator_stats().map(|stats| stats.resident_bytes)
-    }
-
     fn allocator_purge_enabled() -> bool {
         std::env::var(JEMALLOC_PURGE_AFTER_BUILD_ENV)
             .ok()

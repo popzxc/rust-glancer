@@ -205,22 +205,18 @@ impl<'db> PackageLowering<'db> {
                 item.syntax().text_range(),
             )),
             ast::Item::Const(item) => Some(builder.alloc_documented_item(
-                ItemKind::Const(Box::new(ConstItem::from_ast(
+                ItemKind::Const(ConstItem::from_ast(
                     &item,
                     builder.line_index,
                     self.interner,
-                ))),
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::Enum(item) => Some(builder.alloc_documented_item(
-                ItemKind::Enum(Box::new(EnumItem::from_ast(
-                    &item,
-                    builder.line_index,
-                    self.interner,
-                ))),
+                ItemKind::Enum(EnumItem::from_ast(&item, builder.line_index, self.interner)),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
@@ -235,10 +231,7 @@ impl<'db> PackageLowering<'db> {
             )),
             ast::Item::ExternCrate(item) => Some(
                 builder.alloc_documented_item(
-                    ItemKind::ExternCrate(Box::new(ExternCrateItem::from_ast(
-                        &item,
-                        self.interner,
-                    ))),
+                    ItemKind::ExternCrate(ExternCrateItem::from_ast(&item, self.interner)),
                     self.intern_ast_name_ref(item.name_ref()),
                     item.name_ref()
                         .map(|name_ref| name_ref.syntax().text_range()),
@@ -247,11 +240,11 @@ impl<'db> PackageLowering<'db> {
                 ),
             ),
             ast::Item::Fn(item) => Some(builder.alloc_documented_item(
-                ItemKind::Function(Box::new(FunctionItem::from_ast(
+                ItemKind::Function(FunctionItem::from_ast(
                     &item,
                     builder.line_index,
                     self.interner,
-                ))),
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
@@ -262,7 +255,7 @@ impl<'db> PackageLowering<'db> {
                     .lower_impl_item(builder, &item)
                     .context("while attempting to lower impl declaration")?;
                 Some(builder.alloc_documented_item(
-                    ItemKind::Impl(Box::new(impl_item)),
+                    ItemKind::Impl(impl_item),
                     None,
                     None,
                     VisibilityLevel::from_ast(item.visibility()),
@@ -299,7 +292,7 @@ impl<'db> PackageLowering<'db> {
                         )
                     })?;
                 Some(builder.alloc_documented_item(
-                    ItemKind::Module(Box::new(module_item)),
+                    ItemKind::Module(module_item),
                     module_name,
                     module_name_range,
                     VisibilityLevel::from_ast(item.visibility()),
@@ -307,22 +300,22 @@ impl<'db> PackageLowering<'db> {
                 ))
             }
             ast::Item::Static(item) => Some(builder.alloc_documented_item(
-                ItemKind::Static(Box::new(StaticItem::from_ast(
+                ItemKind::Static(StaticItem::from_ast(
                     &item,
                     builder.line_index,
                     self.interner,
-                ))),
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::Struct(item) => Some(builder.alloc_documented_item(
-                ItemKind::Struct(Box::new(StructItem::from_ast(
+                ItemKind::Struct(StructItem::from_ast(
                     &item,
                     builder.line_index,
                     self.interner,
-                ))),
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
@@ -333,7 +326,7 @@ impl<'db> PackageLowering<'db> {
                     .lower_trait_item(builder, &item)
                     .context("while attempting to lower trait declaration")?;
                 Some(builder.alloc_documented_item(
-                    ItemKind::Trait(Box::new(trait_item)),
+                    ItemKind::Trait(trait_item),
                     self.intern_ast_name(item.name()),
                     item.name().map(|name| name.syntax().text_range()),
                     VisibilityLevel::from_ast(item.visibility()),
@@ -341,29 +334,29 @@ impl<'db> PackageLowering<'db> {
                 ))
             }
             ast::Item::TypeAlias(item) => Some(builder.alloc_documented_item(
-                ItemKind::TypeAlias(Box::new(TypeAliasItem::from_ast(
+                ItemKind::TypeAlias(TypeAliasItem::from_ast(
                     &item,
                     builder.line_index,
                     self.interner,
-                ))),
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::Union(item) => Some(builder.alloc_documented_item(
-                ItemKind::Union(Box::new(UnionItem::from_ast(
+                ItemKind::Union(UnionItem::from_ast(
                     &item,
                     builder.line_index,
                     self.interner,
-                ))),
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::Use(item) => Some(builder.alloc_documented_item(
-                ItemKind::Use(Box::new(UseItem::from_ast(&item, self.interner))),
+                ItemKind::Use(UseItem::from_ast(&item, self.interner)),
                 normalized_use_name(&item).map(|name| self.intern_name(name)),
                 None,
                 VisibilityLevel::from_ast(item.visibility()),
@@ -507,22 +500,22 @@ impl<'db> PackageLowering<'db> {
     ) -> anyhow::Result<Option<ItemTreeId>> {
         let item_id = match item {
             ast::AssocItem::Const(item) => Some(builder.alloc_documented_item(
-                ItemKind::Const(Box::new(ConstItem::from_ast(
+                ItemKind::Const(ConstItem::from_ast(
                     &item,
                     builder.line_index,
                     self.interner,
-                ))),
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::AssocItem::Fn(item) => Some(builder.alloc_documented_item(
-                ItemKind::Function(Box::new(FunctionItem::from_ast(
+                ItemKind::Function(FunctionItem::from_ast(
                     &item,
                     builder.line_index,
                     self.interner,
-                ))),
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
@@ -530,11 +523,11 @@ impl<'db> PackageLowering<'db> {
             )),
             ast::AssocItem::MacroCall(_) => None,
             ast::AssocItem::TypeAlias(item) => Some(builder.alloc_documented_item(
-                ItemKind::TypeAlias(Box::new(TypeAliasItem::from_ast(
+                ItemKind::TypeAlias(TypeAliasItem::from_ast(
                     &item,
                     builder.line_index,
                     self.interner,
-                ))),
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),

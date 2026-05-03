@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Context as _;
 
-use crate::{FileId, Package};
+use crate::{FileId, LineIndex, Package};
 
 /// Parsed project metadata, packages, and source files.
 #[derive(Debug, Clone)]
@@ -92,6 +92,28 @@ impl ParseDb {
         for package in &mut self.packages {
             package.shrink_to_fit();
         }
+    }
+
+    /// Packs retained line indexes for all parsed files into shared source-map buffers.
+    pub fn pack_line_indexes(&mut self) {
+        let packages = (0..self.packages.len()).collect::<Vec<_>>();
+        self.pack_line_indexes_for_packages(&packages);
+    }
+
+    /// Packs line indexes for selected packages into shared source-map buffers.
+    pub fn pack_line_indexes_for_packages(&mut self, packages: &[usize]) {
+        if packages.is_empty() {
+            return;
+        }
+
+        let mut indexes = Vec::new();
+        for (package_slot, package) in self.packages.iter_mut().enumerate() {
+            if packages.contains(&package_slot) {
+                package.collect_line_indexes(&mut indexes);
+            }
+        }
+
+        LineIndex::pack_many(indexes.as_mut_slice());
     }
 
     /// Reparses a saved file for every parsed package that already owns `file_path`.

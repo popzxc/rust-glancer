@@ -174,6 +174,12 @@ impl FileDb {
         }
     }
 
+    pub(super) fn collect_line_indexes<'a>(&'a mut self, indexes: &mut Vec<&'a mut LineIndex>) {
+        for parsed_file in self.parsed_files.iter_mut() {
+            indexes.push(&mut parsed_file.line_index);
+        }
+    }
+
     /// Returns the cached parsed file for a previously known `FileId`.
     pub(super) fn parsed_file(&self, file_id: FileId) -> Option<ParsedFile<'_>> {
         self.parsed_files

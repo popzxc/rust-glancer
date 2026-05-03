@@ -76,7 +76,8 @@ pub(super) fn apply_source_changes(
         &fallback_package_roots,
         &mut changed_files,
     );
-    let changed_targets = targets_for_changed_files(host, &changed_files);
+    let changed_targets = targets_for_changed_files(host, &changed_files)
+        .context("while attempting to report changed analysis targets")?;
 
     Ok(AnalysisChangeSummary {
         changed_files,
@@ -149,24 +150,21 @@ fn promote_discovered_fallback_files(
     }
 }
 
-fn targets_for_changed_files(host: &AnalysisHost, changed_files: &[ChangedFile]) -> Vec<TargetRef> {
+fn targets_for_changed_files(
+    host: &AnalysisHost,
+    changed_files: &[ChangedFile],
+) -> anyhow::Result<Vec<TargetRef>> {
+    let txn = host.project.read_txn()?;
+    let analysis = host.project.analysis(&txn);
     let mut targets = Vec::new();
 
     for changed_file in changed_files {
-        for (target_ref, def_map) in host.project.def_map_db().target_maps() {
-            if target_ref.package != changed_file.package {
-                continue;
-            }
-
-            let owns_file = def_map
-                .modules()
-                .iter()
-                .any(|module| module.origin.contains_file(changed_file.file));
-            if owns_file && !targets.contains(&target_ref) {
+        for target_ref in analysis.targets_for_file(changed_file.package, changed_file.file) {
+            if !targets.contains(&target_ref) {
                 targets.push(target_ref);
             }
         }
     }
 
-    targets
+    Ok(targets)
 }

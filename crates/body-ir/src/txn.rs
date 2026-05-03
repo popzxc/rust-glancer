@@ -1,5 +1,7 @@
 //! Read transactions over frozen Body IR package data.
 
+use std::sync::Arc;
+
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path, TargetRef};
 use rg_package_store::{PackageRead, PackageStoreReadTxn};
 use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrReadTxn, TraitApplicability};
@@ -21,15 +23,21 @@ impl<'db> BodyIrReadTxn<'db> {
         Self { packages }
     }
 
-    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'db, PackageBodies>> + '_ {
+    pub fn from_package_arcs(packages: Vec<Arc<PackageBodies>>) -> Self {
+        Self {
+            packages: PackageStoreReadTxn::from_arcs(packages),
+        }
+    }
+
+    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'_, PackageBodies>> + '_ {
         self.packages.iter()
     }
 
-    pub fn package(&self, package: PackageSlot) -> Option<PackageRead<'db, PackageBodies>> {
+    pub fn package(&self, package: PackageSlot) -> Option<PackageRead<'_, PackageBodies>> {
         self.packages.read(package)
     }
 
-    pub fn target_bodies(&self, target: TargetRef) -> Option<&'db TargetBodies> {
+    pub fn target_bodies(&self, target: TargetRef) -> Option<&TargetBodies> {
         self.package(target.package)?
             .into_ref()
             .target(target.target)
@@ -47,7 +55,7 @@ impl<'db> BodyIrReadTxn<'db> {
     }
 
     /// Returns one body by project-wide body reference.
-    pub fn body_data(&self, body_ref: BodyRef) -> Option<&'db BodyData> {
+    pub fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
         self.target_bodies(body_ref.target)?.body(body_ref.body)
     }
 
@@ -156,7 +164,7 @@ impl<'db> BodyIrReadTxn<'db> {
     }
 
     /// Returns declaration data for one body-local field.
-    pub fn local_field_data(&self, field_ref: BodyFieldRef) -> Option<BodyFieldData<'db>> {
+    pub fn local_field_data(&self, field_ref: BodyFieldRef) -> Option<BodyFieldData<'_>> {
         let body = self.body_data(field_ref.item.body)?;
         let item = body.local_item(field_ref.item.item)?;
         let field = item.field(field_ref.index)?;
@@ -174,10 +182,7 @@ impl<'db> BodyIrReadTxn<'db> {
     }
 
     /// Returns declaration data for one body-local function.
-    pub fn local_function_data(
-        &self,
-        function_ref: BodyFunctionRef,
-    ) -> Option<&'db BodyFunctionData> {
+    pub fn local_function_data(&self, function_ref: BodyFunctionRef) -> Option<&BodyFunctionData> {
         self.body_data(function_ref.body)?
             .local_function(function_ref.function)
     }

@@ -18,7 +18,10 @@ pub use self::{
         AnalysisChangeSummary, AnalysisHost, AnalysisSnapshot, ChangedFile, FileContext,
         SavedFileChange,
     },
-    profile::{BuildCheckpoint, BuildProfile, BuildProfileOptions, ResidentMemorySampler},
+    profile::{
+        BuildCheckpoint, BuildProcessMemory, BuildProfile, BuildProfileOptions,
+        ProcessMemorySampler,
+    },
     project::{Project, ProjectBuildOptions},
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
     txn::ProjectReadTxn,

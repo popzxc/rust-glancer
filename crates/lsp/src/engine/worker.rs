@@ -8,7 +8,9 @@ use anyhow::Context as _;
 use rg_analysis::TypeHint;
 use rg_def_map::TargetRef;
 use rg_parse::TextSpan;
-use rg_project::{AnalysisHost, AnalysisSnapshot, FileContext, SavedFileChange};
+use rg_project::{
+    AnalysisHost, AnalysisSnapshot, FileContext, ProjectBuildOptions, SavedFileChange,
+};
 use rg_workspace::{SysrootSources, WorkspaceMetadata};
 use tower_lsp_server::ls_types;
 
@@ -37,9 +39,13 @@ impl EngineWorker {
 
         while let Ok(command) = receiver.recv() {
             match command {
-                EngineCommand::Initialize { root, respond_to } => {
+                EngineCommand::Initialize {
+                    root,
+                    build_options,
+                    respond_to,
+                } => {
                     tracing::trace!(root = %root.display(), "engine command started: initialize");
-                    let _ = respond_to.send(self.initialize(root));
+                    let _ = respond_to.send(self.initialize(root, build_options));
                 }
                 EngineCommand::DidSave {
                     path,
@@ -143,9 +149,17 @@ impl EngineWorker {
         tracing::debug!("LSP engine worker stopped");
     }
 
-    fn initialize(&mut self, root: PathBuf) -> anyhow::Result<()> {
+    fn initialize(
+        &mut self,
+        root: PathBuf,
+        build_options: ProjectBuildOptions,
+    ) -> anyhow::Result<()> {
         let started = Instant::now();
-        tracing::info!(root = %root.display(), "starting workspace indexing");
+        tracing::info!(
+            root = %root.display(),
+            package_residency = build_options.package_residency_policy.config_name(),
+            "starting workspace indexing"
+        );
 
         let manifest_path = root.join("Cargo.toml");
         if !manifest_path.exists() {
@@ -183,7 +197,7 @@ impl EngineWorker {
         }
 
         let workspace = workspace.with_sysroot_sources(sysroot);
-        let host = AnalysisHost::build(workspace)
+        let host = AnalysisHost::build_with_options(workspace, build_options)
             .context("while attempting to build LSP analysis host")?;
         let snapshot = host.snapshot();
         Self::post_project_build(self.memory_control.as_ref(), snapshot, "initial index");
@@ -251,7 +265,7 @@ impl EngineWorker {
     ) -> anyhow::Result<Vec<ls_types::CompletionItem>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
-        let txn = snapshot.read_txn();
+        let txn = snapshot.read_txn()?;
         let analysis = snapshot.analysis(&txn);
         let mut completions = Vec::new();
 
@@ -283,7 +297,7 @@ impl EngineWorker {
     ) -> anyhow::Result<Option<ls_types::Hover>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
-        let txn = snapshot.read_txn();
+        let txn = snapshot.read_txn()?;
         let analysis = snapshot.analysis(&txn);
 
         for (context, target, offset) in self.target_offsets(snapshot, &path, position)? {
@@ -324,7 +338,7 @@ impl EngineWorker {
     fn document_symbol(&self, path: PathBuf) -> anyhow::Result<Vec<ls_types::DocumentSymbol>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
-        let txn = snapshot.read_txn();
+        let txn = snapshot.read_txn()?;
         let analysis = snapshot.analysis(&txn);
         let mut lsp_symbols = Vec::new();
 
@@ -358,7 +372,7 @@ impl EngineWorker {
     ) -> anyhow::Result<Vec<ls_types::InlayHint>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
-        let txn = snapshot.read_txn();
+        let txn = snapshot.read_txn()?;
         let analysis = snapshot.analysis(&txn);
         let mut hints = Vec::<(rg_def_map::PackageSlot, TypeHint)>::new();
 
@@ -400,7 +414,7 @@ impl EngineWorker {
     fn workspace_symbol(&self, query: &str) -> anyhow::Result<Vec<ls_types::WorkspaceSymbol>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
-        let txn = snapshot.read_txn();
+        let txn = snapshot.read_txn()?;
         let analysis = snapshot.analysis(&txn);
         let mut lsp_symbols = Vec::new();
 
@@ -431,7 +445,7 @@ impl EngineWorker {
     ) -> anyhow::Result<Vec<ls_types::Location>> {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
-        let txn = snapshot.read_txn();
+        let txn = snapshot.read_txn()?;
         let analysis = snapshot.analysis(&txn);
         let mut locations = Vec::new();
 

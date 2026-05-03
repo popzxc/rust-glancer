@@ -5,7 +5,7 @@ use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
 use self::utils::{HostFixture, HostObservation};
-use crate::{BuildProfileOptions, Project, ProjectBuildOptions};
+use crate::{BuildProfileOptions, PackageResidencyPolicy, Project, ProjectBuildOptions};
 
 #[test]
 fn profiled_build_reports_phase_checkpoints_without_exposing_phase_dbs() {
@@ -28,7 +28,7 @@ pub struct User;
         ProjectBuildOptions::default(),
         BuildProfileOptions {
             retained_memory: true,
-            resident_memory_sampler: None,
+            process_memory_sampler: None,
         },
     )
     .expect("profiled project build should succeed");
@@ -770,6 +770,74 @@ pub struct Renamed;
             - dep[lib]
 
             type names at `app marker 0`
+            - <none>
+        "#]],
+    );
+}
+
+#[test]
+fn rebuilds_offloaded_path_dependency_after_source_change() {
+    let mut fixture = HostFixture::build_with_options(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub fn use_dep(_: dep::Api) {}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Api;
+"#,
+        ProjectBuildOptions {
+            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
+            ..ProjectBuildOptions::default()
+        },
+    );
+
+    fixture.check(
+        &[HostObservation::workspace_symbols("Api")],
+        expect![[r#"
+            workspace symbols `Api`
+            - struct Api @ dep[lib] dep/src/lib.rs
+        "#]],
+    );
+
+    fixture.check_save(
+        r#"
+//- /dep/src/lib.rs
+pub struct Renamed;
+"#,
+        &[
+            HostObservation::workspace_symbols("Renamed"),
+            HostObservation::workspace_symbols("Api"),
+        ],
+        expect![[r#"
+            changed files
+            - dep dep/src/lib.rs
+
+            affected packages
+            - app
+            - dep
+
+            changed targets
+            - dep[lib]
+
+            workspace symbols `Renamed`
+            - struct Renamed @ dep[lib] dep/src/lib.rs
+
+            workspace symbols `Api`
             - <none>
         "#]],
     );

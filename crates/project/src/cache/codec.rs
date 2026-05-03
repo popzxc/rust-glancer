@@ -14,12 +14,9 @@ use super::{
 pub struct PackageCacheCodec;
 
 impl PackageCacheCodec {
-    pub fn encode_header(header: &PackageCacheHeader) -> anyhow::Result<Vec<u8>> {
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(header)
-            .map_err(|error| anyhow::anyhow!("{error}"))
-            .context("while attempting to serialize package cache header")?;
-
-        Ok(bytes.to_vec())
+    pub fn encode_header(header: &PackageCacheHeader) -> anyhow::Result<rkyv::util::AlignedVec> {
+        Self::encode_with_cleared_arena(header)
+            .context("while attempting to serialize package cache header")
     }
 
     pub fn decode_header(bytes: &[u8]) -> anyhow::Result<PackageCacheHeader> {
@@ -32,12 +29,27 @@ impl PackageCacheCodec {
         Ok(header)
     }
 
-    pub fn encode_artifact(artifact: &PackageCacheArtifact) -> anyhow::Result<Vec<u8>> {
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(artifact)
-            .map_err(|error| anyhow::anyhow!("{error}"))
-            .context("while attempting to serialize package cache artifact")?;
+    pub fn encode_artifact(
+        artifact: &PackageCacheArtifact,
+    ) -> anyhow::Result<rkyv::util::AlignedVec> {
+        Self::encode_with_cleared_arena(artifact)
+            .context("while attempting to serialize package cache artifact")
+    }
 
-        Ok(bytes.to_vec())
+    fn encode_with_cleared_arena<T>(value: &T) -> anyhow::Result<rkyv::util::AlignedVec>
+    where
+        T: for<'a> rkyv::Serialize<
+                rkyv::api::high::HighSerializer<
+                    rkyv::util::AlignedVec,
+                    rkyv::ser::allocator::ArenaHandle<'a>,
+                    rkyv::rancor::Error,
+                >,
+            >,
+    {
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(value)
+            .map_err(|error| anyhow::anyhow!("{error}"));
+        rkyv::util::clear_arena();
+        bytes
     }
 
     pub fn decode_artifact(bytes: &[u8]) -> anyhow::Result<PackageCacheArtifact> {

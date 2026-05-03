@@ -1,6 +1,7 @@
 mod backend;
 mod capabilities;
 mod check;
+mod config;
 mod documents;
 mod engine;
 mod memory;

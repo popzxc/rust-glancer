@@ -15,7 +15,7 @@ use crate::{
     CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
     CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, CachedWorkspace,
     PackageCacheArtifact, PackageCacheBodyIrState, PackageCacheCodec, PackageCacheHeader,
-    PackageCachePayload, PackageCacheStore, Project,
+    PackageCachePayload, PackageCacheStore, PackageResidencyPolicy, Project, ProjectBuildOptions,
 };
 
 pub(super) fn check_cached_workspace(fixture: &str, expect: Expect) {
@@ -243,6 +243,64 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
+pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
+    let fixture = fixture_crate(fixture);
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should normalize");
+    let project = Project::build_with_options(
+        workspace,
+        ProjectBuildOptions {
+            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
+            ..ProjectBuildOptions::default()
+        },
+    )
+    .expect("fixture project should build");
+    let dep = package_slot_by_name(project.parse_db(), "dep");
+    let txn = project
+        .read_txn()
+        .expect("offloaded package read transaction should materialize");
+    let mut symbols = project.analysis(&txn).workspace_symbols("DepType");
+    symbols.sort_by_key(|symbol| {
+        (
+            symbol.kind,
+            symbol.name.clone(),
+            symbol.target.package.0,
+            symbol.target.target.0,
+        )
+    });
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "offloaded dependency query").expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "dep resident {}",
+        project.def_map_db().package(dep).is_some(),
+    )
+    .expect("string writes should not fail");
+    writeln!(&mut dump, "symbols").expect("string writes should not fail");
+
+    for symbol in symbols {
+        let package = project
+            .parse_db()
+            .package(symbol.target.package.0)
+            .expect("workspace symbol package should be parsed");
+        let target = package
+            .target(symbol.target.target)
+            .expect("workspace symbol target should be parsed");
+        writeln!(
+            &mut dump,
+            "- {} {} @ {}[{}]",
+            symbol.kind,
+            symbol.name,
+            package.package_name(),
+            target.kind,
+        )
+        .expect("string writes should not fail");
+    }
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
 fn package_artifact_from_project(
     cached_workspace: &CachedWorkspace,
     project: &Project,
@@ -275,6 +333,17 @@ fn package_artifact_from_project(
             PackageCacheBodyIrState::Built(Box::new(BodyIrPackageBundle::new(body_ir))),
         ),
     )
+}
+
+fn package_slot_by_name(parse: &rg_parse::ParseDb, package_name: &str) -> PackageSlot {
+    parse
+        .packages()
+        .iter()
+        .enumerate()
+        .find_map(|(idx, package)| {
+            (package.package_name() == package_name).then_some(PackageSlot(idx))
+        })
+        .unwrap_or_else(|| panic!("fixture package {package_name} should be parsed"))
 }
 
 fn render_cached_workspace(

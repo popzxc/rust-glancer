@@ -8,12 +8,23 @@ pub(super) const TOP_MEMORY_ROWS: usize = 12;
 pub(super) fn print_project_summary(project: &Project) {
     let workspace_package_count = project.parse_db().workspace_packages().count();
     let package_count = project.parse_db().package_count();
+    let residency = project.package_residency_plan();
+    let resident_package_count = residency
+        .packages()
+        .iter()
+        .filter(|decision| matches!(decision, rg_project::PackageResidency::Resident))
+        .count();
+    let offloaded_package_count = residency.packages().len() - resident_package_count;
     let def_map_stats = project.def_map_db().stats();
     let semantic_ir_stats = project.semantic_ir_db().stats();
     let body_ir_stats = project.body_ir_db().stats();
 
     println!("rust-glancer analysis built");
     println!("packages: {package_count} ({workspace_package_count} workspace)");
+    println!(
+        "package residency: {} ({resident_package_count} resident, {offloaded_package_count} offloaded)",
+        residency.policy().config_name(),
+    );
     println!(
         "def maps: {} targets, {} modules, {} unresolved imports",
         def_map_stats.target_count,
@@ -40,31 +51,36 @@ pub(super) fn print_project_summary(project: &Project) {
     );
 }
 
-pub(super) fn print_build_profile(profile: &BuildProfile) {
+pub(super) fn print_build_profile(profile: &BuildProfile, purge: Option<&AllocatorPurgeReport>) {
     println!();
     println!("build profile:");
     println!(
-        "  {:>10}  {:>12}  {:>12}  {:>12}  checkpoint",
-        "elapsed", "sampled", "active", "resident"
+        "  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  checkpoint",
+        "elapsed", "rg_sampled", "rg_total", "j_allocated", "j_active", "j_resident"
     );
 
     for checkpoint in profile.checkpoints() {
-        println!(
-            "  {:>10}  {:>12}  {:>12}  {:>12}  {}",
+        print_build_profile_row(
             format_duration(checkpoint.elapsed),
-            checkpoint
-                .retained_bytes
-                .map(format_bytes)
-                .unwrap_or_else(|| "-".to_string()),
-            checkpoint
-                .active_retained_bytes
-                .map(format_bytes)
-                .unwrap_or_else(|| "-".to_string()),
-            checkpoint
-                .resident_bytes
-                .map(format_bytes)
-                .unwrap_or_else(|| "-".to_string()),
+            checkpoint.retained_bytes,
+            checkpoint.active_retained_bytes,
+            checkpoint.allocated_bytes,
+            checkpoint.active_bytes,
+            checkpoint.resident_bytes,
             checkpoint.label,
+        );
+    }
+
+    if let Some(purge) = purge {
+        let project_checkpoint = profile.checkpoints().last();
+        print_build_profile_row(
+            "-".to_string(),
+            project_checkpoint.and_then(|checkpoint| checkpoint.retained_bytes),
+            project_checkpoint.and_then(|checkpoint| checkpoint.active_retained_bytes),
+            purge.after.map(|stats| stats.allocated_bytes),
+            purge.after.map(|stats| stats.active_bytes),
+            purge.after.map(|stats| stats.resident_bytes),
+            "after allocator purge",
         );
     }
 }
@@ -80,19 +96,34 @@ pub(super) fn print_allocator_stats(stats: rg_lsp::AllocatorStats) {
     );
 }
 
-pub(super) fn print_allocator_purge_after_build(memory_control: &dyn rg_lsp::MemoryControl) {
+#[derive(Debug, Clone, Copy)]
+pub(super) struct AllocatorPurgeReport {
+    result: rg_lsp::AllocatorPurgeResult,
+    before: Option<rg_lsp::AllocatorStats>,
+    after: Option<rg_lsp::AllocatorStats>,
+}
+
+pub(super) fn purge_allocator_after_build(
+    memory_control: &dyn rg_lsp::MemoryControl,
+) -> Option<AllocatorPurgeReport> {
     let before_stats = memory_control.allocator_stats();
-    let Some(result) = memory_control.try_purge_allocator() else {
-        return;
-    };
+    let result = memory_control.try_purge_allocator()?;
     let after_stats = memory_control.allocator_stats();
 
+    Some(AllocatorPurgeReport {
+        result,
+        before: before_stats,
+        after: after_stats,
+    })
+}
+
+pub(super) fn print_allocator_purge_after_build(purge: &AllocatorPurgeReport) {
     println!(
         "allocator purge after build: tcache_flushed {}, arenas_purged {}",
-        result.tcache_flushed, result.arenas_purged,
+        purge.result.tcache_flushed, purge.result.arenas_purged,
     );
 
-    if let (Some(before), Some(after)) = (before_stats, after_stats) {
+    if let (Some(before), Some(after)) = (purge.before, purge.after) {
         println!(
             "allocator purge stats: active {} -> {} ({}), resident {} -> {} ({}), mapped {} -> {} ({})",
             format_bytes(before.active_bytes),
@@ -108,7 +139,41 @@ pub(super) fn print_allocator_purge_after_build(memory_control: &dyn rg_lsp::Mem
     }
 }
 
+fn print_build_profile_row(
+    elapsed: String,
+    retained_bytes: Option<usize>,
+    active_retained_bytes: Option<usize>,
+    allocated_bytes: Option<usize>,
+    active_bytes: Option<usize>,
+    resident_bytes: Option<usize>,
+    label: &'static str,
+) {
+    println!(
+        "  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  {}",
+        elapsed,
+        retained_bytes
+            .map(format_bytes)
+            .unwrap_or_else(|| "-".to_string()),
+        active_retained_bytes
+            .map(format_bytes)
+            .unwrap_or_else(|| "-".to_string()),
+        allocated_bytes
+            .map(format_bytes)
+            .unwrap_or_else(|| "-".to_string()),
+        active_bytes
+            .map(format_bytes)
+            .unwrap_or_else(|| "-".to_string()),
+        resident_bytes
+            .map(format_bytes)
+            .unwrap_or_else(|| "-".to_string()),
+        label,
+    );
+}
+
 pub(super) fn print_memory_summary(project: &Project) {
+    // TODO: Make this summary recorder less allocation-heavy. Aggregate mode allocates path/type
+    // keys for the human-readable report, so it can perturb allocator state after the measured
+    // build profile even though it does not affect the reported post-purge row.
     let mut recorder = MemoryRecorder::new("project");
     project.record_memory_size(&mut recorder);
     let records = recorder.records();

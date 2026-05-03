@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use rg_project::{PackageResidencyPolicy, ProjectBuildOptions};
 
 mod analyze;
 mod runtime;
@@ -22,6 +23,9 @@ enum Command {
         path: PathBuf,
         #[clap(short, long)]
         memory: bool,
+        /// Which packages should remain resident after analysis is built.
+        #[clap(long = "package-residency", value_enum, default_value = "all-resident")]
+        package_residency: CliPackageResidencyPolicy,
     },
     /// Start the language server over stdio.
     Lsp,
@@ -32,7 +36,42 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Analyze { path, memory } => analyze::analyze(path, memory),
+        Command::Analyze {
+            path,
+            memory,
+            package_residency,
+        } => analyze::analyze(
+            path,
+            memory,
+            ProjectBuildOptions {
+                package_residency_policy: package_residency.into(),
+                ..ProjectBuildOptions::default()
+            },
+        ),
         Command::Lsp => rg_lsp::run_stdio_with_memory_control(runtime::memory_control()),
+    }
+}
+
+/// CLI-facing package residency names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliPackageResidencyPolicy {
+    AllResident,
+    Workspace,
+    WorkspaceAndPathDeps,
+    WorkspacePathAndDirectDeps,
+    AllOffloadable,
+}
+
+impl From<CliPackageResidencyPolicy> for PackageResidencyPolicy {
+    fn from(policy: CliPackageResidencyPolicy) -> Self {
+        match policy {
+            CliPackageResidencyPolicy::AllResident => Self::AllResident,
+            CliPackageResidencyPolicy::Workspace => Self::WorkspaceResident,
+            CliPackageResidencyPolicy::WorkspaceAndPathDeps => Self::WorkspaceAndPathDepsResident,
+            CliPackageResidencyPolicy::WorkspacePathAndDirectDeps => {
+                Self::WorkspacePathAndDirectDepsResident
+            }
+            CliPackageResidencyPolicy::AllOffloadable => Self::AllOffloadable,
+        }
     }
 }

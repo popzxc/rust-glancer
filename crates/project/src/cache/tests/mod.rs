@@ -276,3 +276,37 @@ pub struct App;
         "#]],
     );
 }
+
+#[test]
+fn materializes_offloaded_packages_for_queries() {
+    utils::check_offloaded_dependency_query(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct App;
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct DepType;
+"#,
+        expect![[r#"
+            offloaded dependency query
+            dep resident false
+            symbols
+            - struct DepType @ dep[lib]
+        "#]],
+    );
+}

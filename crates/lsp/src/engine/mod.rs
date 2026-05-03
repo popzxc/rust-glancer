@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::Context as _;
+use rg_project::ProjectBuildOptions;
 use tokio::sync::oneshot;
 use tower_lsp_server::ls_types;
 
@@ -34,9 +35,17 @@ impl EngineHandle {
         Self { sender }
     }
 
-    pub(crate) async fn initialize(&self, root: PathBuf) -> anyhow::Result<()> {
-        self.request(|respond_to| EngineCommand::Initialize { root, respond_to })
-            .await
+    pub(crate) async fn initialize(
+        &self,
+        root: PathBuf,
+        build_options: ProjectBuildOptions,
+    ) -> anyhow::Result<()> {
+        self.request(|respond_to| EngineCommand::Initialize {
+            root,
+            build_options,
+            respond_to,
+        })
+        .await
     }
 
     pub(crate) async fn did_save(&self, path: PathBuf, text: Option<String>) -> anyhow::Result<()> {

@@ -21,10 +21,22 @@ impl<'a> AnalysisReadTxn<'a> {
         semantic_ir: &'a SemanticIrDb,
         body_ir: &'a BodyIrDb,
     ) -> Self {
+        Self::from_phase_txns(
+            def_map.read_txn(),
+            semantic_ir.read_txn(),
+            body_ir.read_txn(),
+        )
+    }
+
+    pub fn from_phase_txns(
+        def_map: DefMapReadTxn<'a>,
+        semantic_ir: SemanticIrReadTxn<'a>,
+        body_ir: BodyIrReadTxn<'a>,
+    ) -> Self {
         Self {
-            def_map: def_map.read_txn(),
-            semantic_ir: semantic_ir.read_txn(),
-            body_ir: body_ir.read_txn(),
+            def_map,
+            semantic_ir,
+            body_ir,
         }
     }
 

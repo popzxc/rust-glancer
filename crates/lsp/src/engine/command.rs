@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use rg_project::ProjectBuildOptions;
 use tokio::sync::oneshot;
 use tower_lsp_server::ls_types;
 
@@ -9,6 +10,7 @@ pub(super) type EngineResponse<T> = oneshot::Sender<anyhow::Result<T>>;
 pub(super) enum EngineCommand {
     Initialize {
         root: PathBuf,
+        build_options: ProjectBuildOptions,
         respond_to: EngineResponse<()>,
     },
     DidSave {

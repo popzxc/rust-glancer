@@ -25,6 +25,7 @@ impl MemorySize for Project {
             recorder,
             self,
             workspace,
+            cached_workspace,
             build_options,
             package_residency,
             names,

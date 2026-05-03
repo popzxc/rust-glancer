@@ -9,9 +9,8 @@ use super::{
 
 /// Payload-bearing item kind.
 ///
-/// Unit variants are enough for plain local definitions. Variants whose syntax
-/// matters to later lowering stages carry structured item-tree facts, boxed to
-/// keep the enum size stable as those facts grow.
+/// Unit variants are enough for plain local definitions. Structured payloads live inline in the
+/// file item arena so lowering avoids one heap allocation per payload-bearing item.
 #[derive(
     Debug,
     Clone,
@@ -26,33 +25,33 @@ pub enum ItemKind {
     #[display("asm")]
     AsmExpr,
     #[display("const")]
-    Const(Box<ConstItem>),
+    Const(ConstItem),
     #[display("enum")]
-    Enum(Box<EnumItem>),
+    Enum(EnumItem),
     #[display("extern_block")]
     ExternBlock,
     #[display("extern_crate")]
-    ExternCrate(Box<ExternCrateItem>),
+    ExternCrate(ExternCrateItem),
     #[display("fn")]
-    Function(Box<FunctionItem>),
+    Function(FunctionItem),
     #[display("impl")]
-    Impl(Box<ImplItem>),
+    Impl(ImplItem),
     #[display("macro_definition")]
     MacroDefinition,
     #[display("module")]
-    Module(Box<ModuleItem>),
+    Module(ModuleItem),
     #[display("static")]
-    Static(Box<StaticItem>),
+    Static(StaticItem),
     #[display("struct")]
-    Struct(Box<StructItem>),
+    Struct(StructItem),
     #[display("trait")]
-    Trait(Box<TraitItem>),
+    Trait(TraitItem),
     #[display("type_alias")]
-    TypeAlias(Box<TypeAliasItem>),
+    TypeAlias(TypeAliasItem),
     #[display("union")]
-    Union(Box<UnionItem>),
+    Union(UnionItem),
     #[display("use")]
-    Use(Box<UseItem>),
+    Use(UseItem),
 }
 
 impl ItemKind {

@@ -1,5 +1,7 @@
 //! Resident semantic IR database and item-query helpers.
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 
 use rg_def_map::{DefMapDb, LocalDefRef, ModuleRef, PackageSlot, Path, TargetRef};
@@ -67,6 +69,10 @@ impl SemanticIrDb {
         SemanticIrReadTxn::new(self.packages.read_txn())
     }
 
+    pub fn read_txn_from_package_arcs<'a>(packages: Vec<Arc<PackageIr>>) -> SemanticIrReadTxn<'a> {
+        SemanticIrReadTxn::from_package_arcs(packages)
+    }
+
     pub(crate) fn new(packages: Vec<PackageIr>) -> Self {
         Self {
             packages: PackageStore::from_vec(packages),
@@ -112,7 +118,7 @@ impl SemanticIrDb {
     }
 
     /// Returns all package-level semantic IR sets.
-    pub fn packages(&self) -> impl ExactSizeIterator<Item = &PackageIr> + '_ {
+    pub fn packages(&self) -> impl Iterator<Item = &PackageIr> + '_ {
         self.packages.iter()
     }
 
@@ -123,6 +129,18 @@ impl SemanticIrDb {
     /// Returns one package by package slot.
     pub fn package(&self, package: PackageSlot) -> Option<&PackageIr> {
         self.packages.get(package)
+    }
+
+    pub fn package_arc(&self, package: PackageSlot) -> Option<Arc<PackageIr>> {
+        self.packages.get_arc(package)
+    }
+
+    pub fn replace_package(&mut self, package: PackageSlot, package_ir: PackageIr) -> Option<()> {
+        self.packages.replace(package, package_ir)
+    }
+
+    pub fn offload_package(&mut self, package: PackageSlot) -> Option<()> {
+        self.packages.offload(package)
     }
 
     /// Returns one target semantic IR by project-wide target reference.

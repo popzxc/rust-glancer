@@ -1,9 +1,8 @@
 //! Project-level read transactions.
 
 use rg_analysis::AnalysisReadTxn;
-use rg_body_ir::BodyIrDb;
-use rg_def_map::DefMapDb;
-use rg_semantic_ir::SemanticIrDb;
+
+use crate::{Project, cache::integration};
 
 /// Read transaction for project-level query APIs.
 ///
@@ -15,14 +14,10 @@ pub struct ProjectReadTxn<'a> {
 }
 
 impl<'a> ProjectReadTxn<'a> {
-    pub(crate) fn new(
-        def_map: &'a DefMapDb,
-        semantic_ir: &'a SemanticIrDb,
-        body_ir: &'a BodyIrDb,
-    ) -> Self {
-        Self {
-            analysis: AnalysisReadTxn::new(def_map, semantic_ir, body_ir),
-        }
+    pub(crate) fn new(project: &'a Project) -> anyhow::Result<Self> {
+        Ok(Self {
+            analysis: integration::materialized_analysis_txn(project)?,
+        })
     }
 
     pub(crate) fn analysis(&self) -> &AnalysisReadTxn<'a> {

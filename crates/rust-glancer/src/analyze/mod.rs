@@ -2,13 +2,17 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use rg_lsp::MemoryControl as _;
-use rg_project::{BuildProfileOptions, Project, ProjectBuildOptions};
+use rg_project::{BuildProcessMemory, BuildProfileOptions, Project, ProjectBuildOptions};
 use rg_workspace::{SysrootSources, WorkspaceMetadata};
 
 mod fmt;
 
 /// Runs project analysis for the Cargo manifest at `path` and prints a small build summary.
-pub(super) fn analyze(path: PathBuf, include_memory: bool) -> anyhow::Result<()> {
+pub(super) fn analyze(
+    path: PathBuf,
+    include_memory: bool,
+    build_options: ProjectBuildOptions,
+) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("folder {} does not exist", path.display());
     }
@@ -31,15 +35,23 @@ pub(super) fn analyze(path: PathBuf, include_memory: bool) -> anyhow::Result<()>
     let (project, build_profile) = if include_memory {
         let options = BuildProfileOptions {
             retained_memory: true,
-            resident_memory_sampler: Some(Box::new(move || memory_control.resident_bytes())),
+            process_memory_sampler: Some(Box::new(move || {
+                memory_control
+                    .allocator_stats()
+                    .map(|stats| BuildProcessMemory {
+                        allocated_bytes: stats.allocated_bytes,
+                        active_bytes: stats.active_bytes,
+                        resident_bytes: stats.resident_bytes,
+                    })
+            })),
         };
-        let (project, profile) =
-            Project::build_profiled(workspace, ProjectBuildOptions::default(), options)
-                .context("while attempting to build profiled project")?;
+        let (project, profile) = Project::build_profiled(workspace, build_options, options)
+            .context("while attempting to build profiled project")?;
         (project, Some(profile))
     } else {
         (
-            Project::build(workspace).context("while attempting to build project")?,
+            Project::build_with_options(workspace, build_options)
+                .context("while attempting to build project")?,
             None,
         )
     };
@@ -49,9 +61,12 @@ pub(super) fn analyze(path: PathBuf, include_memory: bool) -> anyhow::Result<()>
         if let Some(stats) = memory_control.allocator_stats() {
             self::fmt::print_allocator_stats(stats);
         }
-        self::fmt::print_allocator_purge_after_build(&memory_control);
+        let purge = self::fmt::purge_allocator_after_build(&memory_control);
+        if let Some(purge) = &purge {
+            self::fmt::print_allocator_purge_after_build(purge);
+        }
         if let Some(profile) = &build_profile {
-            self::fmt::print_build_profile(profile);
+            self::fmt::print_build_profile(profile, purge.as_ref());
         }
         self::fmt::print_memory_summary(&project);
     }

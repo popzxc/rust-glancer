@@ -150,8 +150,8 @@ pub struct AnalysisSnapshot<'a> {
 }
 
 impl<'a> AnalysisSnapshot<'a> {
-    /// Starts a read transaction over retained package data.
-    pub fn read_txn(&self) -> ProjectReadTxn<'a> {
+    /// Starts a read transaction over resident packages and materialized cache artifacts.
+    pub fn read_txn(&self) -> anyhow::Result<ProjectReadTxn<'a>> {
         self.project.read_txn()
     }
 
@@ -195,6 +195,8 @@ impl<'a> AnalysisSnapshot<'a> {
         let canonical_path = path
             .canonicalize()
             .with_context(|| format!("while attempting to canonicalize {}", path.display()))?;
+        let txn = self.read_txn()?;
+        let analysis = self.analysis(&txn);
 
         let mut contexts = Vec::new();
 
@@ -206,7 +208,7 @@ impl<'a> AnalysisSnapshot<'a> {
                     continue;
                 }
 
-                let targets = self.targets_for_file(package_slot, parsed_file.file_id());
+                let targets = analysis.targets_for_file(package_slot, parsed_file.file_id());
                 if targets.is_empty() {
                     continue;
                 }
@@ -223,23 +225,12 @@ impl<'a> AnalysisSnapshot<'a> {
     }
 
     /// Returns target contexts whose module tree contains a package-local file.
-    pub fn targets_for_file(&self, package: PackageSlot, file: FileId) -> Vec<TargetRef> {
-        let mut targets = Vec::new();
-
-        for (target_ref, def_map) in self.project.def_map_db().target_maps() {
-            if target_ref.package != package {
-                continue;
-            }
-
-            let owns_file = def_map
-                .modules()
-                .iter()
-                .any(|module| module.origin.contains_file(file));
-            if owns_file {
-                targets.push(target_ref);
-            }
-        }
-
-        targets
+    pub fn targets_for_file(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+    ) -> anyhow::Result<Vec<TargetRef>> {
+        let txn = self.read_txn()?;
+        Ok(self.analysis(&txn).targets_for_file(package, file))
     }
 }

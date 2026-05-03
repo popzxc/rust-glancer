@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ra_syntax::TextRange;
 
 /// Span representation in UTF-8 byte offsets from the beginning of the file.
@@ -81,50 +83,67 @@ pub struct Position {
 
 #[derive(Debug, Clone)]
 pub struct LineIndex {
-    pub(crate) line_starts: Vec<u32>,
-    pub(crate) line_byte_lens: Vec<u32>,
-    pub(crate) non_ascii_lines: Vec<LineUtf16Metrics>,
+    pub(crate) lines: LineIndexStorage<LineInfo>,
+    pub(crate) non_ascii_lines: LineIndexStorage<LineUtf16Metrics>,
+    pub(crate) non_ascii_ranges: LineIndexStorage<LineCharRange>,
 }
 
 impl LineIndex {
     /// Builds a fast line-start index for repeated offset-to-position lookups.
     pub fn new(source: &str) -> Self {
-        let mut line_starts = vec![0];
+        let mut index = Self {
+            lines: LineIndexStorage::new(),
+            non_ascii_lines: LineIndexStorage::new(),
+            non_ascii_ranges: LineIndexStorage::new(),
+        };
+        let mut line_start = 0;
+        let mut line = 0;
+
         for (idx, byte) in source.as_bytes().iter().enumerate() {
             if *byte == b'\n' {
-                line_starts.push(idx + 1);
+                index.push_line(source, line, line_start, idx + 1);
+                line_start = idx + 1;
+                line += 1;
             }
         }
+        index.push_line(source, line, line_start, source.len());
 
-        let mut line_byte_lens = Vec::with_capacity(line_starts.len());
+        index
+    }
+
+    pub(crate) fn pack_many(indexes: &mut [&mut Self]) {
+        let mut lines = Vec::new();
         let mut non_ascii_lines = Vec::new();
-        for (line_idx, line_start) in line_starts.iter().enumerate() {
-            let next_line_start = line_starts
-                .get(line_idx + 1)
-                .copied()
-                .unwrap_or(source.len());
-            let line_end = Self::line_text_end(source.as_bytes(), *line_start, next_line_start);
-            let line_text = &source[*line_start..line_end];
+        let mut non_ascii_ranges = Vec::new();
+        let mut ranges = Vec::with_capacity(indexes.len());
 
-            line_byte_lens
-                .push(u32::try_from(line_text.len()).expect("line length should fit into u32"));
-            if let Some(metrics) = LineUtf16Metrics::new(
-                u32::try_from(line_idx).expect("line index should fit into u32"),
-                line_text,
-            ) {
-                non_ascii_lines.push(metrics);
-            }
+        // Copy every file-local line table into package-local buffers. The resulting shared
+        // buffers keep file offsets stable while replacing many small per-file allocations with a
+        // few package-level allocations.
+        for index in indexes.iter() {
+            ranges.push(index.append_to_packed_buffers(
+                &mut lines,
+                &mut non_ascii_lines,
+                &mut non_ascii_ranges,
+            ));
         }
 
-        let line_starts = line_starts
-            .iter()
-            .map(|start| u32::try_from(*start).expect("source offsets should fit into u32"))
-            .collect();
+        let lines = Arc::<[LineInfo]>::from(lines.into_boxed_slice());
+        let non_ascii_lines = Arc::<[LineUtf16Metrics]>::from(non_ascii_lines.into_boxed_slice());
+        let non_ascii_ranges = Arc::<[LineCharRange]>::from(non_ascii_ranges.into_boxed_slice());
 
-        Self {
-            line_starts,
-            line_byte_lens,
-            non_ascii_lines,
+        for (index, range) in indexes.iter_mut().zip(ranges) {
+            **index = Self {
+                lines: LineIndexStorage::shared(lines.clone(), range.lines),
+                non_ascii_lines: LineIndexStorage::shared(
+                    non_ascii_lines.clone(),
+                    range.non_ascii_lines,
+                ),
+                non_ascii_ranges: LineIndexStorage::shared(
+                    non_ascii_ranges.clone(),
+                    range.non_ascii_ranges,
+                ),
+            };
         }
     }
 
@@ -132,8 +151,9 @@ impl LineIndex {
     pub fn position(&self, offset: u32) -> Position {
         let offset = usize::try_from(offset).expect("offset should fit into usize");
         let line_index = self.line_for_offset(offset);
-        let line_start = usize::try_from(self.line_starts[line_index])
-            .expect("line start should fit into usize");
+        let lines = self.lines.as_slice();
+        let line_start =
+            usize::try_from(lines[line_index].start).expect("line start should fit into usize");
         let column = offset.saturating_sub(line_start);
 
         Position {
@@ -146,38 +166,43 @@ impl LineIndex {
     pub fn utf16_position(&self, offset: u32) -> Position {
         let offset = usize::try_from(offset).expect("offset should fit into usize");
         let line_index = self.line_for_offset(offset);
-        let line_start = usize::try_from(self.line_starts[line_index])
-            .expect("line start should fit into usize");
+        let line = self.lines.as_slice()[line_index];
+        let line_start = usize::try_from(line.start).expect("line start should fit into usize");
         let byte_column = offset.saturating_sub(line_start);
         let byte_column = u32::try_from(byte_column).unwrap_or(u32::MAX);
-        let line_byte_len = self.line_byte_lens[line_index];
 
         Position {
             line: u32::try_from(line_index).expect("line index should fit into u32"),
             column: self
                 .utf16_metrics(line_index)
-                .map(|metrics| metrics.utf16_column_for_byte(byte_column))
-                .unwrap_or_else(|| byte_column.min(line_byte_len)),
+                .map(|metrics| {
+                    metrics.utf16_column_for_byte(self.non_ascii_ranges_for(metrics), byte_column)
+                })
+                .unwrap_or_else(|| byte_column.min(line.byte_len)),
         }
     }
 
     /// Converts a zero-based line/UTF-16-column position into a byte offset.
     pub fn offset_from_utf16_position(&self, position: Position) -> Option<u32> {
         let line_index = usize::try_from(position.line).ok()?;
-        let line_start = *self.line_starts.get(line_index)?;
-        let line_byte_len = *self.line_byte_lens.get(line_index)?;
+        let line = *self.lines.as_slice().get(line_index)?;
         let byte_column = match self.utf16_metrics(line_index) {
-            Some(metrics) => metrics.byte_column_for_utf16(position.column)?,
-            None if position.column <= line_byte_len => position.column,
+            Some(metrics) => metrics
+                .byte_column_for_utf16(self.non_ascii_ranges_for(metrics), position.column)?,
+            None if position.column <= line.byte_len => position.column,
             None => return None,
         };
 
-        line_start.checked_add(byte_column)
+        line.start.checked_add(byte_column)
     }
 
     fn line_for_offset(&self, offset: usize) -> usize {
         let offset = u32::try_from(offset).unwrap_or(u32::MAX);
-        match self.line_starts.binary_search(&offset) {
+        match self
+            .lines
+            .as_slice()
+            .binary_search_by_key(&offset, |line| line.start)
+        {
             Ok(line) => line,
             Err(line) => line.saturating_sub(1),
         }
@@ -186,9 +211,14 @@ impl LineIndex {
     fn utf16_metrics(&self, line_index: usize) -> Option<&LineUtf16Metrics> {
         let line_index = u32::try_from(line_index).ok()?;
         self.non_ascii_lines
+            .as_slice()
             .binary_search_by_key(&line_index, |metrics| metrics.line)
             .ok()
-            .map(|idx| &self.non_ascii_lines[idx])
+            .map(|idx| &self.non_ascii_lines.as_slice()[idx])
+    }
+
+    fn non_ascii_ranges_for(&self, metrics: &LineUtf16Metrics) -> &[LineCharRange] {
+        metrics.ranges(self.non_ascii_ranges.as_slice())
     }
 
     fn line_text_end(bytes: &[u8], start: usize, next_line_start: usize) -> usize {
@@ -203,28 +233,164 @@ impl LineIndex {
         end
     }
 
+    fn push_line(&mut self, source: &str, line: u32, line_start: usize, next_line_start: usize) {
+        let line_end = Self::line_text_end(source.as_bytes(), line_start, next_line_start);
+        let line_text = &source[line_start..line_end];
+
+        self.lines.push(LineInfo {
+            start: u32::try_from(line_start).expect("source offsets should fit into u32"),
+            byte_len: u32::try_from(line_text.len()).expect("line length should fit into u32"),
+        });
+
+        if let Some(metrics) =
+            LineUtf16Metrics::new(line, line_text, self.non_ascii_ranges.owned_vec_mut())
+        {
+            self.non_ascii_lines.push(metrics);
+        }
+    }
+
     pub(crate) fn shrink_to_fit(&mut self) {
-        self.line_starts.shrink_to_fit();
-        self.line_byte_lens.shrink_to_fit();
+        self.lines.shrink_to_fit();
         self.non_ascii_lines.shrink_to_fit();
-        for metrics in &mut self.non_ascii_lines {
-            metrics.shrink_to_fit();
+        self.non_ascii_ranges.shrink_to_fit();
+    }
+
+    fn append_to_packed_buffers(
+        &self,
+        lines: &mut Vec<LineInfo>,
+        non_ascii_lines: &mut Vec<LineUtf16Metrics>,
+        non_ascii_ranges: &mut Vec<LineCharRange>,
+    ) -> PackedLineIndexRanges {
+        let line_range = LineIndexRange::new(lines.len(), self.lines.len());
+        lines.extend_from_slice(self.lines.as_slice());
+
+        let non_ascii_range =
+            LineIndexRange::new(non_ascii_ranges.len(), self.non_ascii_ranges.len());
+        non_ascii_ranges.extend_from_slice(self.non_ascii_ranges.as_slice());
+
+        let metrics_range = LineIndexRange::new(non_ascii_lines.len(), self.non_ascii_lines.len());
+        let old_non_ascii_start = self.non_ascii_ranges.start();
+        for metrics in self.non_ascii_lines.as_slice() {
+            let mut metrics = *metrics;
+            let local_range_start = usize::try_from(metrics.range_start)
+                .expect("range start should fit into usize")
+                .saturating_sub(old_non_ascii_start);
+            metrics.range_start = u32::try_from(non_ascii_range.start + local_range_start)
+                .expect("packed non-ASCII range start should fit into u32");
+            non_ascii_lines.push(metrics);
+        }
+
+        PackedLineIndexRanges {
+            lines: line_range,
+            non_ascii_lines: metrics_range,
+            non_ascii_ranges: non_ascii_range,
         }
     }
 }
 
-/// Sparse per-line mapping between UTF-8 byte columns and UTF-16 code-unit columns.
 #[derive(Debug, Clone)]
+pub(crate) enum LineIndexStorage<T> {
+    Owned(Vec<T>),
+    Shared {
+        items: Arc<[T]>,
+        range: LineIndexRange,
+    },
+}
+
+impl<T> LineIndexStorage<T> {
+    fn new() -> Self {
+        Self::Owned(Vec::new())
+    }
+
+    fn shared(items: Arc<[T]>, range: LineIndexRange) -> Self {
+        Self::Shared { items, range }
+    }
+
+    pub(crate) fn as_slice(&self) -> &[T] {
+        match self {
+            Self::Owned(items) => items.as_slice(),
+            Self::Shared { items, range } => {
+                let start = range.start;
+                &items[start..start + range.len]
+            }
+        }
+    }
+
+    pub(crate) fn start(&self) -> usize {
+        match self {
+            Self::Owned(_) => 0,
+            Self::Shared { range, .. } => range.start,
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    fn push(&mut self, item: T) {
+        match self {
+            Self::Owned(items) => items.push(item),
+            Self::Shared { .. } => {
+                unreachable!("shared line index storage should not be mutated")
+            }
+        }
+    }
+
+    fn owned_vec_mut(&mut self) -> &mut Vec<T> {
+        match self {
+            Self::Owned(items) => items,
+            Self::Shared { .. } => {
+                unreachable!("shared line index storage should not be mutated")
+            }
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        if let Self::Owned(items) = self {
+            items.shrink_to_fit();
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LineIndexRange {
+    pub(crate) start: usize,
+    pub(crate) len: usize,
+}
+
+impl LineIndexRange {
+    fn new(start: usize, len: usize) -> Self {
+        Self { start, len }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PackedLineIndexRanges {
+    lines: LineIndexRange,
+    non_ascii_lines: LineIndexRange,
+    non_ascii_ranges: LineIndexRange,
+}
+
+/// Per-line byte facts needed for offset conversion.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LineInfo {
+    pub(crate) start: u32,
+    pub(crate) byte_len: u32,
+}
+
+/// Sparse per-line mapping between UTF-8 byte columns and UTF-16 code-unit columns.
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct LineUtf16Metrics {
     pub(crate) line: u32,
     pub(crate) utf16_len: u32,
-    pub(crate) non_ascii_ranges: Vec<LineCharRange>,
+    pub(crate) range_start: u32,
+    pub(crate) range_len: u32,
 }
 
 impl LineUtf16Metrics {
-    fn new(line: u32, line_text: &str) -> Option<Self> {
+    fn new(line: u32, line_text: &str, non_ascii_ranges: &mut Vec<LineCharRange>) -> Option<Self> {
         let mut utf16_offset = 0_u32;
-        let mut non_ascii_ranges = Vec::new();
+        let range_start = non_ascii_ranges.len();
 
         for (byte_offset, ch) in line_text.char_indices() {
             let byte_start =
@@ -245,20 +411,24 @@ impl LineUtf16Metrics {
             utf16_offset += utf16_width;
         }
 
-        (!non_ascii_ranges.is_empty()).then_some(Self {
+        let range_len = non_ascii_ranges.len().saturating_sub(range_start);
+        (range_len > 0).then_some(Self {
             line,
             utf16_len: utf16_offset,
-            non_ascii_ranges,
+            range_start: u32::try_from(range_start)
+                .expect("non-ASCII range start should fit into u32"),
+            range_len: u32::try_from(range_len)
+                .expect("non-ASCII range length should fit into u32"),
         })
     }
 
-    fn utf16_column_for_byte(&self, byte_column: u32) -> u32 {
-        if byte_column >= self.byte_len() {
+    fn utf16_column_for_byte(&self, ranges: &[LineCharRange], byte_column: u32) -> u32 {
+        if byte_column >= self.byte_len(ranges) {
             return self.utf16_len;
         }
 
         let mut adjustment = 0;
-        for range in &self.non_ascii_ranges {
+        for range in ranges {
             if byte_column < range.byte_start {
                 return byte_column.saturating_sub(adjustment);
             }
@@ -272,16 +442,16 @@ impl LineUtf16Metrics {
         byte_column.saturating_sub(adjustment)
     }
 
-    fn byte_column_for_utf16(&self, utf16_column: u32) -> Option<u32> {
+    fn byte_column_for_utf16(&self, ranges: &[LineCharRange], utf16_column: u32) -> Option<u32> {
         if utf16_column > self.utf16_len {
             return None;
         }
         if utf16_column == self.utf16_len {
-            return Some(self.byte_len());
+            return Some(self.byte_len(ranges));
         }
 
         let mut adjustment = 0;
-        for range in &self.non_ascii_ranges {
+        for range in ranges {
             if utf16_column < range.utf16_start {
                 return Some(utf16_column + adjustment);
             }
@@ -295,17 +465,18 @@ impl LineUtf16Metrics {
         Some(utf16_column + adjustment)
     }
 
-    fn byte_len(&self) -> u32 {
-        let adjustment = self
-            .non_ascii_ranges
+    fn byte_len(&self, ranges: &[LineCharRange]) -> u32 {
+        let adjustment = ranges
             .iter()
             .map(|range| range.byte_width().saturating_sub(range.utf16_width()))
             .sum::<u32>();
         self.utf16_len + adjustment
     }
 
-    fn shrink_to_fit(&mut self) {
-        self.non_ascii_ranges.shrink_to_fit();
+    fn ranges<'a>(&self, ranges: &'a [LineCharRange]) -> &'a [LineCharRange] {
+        let start = usize::try_from(self.range_start).expect("range start should fit into usize");
+        let len = usize::try_from(self.range_len).expect("range length should fit into usize");
+        &ranges[start..start + len]
     }
 }
 
@@ -411,6 +582,60 @@ mod tests {
             assert_eq!(
                 index.offset_from_utf16_position(expected),
                 Some(offset),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_line_indexes_preserve_offset_conversion() {
+        let mut first = LineIndex::new("é\n𝄞a");
+        let mut second = LineIndex::new("a\r\nbb\n");
+        LineIndex::pack_many(&mut [&mut first, &mut second]);
+
+        assert!(matches!(
+            &first.lines,
+            super::LineIndexStorage::Shared { .. }
+        ));
+        assert!(matches!(
+            &second.non_ascii_ranges,
+            super::LineIndexStorage::Shared { .. }
+        ));
+
+        let first_cases = [
+            ("accent start", 0, Position { line: 0, column: 0 }),
+            ("after accent", 2, Position { line: 0, column: 1 }),
+            ("second line start", 3, Position { line: 1, column: 0 }),
+            ("after surrogate pair", 7, Position { line: 1, column: 2 }),
+            ("after ascii", 8, Position { line: 1, column: 3 }),
+        ];
+        for (label, offset, expected) in first_cases {
+            assert_eq!(first.utf16_position(offset), expected, "{label}");
+            assert_eq!(
+                first.offset_from_utf16_position(expected),
+                Some(offset),
+                "{label}"
+            );
+        }
+
+        let second_cases = [
+            ("first line end", Position { line: 0, column: 1 }, Some(1)),
+            (
+                "second line start",
+                Position { line: 1, column: 0 },
+                Some(3),
+            ),
+            ("second line end", Position { line: 1, column: 2 }, Some(5)),
+            (
+                "trailing empty line",
+                Position { line: 2, column: 0 },
+                Some(6),
+            ),
+        ];
+        for (label, position, expected) in second_cases {
+            assert_eq!(
+                second.offset_from_utf16_position(position),
+                expected,
                 "{label}"
             );
         }

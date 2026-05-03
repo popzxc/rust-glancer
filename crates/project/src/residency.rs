@@ -102,6 +102,36 @@ impl PackageResidencyPlan {
     }
 }
 
+impl PackageResidencyPolicy {
+    /// Stable kebab-case name used by CLI flags and LSP initialization options.
+    pub fn config_name(self) -> &'static str {
+        match self {
+            Self::AllResident => "all-resident",
+            Self::WorkspaceResident => "workspace",
+            Self::WorkspaceAndPathDepsResident => "workspace-and-path-deps",
+            Self::WorkspacePathAndDirectDepsResident => "workspace-path-and-direct-deps",
+            Self::AllOffloadable => "all-offloadable",
+        }
+    }
+
+    /// Parses the public policy names accepted by frontends.
+    pub fn from_config_name(value: &str) -> Option<Self> {
+        let normalized = value.trim().replace('_', "-").to_ascii_lowercase();
+        match normalized.as_str() {
+            "all-resident" => Some(Self::AllResident),
+            "workspace" | "workspace-resident" => Some(Self::WorkspaceResident),
+            "workspace-and-path-deps" | "workspace-path-deps" => {
+                Some(Self::WorkspaceAndPathDepsResident)
+            }
+            "workspace-path-and-direct-deps" | "workspace-path-direct-deps" => {
+                Some(Self::WorkspacePathAndDirectDepsResident)
+            }
+            "all-offloadable" => Some(Self::AllOffloadable),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use cargo_metadata::Source;
@@ -236,6 +266,34 @@ pub struct Transitive;
                 "{policy:?} transitive dependency"
             );
         }
+    }
+
+    #[test]
+    fn parses_public_policy_names() {
+        let cases = [
+            ("all-resident", PackageResidencyPolicy::AllResident),
+            ("workspace", PackageResidencyPolicy::WorkspaceResident),
+            (
+                "workspace-and-path-deps",
+                PackageResidencyPolicy::WorkspaceAndPathDepsResident,
+            ),
+            (
+                "workspace-path-and-direct-deps",
+                PackageResidencyPolicy::WorkspacePathAndDirectDepsResident,
+            ),
+            ("all-offloadable", PackageResidencyPolicy::AllOffloadable),
+        ];
+
+        for (name, policy) in cases {
+            assert_eq!(
+                PackageResidencyPolicy::from_config_name(name),
+                Some(policy),
+                "policy name should parse: {name}",
+            );
+            assert_eq!(policy.config_name(), name);
+        }
+
+        assert_eq!(PackageResidencyPolicy::from_config_name("unknown"), None);
     }
 
     fn mark_package_as_registry(metadata: &mut cargo_metadata::Metadata, name: &str) {

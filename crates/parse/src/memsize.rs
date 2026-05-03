@@ -1,9 +1,13 @@
+use std::mem;
+
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
     Package, PackageFileRef, ParseDb, ParseError, Position, Span, Target, TargetId, TextSpan,
     file::{FileDb, FileId, ParsedFileData},
-    span::{LineCharRange, LineColumnSpan, LineIndex, LineUtf16Metrics},
+    span::{
+        LineCharRange, LineColumnSpan, LineIndex, LineIndexStorage, LineInfo, LineUtf16Metrics,
+    },
 };
 
 macro_rules! record_fields {
@@ -103,13 +107,39 @@ impl MemorySize for Position {
 
 impl MemorySize for LineIndex {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, line_starts, line_byte_lens, non_ascii_lines,);
+        record_fields!(recorder, self, lines, non_ascii_lines, non_ascii_ranges,);
+    }
+}
+
+impl<T> MemorySize for LineIndexStorage<T>
+where
+    T: MemorySize,
+{
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            LineIndexStorage::Owned(items) => items.record_memory_children(recorder),
+            LineIndexStorage::Shared { .. } => {
+                let items = self.as_slice();
+                recorder.scope("items", |recorder| {
+                    recorder.record_heap::<T>(items.len().saturating_mul(mem::size_of::<T>()));
+                    for item in items {
+                        item.record_memory_children(recorder);
+                    }
+                });
+            }
+        }
+    }
+}
+
+impl MemorySize for LineInfo {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        record_fields!(recorder, self, start, byte_len);
     }
 }
 
 impl MemorySize for LineUtf16Metrics {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, line, utf16_len, non_ascii_ranges);
+        record_fields!(recorder, self, line, utf16_len, range_start, range_len);
     }
 }
 

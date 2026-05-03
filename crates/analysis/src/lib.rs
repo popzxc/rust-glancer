@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 use rg_body_ir::{BodyIrReadTxn, BodyTy};
-use rg_def_map::{DefMapReadTxn, TargetRef};
+use rg_def_map::{DefMapReadTxn, PackageSlot, TargetRef};
 use rg_parse::FileId;
 use rg_semantic_ir::SemanticIrReadTxn;
 
@@ -117,5 +117,26 @@ impl<'a> Analysis<'a> {
     /// Returns flat, best-effort symbols matching a case-insensitive workspace query.
     pub fn workspace_symbols(&self, query: &str) -> Vec<WorkspaceSymbol> {
         symbols::SymbolCollector::new(self).workspace_symbols(query)
+    }
+
+    /// Returns target contexts whose module tree contains a package-local file.
+    pub fn targets_for_file(&self, package: PackageSlot, file: FileId) -> Vec<TargetRef> {
+        let mut targets = Vec::new();
+
+        for (target_ref, def_map) in self.def_map.target_maps() {
+            if target_ref.package != package {
+                continue;
+            }
+
+            let owns_file = def_map
+                .modules()
+                .iter()
+                .any(|module| module.origin.contains_file(file));
+            if owns_file {
+                targets.push(target_ref);
+            }
+        }
+
+        targets
     }
 }

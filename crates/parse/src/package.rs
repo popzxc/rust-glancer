@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use rg_arena::Arena;
 
-use crate::{FileId, ParsedFile, Target, TargetId, file::FileDb};
+use crate::{FileId, LineIndex, ParsedFile, Target, TargetId, file::FileDb};
 use rg_workspace::{PackageId, PackageOrigin, TargetKind};
 
 /// Parsed package, including package-local files and target entrypoints.
@@ -54,6 +54,10 @@ impl Package {
         for target in self.targets.iter_mut() {
             target.shrink_to_fit();
         }
+    }
+
+    pub(crate) fn collect_line_indexes<'a>(&'a mut self, indexes: &mut Vec<&'a mut LineIndex>) {
+        self.files.collect_line_indexes(indexes);
     }
 
     /// Returns the cached parsed file for a previously known `FileId`.

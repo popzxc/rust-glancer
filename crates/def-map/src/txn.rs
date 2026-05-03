@@ -1,5 +1,7 @@
 //! Read transactions over frozen def-map package data.
 
+use std::sync::Arc;
+
 use rg_package_store::{PackageRead, PackageStoreReadTxn};
 use rg_parse::TargetId;
 
@@ -20,25 +22,31 @@ impl<'db> DefMapReadTxn<'db> {
         Self { packages }
     }
 
+    pub fn from_package_arcs(packages: Vec<Arc<Package>>) -> Self {
+        Self {
+            packages: PackageStoreReadTxn::from_arcs(packages),
+        }
+    }
+
     /// Returns all package-level def-map sets available in this transaction.
-    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'db, Package>> + '_ {
+    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'_, Package>> + '_ {
         self.packages.iter()
     }
 
     /// Returns one package by package slot.
-    pub fn package(&self, package_slot: PackageSlot) -> Option<PackageRead<'db, Package>> {
+    pub fn package(&self, package_slot: PackageSlot) -> Option<PackageRead<'_, Package>> {
         self.packages.read(package_slot)
     }
 
     /// Returns one target def map by project-wide target reference.
-    pub fn def_map(&self, target: TargetRef) -> Option<&'db DefMap> {
+    pub fn def_map(&self, target: TargetRef) -> Option<&DefMap> {
         self.package(target.package)?
             .into_ref()
             .target(target.target)
     }
 
     /// Iterates over every target def map together with its project-wide target reference.
-    pub fn target_maps(&self) -> impl Iterator<Item = (TargetRef, &'db DefMap)> + '_ {
+    pub fn target_maps(&self) -> impl Iterator<Item = (TargetRef, &DefMap)> + '_ {
         self.packages()
             .enumerate()
             .flat_map(move |(package_idx, package)| {
@@ -57,7 +65,7 @@ impl<'db> DefMapReadTxn<'db> {
     pub fn modules(
         &self,
         target: TargetRef,
-    ) -> impl Iterator<Item = (ModuleRef, &'db ModuleData)> + '_ {
+    ) -> impl Iterator<Item = (ModuleRef, &ModuleData)> + '_ {
         self.def_map(target).into_iter().flat_map(move |def_map| {
             def_map
                 .modules()
@@ -76,7 +84,7 @@ impl<'db> DefMapReadTxn<'db> {
     }
 
     /// Returns one module by stable project-wide reference.
-    pub fn module(&self, module: ModuleRef) -> Option<&'db ModuleData> {
+    pub fn module(&self, module: ModuleRef) -> Option<&ModuleData> {
         self.def_map(module.target)?.module(module.module)
     }
 
@@ -84,7 +92,7 @@ impl<'db> DefMapReadTxn<'db> {
     pub fn local_defs(
         &self,
         target: TargetRef,
-    ) -> impl Iterator<Item = (LocalDefRef, &'db LocalDefData)> + '_ {
+    ) -> impl Iterator<Item = (LocalDefRef, &LocalDefData)> + '_ {
         self.def_map(target).into_iter().flat_map(move |def_map| {
             def_map
                 .local_defs()
@@ -103,13 +111,13 @@ impl<'db> DefMapReadTxn<'db> {
     }
 
     /// Returns one local definition by stable project-wide reference.
-    pub fn local_def(&self, local_def: LocalDefRef) -> Option<&'db LocalDefData> {
+    pub fn local_def(&self, local_def: LocalDefRef) -> Option<&LocalDefData> {
         self.def_map(local_def.target)?
             .local_def(local_def.local_def)
     }
 
     /// Returns one impl block by stable project-wide reference.
-    pub fn local_impl(&self, local_impl: LocalImplRef) -> Option<&'db LocalImplData> {
+    pub fn local_impl(&self, local_impl: LocalImplRef) -> Option<&LocalImplData> {
         self.def_map(local_impl.target)?
             .local_impl(local_impl.local_impl)
     }
@@ -118,7 +126,7 @@ impl<'db> DefMapReadTxn<'db> {
     pub fn imports(
         &self,
         target: TargetRef,
-    ) -> impl Iterator<Item = (ImportRef, &'db ImportData)> + '_ {
+    ) -> impl Iterator<Item = (ImportRef, &ImportData)> + '_ {
         self.def_map(target).into_iter().flat_map(move |def_map| {
             def_map
                 .imports()

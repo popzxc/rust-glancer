@@ -88,7 +88,7 @@ impl PackageCacheStore {
 
         // Write beside the destination and rename over it. This keeps readers from observing a
         // partially-written artifact if the process exits during serialization or disk I/O.
-        let temp_path = self.write_temp_artifact(package_dir, &path, &bytes)?;
+        let temp_path = self.write_temp_artifact(package_dir, &path, bytes.as_ref())?;
 
         if let Err(error) = fs::rename(&temp_path, &path) {
             let _ = fs::remove_file(&temp_path);

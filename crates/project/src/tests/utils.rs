@@ -7,7 +7,9 @@ use rg_parse::{FileId, ParseDb};
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate_with_markers};
 
-use crate::{AnalysisChangeSummary, AnalysisHost, FileContext, SavedFileChange};
+use crate::{
+    AnalysisChangeSummary, AnalysisHost, FileContext, ProjectBuildOptions, SavedFileChange,
+};
 
 pub(super) struct HostFixture {
     fixture: CrateFixture,
@@ -17,10 +19,15 @@ pub(super) struct HostFixture {
 
 impl HostFixture {
     pub(super) fn build(spec: &str) -> Self {
+        Self::build_with_options(spec, ProjectBuildOptions::default())
+    }
+
+    pub(super) fn build_with_options(spec: &str, options: ProjectBuildOptions) -> Self {
         let (fixture, markers) = fixture_crate_with_markers(spec);
         let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
             .expect("fixture workspace metadata should build");
-        let host = AnalysisHost::build(workspace).expect("analysis host should build");
+        let host = AnalysisHost::build_with_options(workspace, options)
+            .expect("analysis host should build");
 
         Self {
             fixture,
@@ -187,7 +194,9 @@ impl HostFixture {
         writeln!(dump, "workspace symbols `{query}`").expect("string writes should not fail");
 
         let snapshot = self.host.snapshot();
-        let txn = snapshot.read_txn();
+        let txn = snapshot
+            .read_txn()
+            .expect("fixture read transaction should start");
         let mut symbols = snapshot.analysis(&txn).workspace_symbols(query);
         symbols.sort_by(|left, right| {
             self.workspace_symbol_key(left)
@@ -393,10 +402,13 @@ fn nominal_type_names_at(
     let file_id = file_id_for_path(snapshot.parse_db(), path);
     let target = snapshot
         .targets_for_file(package_slot, file_id)
+        .expect("fixture target lookup should start")
         .into_iter()
         .next()
         .expect("fixture file should be owned by a target");
-    let txn = snapshot.read_txn();
+    let txn = snapshot
+        .read_txn()
+        .expect("fixture read transaction should start");
     let Some(ty) = snapshot.analysis(&txn).type_at(target, file_id, offset) else {
         return Vec::new();
     };

@@ -1,5 +1,7 @@
 //! Read transactions over frozen Semantic IR package data.
 
+use std::sync::Arc;
+
 use rg_def_map::{DefMapReadTxn, LocalDefRef, ModuleRef, PackageSlot, Path, TargetRef};
 use rg_item_tree::FieldKey;
 use rg_package_store::{PackageRead, PackageStoreReadTxn};
@@ -24,21 +26,27 @@ impl<'db> SemanticIrReadTxn<'db> {
         Self { packages }
     }
 
-    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'db, PackageIr>> + '_ {
+    pub fn from_package_arcs(packages: Vec<Arc<PackageIr>>) -> Self {
+        Self {
+            packages: PackageStoreReadTxn::from_arcs(packages),
+        }
+    }
+
+    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'_, PackageIr>> + '_ {
         self.packages.iter()
     }
 
-    pub fn package(&self, package: PackageSlot) -> Option<PackageRead<'db, PackageIr>> {
+    pub fn package(&self, package: PackageSlot) -> Option<PackageRead<'_, PackageIr>> {
         self.packages.read(package)
     }
 
-    pub fn target_ir(&self, target: TargetRef) -> Option<&'db TargetIr> {
+    pub fn target_ir(&self, target: TargetRef) -> Option<&TargetIr> {
         self.package(target.package)?
             .into_ref()
             .target(target.target)
     }
 
-    pub fn target_irs(&self) -> impl Iterator<Item = (TargetRef, &'db TargetIr)> + '_ {
+    pub fn target_irs(&self) -> impl Iterator<Item = (TargetRef, &TargetIr)> + '_ {
         self.packages()
             .enumerate()
             .flat_map(|(package_idx, package)| {
@@ -62,7 +70,7 @@ impl<'db> SemanticIrReadTxn<'db> {
     pub fn structs(
         &self,
         target: TargetRef,
-    ) -> impl Iterator<Item = (TypeDefRef, &'db StructData)> + '_ {
+    ) -> impl Iterator<Item = (TypeDefRef, &StructData)> + '_ {
         self.target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
@@ -82,10 +90,7 @@ impl<'db> SemanticIrReadTxn<'db> {
             })
     }
 
-    pub fn unions(
-        &self,
-        target: TargetRef,
-    ) -> impl Iterator<Item = (TypeDefRef, &'db UnionData)> + '_ {
+    pub fn unions(&self, target: TargetRef) -> impl Iterator<Item = (TypeDefRef, &UnionData)> + '_ {
         self.target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
@@ -105,10 +110,7 @@ impl<'db> SemanticIrReadTxn<'db> {
             })
     }
 
-    pub fn enums(
-        &self,
-        target: TargetRef,
-    ) -> impl Iterator<Item = (TypeDefRef, &'db EnumData)> + '_ {
+    pub fn enums(&self, target: TargetRef) -> impl Iterator<Item = (TypeDefRef, &EnumData)> + '_ {
         self.target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
@@ -128,10 +130,7 @@ impl<'db> SemanticIrReadTxn<'db> {
             })
     }
 
-    pub fn traits(
-        &self,
-        target: TargetRef,
-    ) -> impl Iterator<Item = (TraitRef, &'db TraitData)> + '_ {
+    pub fn traits(&self, target: TargetRef) -> impl Iterator<Item = (TraitRef, &TraitData)> + '_ {
         self.target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
@@ -143,7 +142,7 @@ impl<'db> SemanticIrReadTxn<'db> {
             })
     }
 
-    pub fn impls(&self, target: TargetRef) -> impl Iterator<Item = (ImplRef, &'db ImplData)> + '_ {
+    pub fn impls(&self, target: TargetRef) -> impl Iterator<Item = (ImplRef, &ImplData)> + '_ {
         self.target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
@@ -158,7 +157,7 @@ impl<'db> SemanticIrReadTxn<'db> {
     pub fn functions(
         &self,
         target: TargetRef,
-    ) -> impl Iterator<Item = (FunctionRef, &'db FunctionData)> + '_ {
+    ) -> impl Iterator<Item = (FunctionRef, &FunctionData)> + '_ {
         self.target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
@@ -173,7 +172,7 @@ impl<'db> SemanticIrReadTxn<'db> {
     pub fn type_aliases(
         &self,
         target: TargetRef,
-    ) -> impl Iterator<Item = (TypeAliasRef, &'db TypeAliasData)> + '_ {
+    ) -> impl Iterator<Item = (TypeAliasRef, &TypeAliasData)> + '_ {
         self.target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
@@ -185,10 +184,7 @@ impl<'db> SemanticIrReadTxn<'db> {
             })
     }
 
-    pub fn consts(
-        &self,
-        target: TargetRef,
-    ) -> impl Iterator<Item = (ConstRef, &'db ConstData)> + '_ {
+    pub fn consts(&self, target: TargetRef) -> impl Iterator<Item = (ConstRef, &ConstData)> + '_ {
         self.target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
@@ -203,7 +199,7 @@ impl<'db> SemanticIrReadTxn<'db> {
     pub fn statics(
         &self,
         target: TargetRef,
-    ) -> impl Iterator<Item = (StaticRef, &'db StaticData)> + '_ {
+    ) -> impl Iterator<Item = (StaticRef, &StaticData)> + '_ {
         self.target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
@@ -386,7 +382,7 @@ impl<'db> SemanticIrReadTxn<'db> {
     pub fn generic_params_for_type_def(
         &self,
         ty: TypeDefRef,
-    ) -> Option<&'db rg_item_tree::GenericParams> {
+    ) -> Option<&rg_item_tree::GenericParams> {
         let target_ir = self.target_ir(ty.target)?;
         match ty.id {
             TypeDefId::Struct(id) => Some(&target_ir.items().struct_data(id)?.generics),
@@ -395,7 +391,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         }
     }
 
-    pub fn type_def_name(&self, ty: TypeDefRef) -> Option<&'db str> {
+    pub fn type_def_name(&self, ty: TypeDefRef) -> Option<&str> {
         let target_ir = self.target_ir(ty.target)?;
         match ty.id {
             TypeDefId::Struct(id) => Some(target_ir.items().struct_data(id)?.name.as_str()),
@@ -404,7 +400,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         }
     }
 
-    pub fn enum_data_for_type_def(&self, ty: TypeDefRef) -> Option<&'db EnumData> {
+    pub fn enum_data_for_type_def(&self, ty: TypeDefRef) -> Option<&EnumData> {
         let target_ir = self.target_ir(ty.target)?;
         let TypeDefId::Enum(id) = ty.id else {
             return None;
@@ -416,7 +412,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         ty: TypeDefRef,
         variant_name: &str,
-    ) -> Option<(usize, &'db rg_item_tree::EnumVariantItem)> {
+    ) -> Option<(usize, &rg_item_tree::EnumVariantItem)> {
         let data = self.enum_data_for_type_def(ty)?;
         data.variants
             .iter()
@@ -440,7 +436,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         })
     }
 
-    pub fn enum_variant_data(&self, variant_ref: EnumVariantRef) -> Option<EnumVariantData<'db>> {
+    pub fn enum_variant_data(&self, variant_ref: EnumVariantRef) -> Option<EnumVariantData<'_>> {
         let target_ir = self.target_ir(variant_ref.target)?;
         let data = target_ir.items().enum_data(variant_ref.enum_id)?;
         let variant = data.variants.get(variant_ref.index)?;
@@ -455,37 +451,37 @@ impl<'db> SemanticIrReadTxn<'db> {
         })
     }
 
-    pub fn impl_data(&self, impl_ref: ImplRef) -> Option<&'db ImplData> {
+    pub fn impl_data(&self, impl_ref: ImplRef) -> Option<&ImplData> {
         self.target_ir(impl_ref.target)?
             .items()
             .impl_data(impl_ref.id)
     }
 
-    pub fn trait_data(&self, trait_ref: TraitRef) -> Option<&'db TraitData> {
+    pub fn trait_data(&self, trait_ref: TraitRef) -> Option<&TraitData> {
         self.target_ir(trait_ref.target)?
             .items()
             .trait_data(trait_ref.id)
     }
 
-    pub fn function_data(&self, function_ref: FunctionRef) -> Option<&'db FunctionData> {
+    pub fn function_data(&self, function_ref: FunctionRef) -> Option<&FunctionData> {
         self.target_ir(function_ref.target)?
             .items()
             .function_data(function_ref.id)
     }
 
-    pub fn type_alias_data(&self, type_alias_ref: TypeAliasRef) -> Option<&'db TypeAliasData> {
+    pub fn type_alias_data(&self, type_alias_ref: TypeAliasRef) -> Option<&TypeAliasData> {
         self.target_ir(type_alias_ref.target)?
             .items()
             .type_alias_data(type_alias_ref.id)
     }
 
-    pub fn const_data(&self, const_ref: ConstRef) -> Option<&'db ConstData> {
+    pub fn const_data(&self, const_ref: ConstRef) -> Option<&ConstData> {
         self.target_ir(const_ref.target)?
             .items()
             .const_data(const_ref.id)
     }
 
-    pub fn static_data(&self, static_ref: StaticRef) -> Option<&'db StaticData> {
+    pub fn static_data(&self, static_ref: StaticRef) -> Option<&StaticData> {
         self.target_ir(static_ref.target)?
             .items()
             .static_data(static_ref.id)
@@ -519,7 +515,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         }
     }
 
-    pub fn field_data(&self, field_ref: FieldRef) -> Option<FieldData<'db>> {
+    pub fn field_data(&self, field_ref: FieldRef) -> Option<FieldData<'_>> {
         let target_ir = self.target_ir(field_ref.owner.target)?;
         match field_ref.owner.id {
             TypeDefId::Struct(id) => {

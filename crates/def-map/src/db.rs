@@ -1,5 +1,7 @@
 //! Resident def-map database and package-level rebuild entrypoints.
 
+use std::sync::Arc;
+
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::PackageStore;
 use rg_parse::{self, TargetId};
@@ -73,8 +75,12 @@ impl DefMapDb {
         DefMapReadTxn::new(self.packages.read_txn())
     }
 
+    pub fn read_txn_from_package_arcs<'a>(packages: Vec<Arc<Package>>) -> DefMapReadTxn<'a> {
+        DefMapReadTxn::from_package_arcs(packages)
+    }
+
     /// Returns all package-level def-map sets.
-    pub fn packages(&self) -> impl ExactSizeIterator<Item = &Package> + '_ {
+    pub fn packages(&self) -> impl Iterator<Item = &Package> + '_ {
         self.packages.iter()
     }
 
@@ -121,6 +127,18 @@ impl DefMapDb {
     /// Returns one package def-map set by package slot.
     pub fn package(&self, package_slot: PackageSlot) -> Option<&Package> {
         self.packages.get(package_slot)
+    }
+
+    pub fn package_arc(&self, package_slot: PackageSlot) -> Option<Arc<Package>> {
+        self.packages.get_arc(package_slot)
+    }
+
+    pub fn replace_package(&mut self, package_slot: PackageSlot, package: Package) -> Option<()> {
+        self.packages.replace(package_slot, package)
+    }
+
+    pub fn offload_package(&mut self, package_slot: PackageSlot) -> Option<()> {
+        self.packages.offload(package_slot)
     }
 
     /// Returns one target def map by project-wide target reference.

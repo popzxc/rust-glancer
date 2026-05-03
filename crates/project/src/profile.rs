@@ -30,23 +30,35 @@ pub struct BuildCheckpoint {
     pub retained_bytes: Option<usize>,
     /// Retained size of all live phase state known at this checkpoint.
     pub active_retained_bytes: Option<usize>,
+    /// Runtime heap bytes allocated through the process allocator, if available.
+    pub allocated_bytes: Option<usize>,
+    /// Runtime heap bytes held in active allocator pages, if available.
+    pub active_bytes: Option<usize>,
     /// Runtime resident memory reported by the executable, if available.
     pub resident_bytes: Option<usize>,
 }
 
-pub type ResidentMemorySampler = Box<dyn FnMut() -> Option<usize>>;
+/// Process allocator counters sampled by the executable during a profiled build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildProcessMemory {
+    pub allocated_bytes: usize,
+    pub active_bytes: usize,
+    pub resident_bytes: usize,
+}
+
+pub type ProcessMemorySampler = Box<dyn FnMut() -> Option<BuildProcessMemory>>;
 
 /// Optional profiling knobs for `Project::build_profiled`.
 #[derive(Default)]
 pub struct BuildProfileOptions {
     pub retained_memory: bool,
-    pub resident_memory_sampler: Option<ResidentMemorySampler>,
+    pub process_memory_sampler: Option<ProcessMemorySampler>,
 }
 
 pub(crate) struct BuildProfiler {
     started_at: Instant,
     retained_memory: bool,
-    resident_memory_sampler: Option<ResidentMemorySampler>,
+    process_memory_sampler: Option<ProcessMemorySampler>,
     checkpoints: Vec<BuildCheckpoint>,
 }
 
@@ -55,7 +67,7 @@ impl BuildProfiler {
         Self {
             started_at: Instant::now(),
             retained_memory: false,
-            resident_memory_sampler: None,
+            process_memory_sampler: None,
             checkpoints: Vec::new(),
         }
     }
@@ -64,7 +76,7 @@ impl BuildProfiler {
         Self {
             started_at: Instant::now(),
             retained_memory: options.retained_memory,
-            resident_memory_sampler: options.resident_memory_sampler,
+            process_memory_sampler: options.process_memory_sampler,
             checkpoints: Vec::new(),
         }
     }
@@ -81,8 +93,8 @@ impl BuildProfiler {
             .then(|| values.iter().flatten().copied().sum())
     }
 
-    pub(crate) fn sample_resident_memory(&mut self) -> Option<usize> {
-        self.resident_memory_sampler
+    pub(crate) fn sample_process_memory(&mut self) -> Option<BuildProcessMemory> {
+        self.process_memory_sampler
             .as_mut()
             .and_then(|sampler| sampler())
     }
@@ -92,7 +104,7 @@ impl BuildProfiler {
         label: &'static str,
         retained_bytes: Option<usize>,
         active_retained_bytes: Option<usize>,
-        resident_bytes: Option<usize>,
+        process_memory: Option<BuildProcessMemory>,
     ) {
         if !self.is_enabled() {
             return;
@@ -103,7 +115,9 @@ impl BuildProfiler {
             elapsed: self.started_at.elapsed(),
             retained_bytes,
             active_retained_bytes,
-            resident_bytes,
+            allocated_bytes: process_memory.map(|memory| memory.allocated_bytes),
+            active_bytes: process_memory.map(|memory| memory.active_bytes),
+            resident_bytes: process_memory.map(|memory| memory.resident_bytes),
         });
     }
 
@@ -112,6 +126,6 @@ impl BuildProfiler {
     }
 
     fn is_enabled(&self) -> bool {
-        self.retained_memory || self.resident_memory_sampler.is_some()
+        self.retained_memory || self.process_memory_sampler.is_some()
     }
 }

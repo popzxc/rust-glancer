@@ -1,32 +1,49 @@
 //! Read transaction handles for package-store payloads.
 
 use std::ops::Deref;
+use std::sync::Arc;
 
 use rg_workspace::PackageSlot;
 
-use crate::PackageStore;
+use crate::{PackageEntry, PackageStore};
 
 /// Read-only package-store view used by query transactions.
 #[derive(Debug)]
 pub struct PackageStoreReadTxn<'db, T> {
-    store: &'db PackageStore<T>,
+    packages: Vec<Arc<T>>,
+    _marker: std::marker::PhantomData<&'db T>,
 }
 
 impl<'db, T> PackageStoreReadTxn<'db, T> {
-    pub(crate) fn new(store: &'db PackageStore<T>) -> Self {
-        Self { store }
+    pub(crate) fn from_resident_store(store: &'db PackageStore<T>) -> Self {
+        let packages = store
+            .packages
+            .iter()
+            .map(|package| match package {
+                PackageEntry::Resident(package) => Arc::clone(package),
+                PackageEntry::Offloaded => {
+                    panic!("offloaded packages must be materialized before starting a read txn")
+                }
+            })
+            .collect();
+        Self::from_arcs(packages)
     }
 
-    pub fn read(&self, package: PackageSlot) -> Option<PackageRead<'db, T>> {
-        self.store
-            .packages
+    pub fn from_arcs(packages: Vec<Arc<T>>) -> Self {
+        Self {
+            packages,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    pub fn read(&self, package: PackageSlot) -> Option<PackageRead<'_, T>> {
+        self.packages
             .get(package.0)
             .map(|package| PackageRead::Resident(package.as_ref()))
     }
 
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = PackageRead<'db, T>> + '_ {
-        self.store
-            .packages
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = PackageRead<'_, T>> + '_ {
+        self.packages
             .iter()
             .map(|package| PackageRead::Resident(package.as_ref()))
     }
@@ -34,11 +51,9 @@ impl<'db, T> PackageStoreReadTxn<'db, T> {
 
 impl<T> Clone for PackageStoreReadTxn<'_, T> {
     fn clone(&self) -> Self {
-        *self
+        Self::from_arcs(self.packages.clone())
     }
 }
-
-impl<T> Copy for PackageStoreReadTxn<'_, T> {}
 
 /// One package payload read through a package-store transaction.
 #[derive(Debug)]

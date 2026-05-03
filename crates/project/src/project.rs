@@ -10,8 +10,8 @@ use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    BuildProfile, BuildProfileOptions, PackageResidencyPlan, PackageResidencyPolicy,
-    profile::BuildProfiler, txn::ProjectReadTxn,
+    BuildProfile, BuildProfileOptions, CachedWorkspace, PackageCacheStore, PackageResidencyPlan,
+    PackageResidencyPolicy, cache::integration, profile::BuildProfiler, txn::ProjectReadTxn,
 };
 
 /// Configuration that affects how a project snapshot is built and retained.
@@ -25,6 +25,8 @@ pub struct ProjectBuildOptions {
 #[derive(Debug, Clone)]
 pub struct Project {
     pub(crate) workspace: WorkspaceMetadata,
+    pub(crate) cached_workspace: CachedWorkspace,
+    pub(crate) cache_store: PackageCacheStore,
     pub(crate) build_options: ProjectBuildOptions,
     pub(crate) package_residency: PackageResidencyPlan,
     pub(crate) names: NameInterner,
@@ -50,9 +52,13 @@ impl Project {
             Self::build_phases(&workspace, build_options.body_ir_policy, &mut profiler)?;
         let package_residency =
             PackageResidencyPlan::build(&workspace, build_options.package_residency_policy);
+        let cached_workspace = CachedWorkspace::build(&workspace);
+        let cache_store = PackageCacheStore::for_workspace(&workspace);
 
-        Ok(Self {
+        let mut project = Self {
             workspace,
+            cached_workspace,
+            cache_store,
             build_options,
             package_residency,
             names,
@@ -60,7 +66,11 @@ impl Project {
             def_map,
             semantic_ir,
             body_ir,
-        })
+        };
+        integration::apply_residency(&mut project)
+            .context("while attempting to apply package cache residency")?;
+
+        Ok(project)
     }
 
     /// Builds every analysis phase and returns coarse build-time profiling checkpoints.
@@ -74,9 +84,13 @@ impl Project {
             Self::build_phases(&workspace, build_options.body_ir_policy, &mut profiler)?;
         let package_residency =
             PackageResidencyPlan::build(&workspace, build_options.package_residency_policy);
+        let cached_workspace = CachedWorkspace::build(&workspace);
+        let cache_store = PackageCacheStore::for_workspace(&workspace);
 
-        let project = Self {
+        let mut project = Self {
             workspace,
+            cached_workspace,
+            cache_store,
             build_options,
             package_residency,
             names,
@@ -85,13 +99,16 @@ impl Project {
             semantic_ir,
             body_ir,
         };
-        let resident_bytes = profiler.sample_resident_memory();
+        integration::apply_residency(&mut project)
+            .context("while attempting to apply package cache residency")?;
+
+        let process_memory = profiler.sample_process_memory();
         let project_bytes = profiler.measure(&project);
         profiler.record(
             "after project",
             project_bytes,
             project_bytes,
-            resident_bytes,
+            process_memory,
         );
 
         Ok((project, profiler.finish()))
@@ -101,6 +118,9 @@ impl Project {
         if packages.is_empty() {
             return Ok(());
         }
+
+        integration::materialize_project(self)
+            .context("while attempting to materialize package cache before package rebuild")?;
 
         let package_indices = packages.iter().map(|package| package.0).collect::<Vec<_>>();
         let item_tree = ItemTreeDb::build_packages_with_interner(
@@ -145,6 +165,8 @@ impl Project {
         self.semantic_ir = semantic_ir;
         self.body_ir = body_ir;
         self.names.shrink_to_fit();
+        integration::apply_residency_for_packages(self, packages)
+            .context("while attempting to apply package cache residency after package rebuild")?;
 
         Ok(())
     }
@@ -156,13 +178,13 @@ impl Project {
     ) -> anyhow::Result<(NameInterner, ParseDb, DefMapDb, SemanticIrDb, BodyIrDb)> {
         let mut names = NameInterner::new();
         let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
-        let resident_bytes = profiler.sample_resident_memory();
+        let process_memory = profiler.sample_process_memory();
         let parse_bytes = profiler.measure(&parse);
-        profiler.record("after parse", parse_bytes, parse_bytes, resident_bytes);
+        profiler.record("after parse", parse_bytes, parse_bytes, process_memory);
 
         let item_tree = ItemTreeDb::build_with_interner(&mut parse, &mut names)
             .context("while attempting to build item tree db")?;
-        let resident_bytes = profiler.sample_resident_memory();
+        let process_memory = profiler.sample_process_memory();
         let names_bytes = profiler.measure(&names);
         let parse_bytes = profiler.measure(&parse);
         let item_tree_bytes = profiler.measure(&item_tree);
@@ -170,24 +192,24 @@ impl Project {
             "after item-tree",
             item_tree_bytes,
             profiler.sum_retained(&[names_bytes, parse_bytes, item_tree_bytes]),
-            resident_bytes,
+            process_memory,
         );
 
         let def_map = DefMapDb::build_with_interner(workspace, &parse, &item_tree, &mut names)
             .context("while attempting to build def map db")?;
-        let resident_bytes = profiler.sample_resident_memory();
+        let process_memory = profiler.sample_process_memory();
         let names_bytes = profiler.measure(&names);
         let def_map_bytes = profiler.measure(&def_map);
         profiler.record(
             "after def-map",
             def_map_bytes,
             profiler.sum_retained(&[names_bytes, parse_bytes, item_tree_bytes, def_map_bytes]),
-            resident_bytes,
+            process_memory,
         );
 
         let semantic_ir = SemanticIrDb::build(&item_tree, &def_map)
             .context("while attempting to build semantic ir db")?;
-        let resident_bytes = profiler.sample_resident_memory();
+        let process_memory = profiler.sample_process_memory();
         let names_bytes = profiler.measure(&names);
         let semantic_ir_bytes = profiler.measure(&semantic_ir);
         profiler.record(
@@ -200,20 +222,20 @@ impl Project {
                 def_map_bytes,
                 semantic_ir_bytes,
             ]),
-            resident_bytes,
+            process_memory,
         );
 
         // ItemTree is a lowering input, not retained project state. Dropping it here makes the
         // following process-only checkpoint useful for separating transient build pressure from
         // final retained memory.
         drop(item_tree);
-        let resident_bytes = profiler.sample_resident_memory();
+        let process_memory = profiler.sample_process_memory();
         let names_bytes = profiler.measure(&names);
         profiler.record(
             "after item-tree drop",
             None,
             profiler.sum_retained(&[names_bytes, parse_bytes, def_map_bytes, semantic_ir_bytes]),
-            resident_bytes,
+            process_memory,
         );
 
         let body_ir = BodyIrDb::build_with_policy_and_interner(
@@ -224,7 +246,7 @@ impl Project {
             &mut names,
         )
         .context("while attempting to build body ir db")?;
-        let resident_bytes = profiler.sample_resident_memory();
+        let process_memory = profiler.sample_process_memory();
         let names_bytes = profiler.measure(&names);
         let body_ir_bytes = profiler.measure(&body_ir);
         profiler.record(
@@ -237,12 +259,12 @@ impl Project {
                 semantic_ir_bytes,
                 body_ir_bytes,
             ]),
-            resident_bytes,
+            process_memory,
         );
 
         parse.evict_syntax_trees();
         parse.shrink_to_fit();
-        let resident_bytes = profiler.sample_resident_memory();
+        let process_memory = profiler.sample_process_memory();
         names.shrink_to_fit();
         let names_bytes = profiler.measure(&names);
         let parse_bytes = profiler.measure(&parse);
@@ -256,7 +278,7 @@ impl Project {
                 semantic_ir_bytes,
                 body_ir_bytes,
             ]),
-            resident_bytes,
+            process_memory,
         );
 
         Ok((names, parse, def_map, semantic_ir, body_ir))
@@ -296,14 +318,14 @@ impl Project {
         &self.body_ir
     }
 
-    /// Starts a read transaction over retained package data.
-    pub fn read_txn(&self) -> ProjectReadTxn<'_> {
-        ProjectReadTxn::new(self.def_map_db(), self.semantic_ir_db(), self.body_ir_db())
+    /// Starts a read transaction over resident packages and materialized cache artifacts.
+    pub fn read_txn(&self) -> anyhow::Result<ProjectReadTxn<'_>> {
+        ProjectReadTxn::new(self)
     }
 
     /// Returns the high-level query API for this frozen project analysis.
     #[allow(dead_code)]
-    pub fn analysis<'a>(&'a self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
+    pub fn analysis<'a>(&self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
         Analysis::new(txn.analysis())
     }
 }

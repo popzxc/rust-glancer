@@ -1,5 +1,7 @@
 //! Resident Body IR database and body-query helpers.
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 
 use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
@@ -132,6 +134,10 @@ impl BodyIrDb {
         BodyIrReadTxn::new(self.packages.read_txn())
     }
 
+    pub fn read_txn_from_package_arcs<'a>(packages: Vec<Arc<PackageBodies>>) -> BodyIrReadTxn<'a> {
+        BodyIrReadTxn::from_package_arcs(packages)
+    }
+
     pub(crate) fn new(packages: Vec<PackageBodies>) -> Self {
         Self {
             packages: PackageStore::from_vec(packages),
@@ -180,7 +186,7 @@ impl BodyIrDb {
     }
 
     /// Returns all package-level body IR sets.
-    pub fn packages(&self) -> impl ExactSizeIterator<Item = &PackageBodies> + '_ {
+    pub fn packages(&self) -> impl Iterator<Item = &PackageBodies> + '_ {
         self.packages.iter()
     }
 
@@ -191,6 +197,18 @@ impl BodyIrDb {
     /// Returns one package by package slot.
     pub fn package(&self, package: PackageSlot) -> Option<&PackageBodies> {
         self.packages.get(package)
+    }
+
+    pub fn package_arc(&self, package: PackageSlot) -> Option<Arc<PackageBodies>> {
+        self.packages.get_arc(package)
+    }
+
+    pub fn replace_package(&mut self, package: PackageSlot, bodies: PackageBodies) -> Option<()> {
+        self.packages.replace(package, bodies)
+    }
+
+    pub fn offload_package(&mut self, package: PackageSlot) -> Option<()> {
+        self.packages.offload(package)
     }
 
     /// Returns one target body IR by project-wide target reference.

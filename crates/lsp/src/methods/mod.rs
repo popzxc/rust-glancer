@@ -5,7 +5,7 @@ use tower_lsp_server::{
     ls_types::*,
 };
 
-use crate::{backend::ServerContext, capabilities, check::CheckConfig};
+use crate::{backend::ServerContext, capabilities, check::CheckConfig, config::AnalysisConfig};
 
 pub(crate) mod text_document;
 pub(crate) mod workspace;
@@ -22,8 +22,13 @@ pub(crate) async fn initialize(
 
     let check_config =
         CheckConfig::from_initialization_options(params.initialization_options.as_ref());
+    let analysis_config =
+        AnalysisConfig::from_initialization_options(params.initialization_options.as_ref());
     ctx.check.configure(root.clone(), check_config).await;
-    ctx.engine.initialize(root).await.map_err(internal_error)?;
+    ctx.engine
+        .initialize(root, analysis_config.build_options)
+        .await
+        .map_err(internal_error)?;
 
     Ok(InitializeResult {
         capabilities: capabilities::server_capabilities(),
