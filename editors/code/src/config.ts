@@ -1,13 +1,24 @@
 import * as vscode from "vscode";
 
 export type TraceSetting = "off" | "messages" | "verbose";
+export type PackageResidencySetting =
+  | "all-resident"
+  | "workspace"
+  | "workspace-and-path-deps"
+  | "workspace-path-and-direct-deps"
+  | "all-offloadable";
 
 export interface ExtensionConfig {
   readonly serverPath: string | undefined;
   readonly extraEnv: Record<string, string>;
   readonly purgeMemoryAfterBuild: boolean;
+  readonly cache: CacheConfig;
   readonly traceServer: TraceSetting;
   readonly check: CheckConfig;
+}
+
+export interface CacheConfig {
+  readonly packageResidency: PackageResidencySetting;
 }
 
 export interface CheckConfig {
@@ -22,6 +33,10 @@ export namespace ExtensionConfig {
     const serverPath = config.get<string | null>("server.path", null);
     const extraEnv = config.get<Record<string, unknown>>("server.extraEnv", {});
     const purgeMemoryAfterBuild = config.get<boolean>("server.purgeMemoryAfterBuild", true);
+    const packageResidency = config.get<PackageResidencySetting>(
+      "cache.packageResidency",
+      "workspace-and-path-deps",
+    );
     const traceServer = config.get<TraceSetting>("trace.server", "off");
     const checkOnSave = config.get<boolean>("checkOnSave", false);
     const checkCommand = config.get<string>("check.command", "check");
@@ -31,6 +46,9 @@ export namespace ExtensionConfig {
       serverPath: normalizeOptionalString(serverPath),
       extraEnv: normalizeStringRecord(extraEnv),
       purgeMemoryAfterBuild,
+      cache: {
+        packageResidency,
+      },
       traceServer,
       check: {
         onSave: checkOnSave,
