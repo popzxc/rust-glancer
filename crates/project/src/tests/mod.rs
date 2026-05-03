@@ -844,6 +844,222 @@ pub struct Renamed;
 }
 
 #[test]
+fn queries_rebuild_missing_offloaded_package_cache_artifacts() {
+    let fixture = HostFixture::build_with_options(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub fn use_dep(_: dep::Api) {}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Api;
+"#,
+        ProjectBuildOptions {
+            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
+            ..ProjectBuildOptions::default()
+        },
+    );
+
+    assert!(fixture.package_cache_artifact_exists("dep"));
+    fixture.remove_cache_namespace();
+    assert!(!fixture.package_cache_artifact_exists("dep"));
+
+    fixture.check(
+        &[HostObservation::workspace_symbols("Api")],
+        expect![[r#"
+            workspace symbols `Api`
+            - struct Api @ dep[lib] dep/src/lib.rs
+        "#]],
+    );
+    assert!(fixture.package_cache_artifact_exists("dep"));
+}
+
+#[test]
+fn queries_rebuild_corrupt_offloaded_package_cache_artifacts() {
+    let fixture = HostFixture::build_with_options(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub fn use_dep(_: dep::Api) {}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Api;
+"#,
+        ProjectBuildOptions {
+            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
+            ..ProjectBuildOptions::default()
+        },
+    );
+
+    fixture.corrupt_package_cache_artifact("dep");
+
+    fixture.check(
+        &[HostObservation::workspace_symbols("Api")],
+        expect![[r#"
+            workspace symbols `Api`
+            - struct Api @ dep[lib] dep/src/lib.rs
+        "#]],
+    );
+    assert!(fixture.package_cache_artifact_exists("dep"));
+}
+
+#[test]
+fn source_updates_rebuild_missing_offloaded_package_cache_artifacts() {
+    let mut fixture = HostFixture::build_with_options(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct Before;
+pub fn use_dep(_: dep::Api) {}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Api;
+"#,
+        ProjectBuildOptions {
+            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
+            ..ProjectBuildOptions::default()
+        },
+    );
+
+    fixture.remove_cache_namespace();
+
+    fixture.check_save(
+        r#"
+//- /src/lib.rs
+pub struct After;
+pub fn use_dep(_: dep::Api) {}
+"#,
+        &[
+            HostObservation::workspace_symbols("After"),
+            HostObservation::workspace_symbols("Api"),
+        ],
+        expect![[r#"
+            changed files
+            - app src/lib.rs
+
+            affected packages
+            - app
+
+            changed targets
+            - app[lib]
+
+            workspace symbols `After`
+            - struct After @ app[lib] src/lib.rs
+
+            workspace symbols `Api`
+            - struct Api @ dep[lib] dep/src/lib.rs
+        "#]],
+    );
+    assert!(fixture.package_cache_artifact_exists("dep"));
+}
+
+#[test]
+fn source_updates_rebuild_corrupt_offloaded_package_cache_artifacts() {
+    let mut fixture = HostFixture::build_with_options(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct Before;
+pub fn use_dep(_: dep::Api) {}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Api;
+"#,
+        ProjectBuildOptions {
+            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
+            ..ProjectBuildOptions::default()
+        },
+    );
+
+    fixture.corrupt_package_cache_artifact("dep");
+
+    fixture.check_save(
+        r#"
+//- /src/lib.rs
+pub struct After;
+pub fn use_dep(_: dep::Api) {}
+"#,
+        &[
+            HostObservation::workspace_symbols("After"),
+            HostObservation::workspace_symbols("Api"),
+        ],
+        expect![[r#"
+            changed files
+            - app src/lib.rs
+
+            affected packages
+            - app
+
+            changed targets
+            - app[lib]
+
+            workspace symbols `After`
+            - struct After @ app[lib] src/lib.rs
+
+            workspace symbols `Api`
+            - struct Api @ dep[lib] dep/src/lib.rs
+        "#]],
+    );
+    assert!(fixture.package_cache_artifact_exists("dep"));
+}
+
+#[test]
 fn source_updates_restore_offloaded_residency_for_unchanged_packages() {
     let mut fixture = HostFixture::build_with_options(
         r#"

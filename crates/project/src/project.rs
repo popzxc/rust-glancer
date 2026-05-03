@@ -48,25 +48,9 @@ impl Project {
         build_options: ProjectBuildOptions,
     ) -> anyhow::Result<Self> {
         let mut profiler = BuildProfiler::disabled();
-        let (names, parse, def_map, semantic_ir, body_ir) =
-            Self::build_phases(&workspace, build_options.body_ir_policy, &mut profiler)?;
-        let package_residency =
-            PackageResidencyPlan::build(&workspace, build_options.package_residency_policy);
-        let cached_workspace = CachedWorkspace::build(&workspace, &parse);
-        let cache_store = PackageCacheStore::for_workspace(&workspace);
-
-        let mut project = Self {
-            workspace,
-            cached_workspace,
-            cache_store,
-            build_options,
-            package_residency,
-            names,
-            parse,
-            def_map,
-            semantic_ir,
-            body_ir,
-        };
+        let mut project =
+            Self::build_resident_with_profiler(workspace, build_options, &mut profiler)
+                .context("while attempting to build resident analysis project")?;
         integration::apply_residency(&mut project)
             .context("while attempting to apply package cache residency")?;
 
@@ -80,25 +64,9 @@ impl Project {
         options: BuildProfileOptions,
     ) -> anyhow::Result<(Self, BuildProfile)> {
         let mut profiler = BuildProfiler::new(options);
-        let (names, parse, def_map, semantic_ir, body_ir) =
-            Self::build_phases(&workspace, build_options.body_ir_policy, &mut profiler)?;
-        let package_residency =
-            PackageResidencyPlan::build(&workspace, build_options.package_residency_policy);
-        let cached_workspace = CachedWorkspace::build(&workspace, &parse);
-        let cache_store = PackageCacheStore::for_workspace(&workspace);
-
-        let mut project = Self {
-            workspace,
-            cached_workspace,
-            cache_store,
-            build_options,
-            package_residency,
-            names,
-            parse,
-            def_map,
-            semantic_ir,
-            body_ir,
-        };
+        let mut project =
+            Self::build_resident_with_profiler(workspace, build_options, &mut profiler)
+                .context("while attempting to build resident analysis project")?;
         integration::apply_residency(&mut project)
             .context("while attempting to apply package cache residency")?;
 
@@ -169,6 +137,65 @@ impl Project {
             .context("while attempting to apply package cache residency after package rebuild")?;
 
         Ok(())
+    }
+
+    /// Replaces the project with a fully resident rebuild from the same workspace metadata.
+    ///
+    /// This is the mutable cache recovery path: after an artifact disappears or becomes invalid,
+    /// package rebuilds need source-built phase payloads before residency can be restored.
+    pub(crate) fn rebuild_resident_from_source(&mut self) -> anyhow::Result<()> {
+        let workspace = self.workspace.clone();
+        let build_options = self.build_options;
+        let cache_store = self.cache_store.clone();
+        let mut profiler = BuildProfiler::disabled();
+        let mut rebuilt =
+            Self::build_resident_with_profiler(workspace, build_options, &mut profiler)
+                .context("while attempting to rebuild resident analysis project")?;
+
+        // Keep the original cache namespace. Recovery can happen while the process is alive, and
+        // the environment that selected the target directory may have changed since initialization.
+        rebuilt.cache_store = cache_store;
+        *self = rebuilt;
+
+        Ok(())
+    }
+
+    /// Builds all analysis phases without applying the package residency policy.
+    ///
+    /// Cache recovery needs a fully resident project first, because writing replacement artifacts
+    /// requires the retained phase payloads to be available in memory.
+    pub(crate) fn build_resident_with_options(
+        workspace: WorkspaceMetadata,
+        build_options: ProjectBuildOptions,
+    ) -> anyhow::Result<Self> {
+        let mut profiler = BuildProfiler::disabled();
+        Self::build_resident_with_profiler(workspace, build_options, &mut profiler)
+    }
+
+    fn build_resident_with_profiler(
+        workspace: WorkspaceMetadata,
+        build_options: ProjectBuildOptions,
+        profiler: &mut BuildProfiler,
+    ) -> anyhow::Result<Self> {
+        let (names, parse, def_map, semantic_ir, body_ir) =
+            Self::build_phases(&workspace, build_options.body_ir_policy, profiler)?;
+        let package_residency =
+            PackageResidencyPlan::build(&workspace, build_options.package_residency_policy);
+        let cached_workspace = CachedWorkspace::build(&workspace, &parse);
+        let cache_store = PackageCacheStore::for_workspace(&workspace);
+
+        Ok(Self {
+            workspace,
+            cached_workspace,
+            cache_store,
+            build_options,
+            package_residency,
+            names,
+            parse,
+            def_map,
+            semantic_ir,
+            body_ir,
+        })
     }
 
     fn build_phases(

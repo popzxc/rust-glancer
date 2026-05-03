@@ -4,7 +4,7 @@
 //! databases. Lower crates expose package-level hooks, but they do not know where artifacts live or
 //! which residency policy selected a package for offloading.
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use anyhow::Context as _;
 use rg_analysis::AnalysisReadTxn;
@@ -133,6 +133,19 @@ fn write_package_artifact(project: &Project, package: PackageSlot) -> anyhow::Re
         })
 }
 
+fn write_residency_artifacts(project: &Project) -> anyhow::Result<()> {
+    for package_idx in 0..project.workspace.packages().len() {
+        let package = PackageSlot(package_idx);
+        if project.package_residency.package(package) != Some(PackageResidency::Offloadable) {
+            continue;
+        }
+
+        write_package_artifact(project, package)?;
+    }
+
+    Ok(())
+}
+
 fn offload_package(project: &mut Project, package: PackageSlot) -> anyhow::Result<()> {
     // Only drop resident data after the full cross-phase package artifact is durable. If a future
     // implementation downgrades write errors to warnings, this invariant should remain.
@@ -162,6 +175,20 @@ fn offload_package(project: &mut Project, package: PackageSlot) -> anyhow::Resul
 /// Rebuild phases can consult packages outside the rebuild set as part of name/import resolution,
 /// so the mutable project must be fully resident before those phases start replacing packages.
 pub(crate) fn materialize_project(project: &mut Project) -> anyhow::Result<()> {
+    match try_materialize_project(project) {
+        Ok(()) => Ok(()),
+        Err(error) if is_cache_artifact_unavailable(&error) => {
+            recover_resident_project_from_source(project).with_context(|| {
+                format!(
+                    "while attempting to recover analysis project after package cache became unavailable: {error}",
+                )
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn try_materialize_project(project: &mut Project) -> anyhow::Result<()> {
     for package_idx in 0..project.workspace.packages().len() {
         let package = PackageSlot(package_idx);
         if resident_package_arcs(project, package).is_some() {
@@ -205,8 +232,36 @@ pub(crate) fn materialize_project(project: &mut Project) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn recover_resident_project_from_source(project: &mut Project) -> anyhow::Result<()> {
+    project
+        .cache_store
+        .invalidate_workspace_cache()
+        .context("while attempting to invalidate package cache namespace")?;
+    project
+        .rebuild_resident_from_source()
+        .context("while attempting to rebuild resident analysis project from source")?;
+    write_residency_artifacts(project)
+        .context("while attempting to rewrite package cache artifacts after recovery")?;
+
+    Ok(())
+}
+
 /// Builds a query transaction with every offloaded package materialized back into owned memory.
 pub(crate) fn materialized_analysis_txn(project: &Project) -> anyhow::Result<AnalysisReadTxn<'_>> {
+    match try_materialized_analysis_txn(project) {
+        Ok(txn) => Ok(txn),
+        Err(error) if is_cache_artifact_unavailable(&error) => {
+            rebuilt_analysis_txn_from_source(project).with_context(|| {
+                format!(
+                    "while attempting to recover analysis transaction after package cache became unavailable: {error}",
+                )
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn try_materialized_analysis_txn(project: &Project) -> anyhow::Result<AnalysisReadTxn<'_>> {
     let mut def_map_packages = Vec::with_capacity(project.workspace.packages().len());
     let mut semantic_ir_packages = Vec::with_capacity(project.workspace.packages().len());
     let mut body_ir_packages = Vec::with_capacity(project.workspace.packages().len());
@@ -231,6 +286,41 @@ pub(crate) fn materialized_analysis_txn(project: &Project) -> anyhow::Result<Ana
                 )?));
             }
         }
+    }
+
+    Ok(AnalysisReadTxn::from_phase_txns(
+        DefMapDb::read_txn_from_package_arcs(def_map_packages),
+        SemanticIrDb::read_txn_from_package_arcs(semantic_ir_packages),
+        BodyIrDb::read_txn_from_package_arcs(body_ir_packages),
+    ))
+}
+
+fn rebuilt_analysis_txn_from_source(project: &Project) -> anyhow::Result<AnalysisReadTxn<'_>> {
+    project
+        .cache_store
+        .invalidate_workspace_cache()
+        .context("while attempting to invalidate package cache namespace")?;
+
+    let mut rebuilt =
+        Project::build_resident_with_options(project.workspace.clone(), project.build_options)
+            .context("while attempting to rebuild analysis transaction from source")?;
+    rebuilt.cache_store = project.cache_store.clone();
+    write_residency_artifacts(&rebuilt)
+        .context("while attempting to rewrite package cache artifacts after recovery")?;
+
+    let mut def_map_packages = Vec::with_capacity(rebuilt.workspace.packages().len());
+    let mut semantic_ir_packages = Vec::with_capacity(rebuilt.workspace.packages().len());
+    let mut body_ir_packages = Vec::with_capacity(rebuilt.workspace.packages().len());
+
+    for package_idx in 0..rebuilt.workspace.packages().len() {
+        let package = PackageSlot(package_idx);
+        let (def_map, semantic_ir, body_ir) = resident_package_arcs(&rebuilt, package)
+            .with_context(|| {
+                format!("while attempting to collect rebuilt package {}", package.0)
+            })?;
+        def_map_packages.push(def_map);
+        semantic_ir_packages.push(semantic_ir);
+        body_ir_packages.push(body_ir);
     }
 
     Ok(AnalysisReadTxn::from_phase_txns(
@@ -306,17 +396,73 @@ fn read_artifact(project: &Project, package: PackageSlot) -> anyhow::Result<Pack
 
     match project.cache_store.read_artifact(&header) {
         Ok(Some(artifact)) => Ok(artifact),
-        Ok(None) => anyhow::bail!("missing package cache artifact for package {}", package.0),
-        Err(error) => {
-            let _ = project.cache_store.invalidate_workspace_cache();
-            Err(error).with_context(|| {
-                format!(
-                    "while attempting to materialize package cache artifact for package {}",
-                    package.0,
-                )
-            })
+        Ok(None) => Err(PackageCacheArtifactUnavailable::missing(package).into()),
+        Err(error) => Err(PackageCacheArtifactUnavailable::invalid(package, error).into()),
+    }
+}
+
+fn is_cache_artifact_unavailable(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.is::<PackageCacheArtifactUnavailable>())
+}
+
+#[derive(Debug)]
+struct PackageCacheArtifactUnavailable {
+    package: PackageSlot,
+    reason: PackageCacheArtifactUnavailableReason,
+}
+
+impl PackageCacheArtifactUnavailable {
+    fn missing(package: PackageSlot) -> Self {
+        Self {
+            package,
+            reason: PackageCacheArtifactUnavailableReason::Missing,
         }
     }
+
+    fn invalid(package: PackageSlot, error: anyhow::Error) -> Self {
+        Self {
+            package,
+            reason: PackageCacheArtifactUnavailableReason::Invalid(error),
+        }
+    }
+}
+
+impl fmt::Display for PackageCacheArtifactUnavailable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.reason {
+            PackageCacheArtifactUnavailableReason::Missing => {
+                write!(
+                    f,
+                    "missing package cache artifact for package {}",
+                    self.package.0,
+                )
+            }
+            PackageCacheArtifactUnavailableReason::Invalid(_) => {
+                write!(
+                    f,
+                    "invalid package cache artifact for package {}",
+                    self.package.0,
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PackageCacheArtifactUnavailable {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.reason {
+            PackageCacheArtifactUnavailableReason::Missing => None,
+            PackageCacheArtifactUnavailableReason::Invalid(error) => Some(error.as_ref()),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum PackageCacheArtifactUnavailableReason {
+    Missing,
+    Invalid(anyhow::Error),
 }
 
 fn body_ir_package_from_payload(

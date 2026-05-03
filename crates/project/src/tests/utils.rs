@@ -1,4 +1,4 @@
-use std::{fmt::Write as _, path::Path};
+use std::{fmt::Write as _, fs, path::Path};
 
 use expect_test::Expect;
 use rg_analysis::WorkspaceSymbol;
@@ -41,6 +41,54 @@ impl HostFixture {
             self.host.snapshot().parse_db(),
             &self.fixture.path(relative_path),
         )
+    }
+
+    pub(super) fn remove_cache_namespace(&self) {
+        match fs::remove_dir_all(self.host.project.cache_store.root()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!(
+                "fixture cache namespace {} should be removable: {error}",
+                self.host.project.cache_store.root().display(),
+            ),
+        }
+    }
+
+    pub(super) fn corrupt_package_cache_artifact(&self, package_name: &str) {
+        let package = package_slot_by_name(self.host.snapshot().parse_db(), package_name);
+        let header = self
+            .host
+            .project
+            .cached_workspace
+            .artifact_header(package)
+            .expect("fixture package should have a cache artifact header");
+        let path = self
+            .host
+            .project
+            .cache_store
+            .package_artifact_path(&header.package);
+
+        fs::write(&path, b"not a package cache artifact").unwrap_or_else(|error| {
+            panic!(
+                "fixture package cache artifact {} should be writable: {error}",
+                path.display(),
+            )
+        });
+    }
+
+    pub(super) fn package_cache_artifact_exists(&self, package_name: &str) -> bool {
+        let package = package_slot_by_name(self.host.snapshot().parse_db(), package_name);
+        let header = self
+            .host
+            .project
+            .cached_workspace
+            .artifact_header(package)
+            .expect("fixture package should have a cache artifact header");
+        self.host
+            .project
+            .cache_store
+            .package_artifact_path(&header.package)
+            .exists()
     }
 
     pub(super) fn check(&self, observations: &[HostObservation<'_>], expect: Expect) {
