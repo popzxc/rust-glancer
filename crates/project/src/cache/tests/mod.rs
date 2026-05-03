@@ -3,7 +3,7 @@ mod utils;
 use expect_test::expect;
 
 #[test]
-fn plans_cache_artifacts_from_workspace_metadata() {
+fn plans_cache_artifacts_from_analyzed_targets() {
     utils::check_cached_workspace(
         r#"
 //- /Cargo.toml
@@ -51,8 +51,15 @@ name = "dep-pkg"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "dep-tool"
+path = "src/bin/dep_tool.rs"
+
 //- /dep/src/lib.rs
 pub struct Dep;
+
+//- /dep/src/bin/dep_tool.rs
+fn main() {}
 
 //- /build-helper/Cargo.toml
 [package]
@@ -299,8 +306,15 @@ name = "dep"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "dep-tool"
+path = "src/bin/dep_tool.rs"
+
 //- /dep/src/lib.rs
 pub struct DepType;
+
+//- /dep/src/bin/dep_tool.rs
+fn main() {}
 "#,
         expect![[r#"
             offloaded dependency query

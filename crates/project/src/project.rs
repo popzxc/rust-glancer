@@ -52,7 +52,7 @@ impl Project {
             Self::build_phases(&workspace, build_options.body_ir_policy, &mut profiler)?;
         let package_residency =
             PackageResidencyPlan::build(&workspace, build_options.package_residency_policy);
-        let cached_workspace = CachedWorkspace::build(&workspace);
+        let cached_workspace = CachedWorkspace::build(&workspace, &parse);
         let cache_store = PackageCacheStore::for_workspace(&workspace);
 
         let mut project = Self {
@@ -84,7 +84,7 @@ impl Project {
             Self::build_phases(&workspace, build_options.body_ir_policy, &mut profiler)?;
         let package_residency =
             PackageResidencyPlan::build(&workspace, build_options.package_residency_policy);
-        let cached_workspace = CachedWorkspace::build(&workspace);
+        let cached_workspace = CachedWorkspace::build(&workspace, &parse);
         let cache_store = PackageCacheStore::for_workspace(&workspace);
 
         let mut project = Self {

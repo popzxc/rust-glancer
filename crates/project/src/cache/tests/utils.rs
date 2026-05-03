@@ -22,7 +22,8 @@ pub(super) fn check_cached_workspace(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let cached_workspace = CachedWorkspace::build(&workspace);
+    let parse = rg_parse::ParseDb::build(&workspace).expect("fixture parse db should build");
+    let cached_workspace = CachedWorkspace::build(&workspace, &parse);
     let actual = render_cached_workspace(&workspace, &cached_workspace);
 
     expect.assert_eq(&format!("{}\n", actual.trim_end()));
@@ -32,7 +33,8 @@ pub(super) fn check_cache_store_paths(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let cached_workspace = CachedWorkspace::build(&workspace);
+    let parse = rg_parse::ParseDb::build(&workspace).expect("fixture parse db should build");
+    let cached_workspace = CachedWorkspace::build(&workspace, &parse);
 
     let mut dump = String::new();
     render_cache_store(
@@ -146,9 +148,9 @@ pub(super) fn check_fixture_cache_artifact_codec(fixture: &str, expect: Expect) 
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let cached_workspace = CachedWorkspace::build(&workspace);
     let project = Project::build(workspace).expect("fixture project should build");
-    let artifact = package_artifact_from_project(&cached_workspace, &project, PackageSlot(0));
+    let artifact =
+        package_artifact_from_project(&project.cached_workspace, &project, PackageSlot(0));
 
     let bytes = PackageCacheCodec::encode_artifact(&artifact)
         .expect("package cache artifact should serialize");
@@ -168,9 +170,9 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let cached_workspace = CachedWorkspace::build(&workspace);
     let project = Project::build(workspace).expect("fixture project should build");
-    let artifact = package_artifact_from_project(&cached_workspace, &project, PackageSlot(0));
+    let artifact =
+        package_artifact_from_project(&project.cached_workspace, &project, PackageSlot(0));
     let store = PackageCacheStore::for_workspace_with_target_dir(
         project.workspace(),
         project.workspace().workspace_root().join("target"),
