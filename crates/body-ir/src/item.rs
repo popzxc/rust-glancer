@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// One item declared inside a function body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct BodyItemData {
     pub source: BodySource,
     pub name_source: BodySource,
@@ -51,7 +51,7 @@ pub struct BodyFieldData<'a> {
 }
 
 /// One impl block declared inside a function body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct BodyImplData {
     pub source: BodySource,
     pub scope: ScopeId,
@@ -74,7 +74,7 @@ impl BodyImplData {
 }
 
 /// One function-like declaration inside a function body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct BodyFunctionData {
     pub source: BodySource,
     pub name_source: BodySource,
@@ -102,13 +102,23 @@ impl BodyFunctionData {
 }
 
 /// Owner of a body-local function-like declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum BodyFunctionOwner {
     LocalImpl(BodyImplId),
 }
 
 /// Body-local item category.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum BodyItemKind {
     #[display("struct")]
     Struct,

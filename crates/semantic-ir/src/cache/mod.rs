@@ -1,9 +1,12 @@
-//! Semantic IR package payload boundary for future cache artifacts.
+//! Semantic IR package cache boundary.
+//!
+//! Project-level cache artifacts store the retained package data directly. This wrapper keeps the
+//! cache payload API stable without introducing a parallel Semantic IR representation.
 
 use crate::PackageIr;
 
 /// One package worth of Semantic IR data as it will be serialized into an artifact.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct SemanticIrPackageBundle {
     package: PackageIr,
 }

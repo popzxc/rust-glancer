@@ -8,7 +8,7 @@ use crate::{
 };
 
 /// One local binding introduced by a parameter or `let`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct BindingData {
     pub source: BodySource,
     pub scope: ScopeId,
@@ -31,7 +31,17 @@ impl BindingData {
 }
 
 /// Local binding category.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum BindingKind {
     #[display("param")]
     Param,
@@ -42,7 +52,7 @@ pub enum BindingKind {
 }
 
 /// One lowered statement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct StmtData {
     pub source: BodySource,
     pub kind: StmtKind,
@@ -55,7 +65,7 @@ impl StmtData {
 }
 
 /// Statement forms that matter for the first Body IR pass.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum StmtKind {
     Let {
         scope: ScopeId,

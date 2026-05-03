@@ -204,3 +204,50 @@ fn roundtrips_package_cache_header_codec() {
         - dep -> path+file:///workspace/dep#dep@0.1.0 [normal]
     "#]]);
 }
+
+#[test]
+fn roundtrips_minimal_package_cache_artifact_codec() {
+    utils::check_minimal_cache_artifact_codec(expect![[r#"
+        encoded artifact bytes 168
+        706174682b66696c653a2f2f2f776f726b737061636523656d70747940302e31
+        2e302f776f726b73706163652f436172676f2e746f6d6c000000000000000000
+        01000000000000000700000000000000a2000000b0ffffffffffffffffffffff
+        0003000095000000beffffffccffffff00000000c4ffffff0000000000000000
+        ffffffffffffffffb0ffffff00000000a8ffffff00000000a0ffffff00000000
+        0000000094ffffff
+
+        decoded artifact
+        schema 1
+        package #7 
+        header targets 0
+        def-map package  targets 0
+        semantic IR targets 0
+        body IR built targets 0
+    "#]]);
+}
+
+#[test]
+fn roundtrips_fixture_package_cache_artifact_codec() {
+    utils::check_fixture_cache_artifact_codec(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct App;
+"#,
+        expect![[r#"
+            encoded artifact bytes 1088
+            decoded artifact
+            schema 1
+            package #0 app
+            header targets 1
+            def-map package app targets 1
+            semantic IR targets 1
+            body IR built targets 1
+        "#]],
+    );
+}

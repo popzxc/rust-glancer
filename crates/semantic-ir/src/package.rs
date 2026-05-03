@@ -7,7 +7,9 @@ use crate::TargetIr;
 ///
 /// Packages keep target IRs in the same stable order as parse/def-map packages, so a
 /// `TargetRef { package, target }` can address every phase without an extra translation table.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 pub struct PackageIr {
     pub(crate) targets: Arena<TargetId, TargetIr>,
 }

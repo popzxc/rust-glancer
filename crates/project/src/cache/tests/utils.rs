@@ -4,13 +4,17 @@ use std::{
 };
 
 use expect_test::Expect;
+use rg_body_ir::{BodyIrPackageBundle, PackageBodies};
+use rg_def_map::{DefMapPackageBundle, Package, PackageSlot};
+use rg_semantic_ir::{PackageIr, SemanticIrPackageBundle};
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
 use crate::{
     CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
     CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, CachedWorkspace,
-    PackageCacheCodec, PackageCacheHeader, PackageCacheStore,
+    PackageCacheArtifact, PackageCacheBodyIrState, PackageCacheCodec, PackageCacheHeader,
+    PackageCachePayload, PackageCacheStore, Project,
 };
 
 pub(super) fn check_cached_workspace(fixture: &str, expect: Expect) {
@@ -98,6 +102,99 @@ pub(super) fn check_cache_header_codec(expect: Expect) {
     render_header("decoded header", &decoded, &mut dump);
 
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
+pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
+    let artifact = PackageCacheArtifact::new(
+        PackageCacheHeader::new(CachedPackage {
+            package: CachedPackageSlot(7),
+            package_id: CachedPackageId::from_stable_text("path+file:///workspace#empty@0.1.0"),
+            name: String::new(),
+            source: CachedPackageSource::Workspace,
+            edition: CachedRustEdition::Edition2024,
+            manifest_path: CachedPath::from_stable_text("/workspace/Cargo.toml"),
+            targets: Vec::new(),
+            dependencies: Vec::new(),
+        }),
+        PackageCachePayload::new(
+            DefMapPackageBundle::new(Package::default()),
+            SemanticIrPackageBundle::new(PackageIr::default()),
+            PackageCacheBodyIrState::Built(Box::new(BodyIrPackageBundle::new(
+                PackageBodies::default(),
+            ))),
+        ),
+    );
+
+    let bytes = PackageCacheCodec::encode_artifact(&artifact)
+        .expect("package cache artifact should serialize");
+    let decoded = PackageCacheCodec::decode_artifact(&bytes)
+        .expect("package cache artifact should deserialize");
+    assert_eq!(decoded, artifact);
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "encoded artifact bytes {}", bytes.len())
+        .expect("string writes should not fail");
+    render_hex(&bytes, &mut dump);
+    writeln!(&mut dump).expect("string writes should not fail");
+    render_artifact("decoded artifact", &decoded, &mut dump);
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
+pub(super) fn check_fixture_cache_artifact_codec(fixture: &str, expect: Expect) {
+    let fixture = fixture_crate(fixture);
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should normalize");
+    let cached_workspace = CachedWorkspace::build(&workspace);
+    let project = Project::build(workspace).expect("fixture project should build");
+    let artifact = package_artifact_from_project(&cached_workspace, &project, PackageSlot(0));
+
+    let bytes = PackageCacheCodec::encode_artifact(&artifact)
+        .expect("package cache artifact should serialize");
+    let decoded = PackageCacheCodec::decode_artifact(&bytes)
+        .expect("package cache artifact should deserialize");
+    assert_eq!(decoded, artifact);
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "encoded artifact bytes {}", bytes.len())
+        .expect("string writes should not fail");
+    render_artifact("decoded artifact", &decoded, &mut dump);
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
+fn package_artifact_from_project(
+    cached_workspace: &CachedWorkspace,
+    project: &Project,
+    package: PackageSlot,
+) -> PackageCacheArtifact {
+    let header = cached_workspace
+        .artifact_header(package)
+        .expect("cached fixture package should have an artifact header");
+    let def_map = project
+        .def_map
+        .package(package)
+        .expect("fixture package should have def-map data")
+        .clone();
+    let semantic_ir = project
+        .semantic_ir
+        .package(package)
+        .expect("fixture package should have semantic IR data")
+        .clone();
+    let body_ir = project
+        .body_ir
+        .package(package)
+        .expect("fixture package should have body IR data")
+        .clone();
+
+    PackageCacheArtifact::new(
+        header,
+        PackageCachePayload::new(
+            DefMapPackageBundle::new(def_map),
+            SemanticIrPackageBundle::new(semantic_ir),
+            PackageCacheBodyIrState::Built(Box::new(BodyIrPackageBundle::new(body_ir))),
+        ),
+    )
 }
 
 fn render_cached_workspace(
@@ -223,6 +320,51 @@ fn render_header(label: &str, header: &PackageCacheHeader, dump: &mut String) {
             render_dependency_kinds(dependency),
         )
         .expect("string writes should not fail");
+    }
+}
+
+fn render_artifact(label: &str, artifact: &PackageCacheArtifact, dump: &mut String) {
+    writeln!(dump, "{label}").expect("string writes should not fail");
+    writeln!(dump, "schema {}", artifact.header.schema_version.0)
+        .expect("string writes should not fail");
+    writeln!(
+        dump,
+        "package #{} {}",
+        artifact.header.package.package.0, artifact.header.package.name,
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        dump,
+        "header targets {}",
+        artifact.header.package.targets.len()
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        dump,
+        "def-map package {} targets {}",
+        artifact.payload.def_map.package().package_name(),
+        artifact.payload.def_map.package().targets().len(),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        dump,
+        "semantic IR targets {}",
+        artifact.payload.semantic_ir.package().targets().len(),
+    )
+    .expect("string writes should not fail");
+
+    match &artifact.payload.body_ir {
+        PackageCacheBodyIrState::Built(bundle) => {
+            writeln!(
+                dump,
+                "body IR built targets {}",
+                bundle.package().targets().len()
+            )
+            .expect("string writes should not fail");
+        }
+        PackageCacheBodyIrState::SkippedByPolicy => {
+            writeln!(dump, "body IR skipped by policy").expect("string writes should not fail");
+        }
     }
 }
 

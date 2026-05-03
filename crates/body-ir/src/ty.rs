@@ -5,23 +5,58 @@ use rg_text::Name;
 use crate::ids::BodyItemRef;
 
 /// Small type vocabulary for the first Body IR pass.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
+#[rkyv(
+    bytecheck(
+        bounds(
+            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
+            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+        )
+    ),
+    serialize_bounds(
+        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
+        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+    ),
+    deserialize_bounds(
+        __D: rkyv::de::Pooling,
+        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+    )
+)]
 pub enum BodyTy {
     Unit,
     Never,
     Syntax(TypeRef),
-    Reference(Box<BodyTy>),
-    LocalNominal(Vec<BodyLocalNominalTy>),
-    Nominal(Vec<BodyNominalTy>),
-    SelfTy(Vec<BodyNominalTy>),
+    Reference(#[rkyv(omit_bounds)] Box<BodyTy>),
+    LocalNominal(#[rkyv(omit_bounds)] Vec<BodyLocalNominalTy>),
+    Nominal(#[rkyv(omit_bounds)] Vec<BodyNominalTy>),
+    SelfTy(#[rkyv(omit_bounds)] Vec<BodyNominalTy>),
     #[default]
     Unknown,
 }
 
 /// Body-local nominal type together with the generic arguments visible at use site.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[rkyv(
+    bytecheck(
+        bounds(
+            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
+            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+        )
+    ),
+    serialize_bounds(
+        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
+        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+    ),
+    deserialize_bounds(
+        __D: rkyv::de::Pooling,
+        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+    )
+)]
 pub struct BodyLocalNominalTy {
     pub item: BodyItemRef,
+    #[rkyv(omit_bounds)]
     pub args: Vec<BodyGenericArg>,
 }
 
@@ -42,9 +77,26 @@ impl BodyLocalNominalTy {
 }
 
 /// Module-level nominal type together with the generic arguments visible at use site.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[rkyv(
+    bytecheck(
+        bounds(
+            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
+            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+        )
+    ),
+    serialize_bounds(
+        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
+        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+    ),
+    deserialize_bounds(
+        __D: rkyv::de::Pooling,
+        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+    )
+)]
 pub struct BodyNominalTy {
     pub def: TypeDefRef,
+    #[rkyv(omit_bounds)]
     pub args: Vec<BodyGenericArg>,
 }
 
@@ -65,12 +117,32 @@ impl BodyNominalTy {
 }
 
 /// Generic argument as understood by the intentionally small Body IR type model.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[rkyv(
+    bytecheck(
+        bounds(
+            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
+            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+        )
+    ),
+    serialize_bounds(
+        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
+        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+    ),
+    deserialize_bounds(
+        __D: rkyv::de::Pooling,
+        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
+    )
+)]
 pub enum BodyGenericArg {
-    Type(Box<BodyTy>),
+    Type(#[rkyv(omit_bounds)] Box<BodyTy>),
     Lifetime(String),
     Const(String),
-    AssocType { name: Name, ty: Option<Box<BodyTy>> },
+    AssocType {
+        name: Name,
+        #[rkyv(omit_bounds)]
+        ty: Option<Box<BodyTy>>,
+    },
     Unsupported(String),
 }
 

@@ -8,7 +8,7 @@ use rg_workspace::RustEdition;
 use super::{ModuleId, Path, PathSegment, path::last_segment_name};
 
 /// One lowered import declaration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ImportData {
     pub module: ModuleId,
     pub visibility: VisibilityLevel,
@@ -41,7 +41,16 @@ impl ImportData {
 }
 
 /// Binding strategy for one lowered import or extern crate item.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum ImportBinding {
     #[display("")]
     Inferred,
@@ -76,7 +85,7 @@ impl ImportBinding {
 }
 
 /// Import form that matters for scope propagation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum ImportKind {
     Named,
     SelfImport,
@@ -94,7 +103,7 @@ impl ImportKind {
 }
 
 /// Structured path used during import resolution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ImportPath {
     pub absolute: bool,
     pub segments: Vec<PathSegment>,
@@ -133,7 +142,7 @@ impl ImportPath {
 }
 
 /// Import path plus source spans for each segment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ImportSourcePath {
     pub(crate) absolute: bool,
     pub(crate) segments: Vec<ImportSourcePathSegment>,
@@ -183,7 +192,7 @@ impl ImportSourcePath {
 }
 
 /// One source-spanned import path segment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ImportSourcePathSegment {
     pub(crate) segment: PathSegment,
     pub span: Span,

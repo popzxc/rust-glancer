@@ -1,5 +1,3 @@
-use rg_memsize::{MemoryRecorder, MemorySize};
-
 use crate::{
     AssocItemId, ConstData, ConstId, ConstRef, ConstSignature, EnumData, EnumId, EnumVariantRef,
     FieldRef, FunctionData, FunctionId, FunctionRef, FunctionSignature, ImplData, ImplId, ImplRef,
@@ -9,6 +7,7 @@ use crate::{
     TypeAliasId, TypeAliasRef, TypeAliasSignature, TypeDefId, TypeDefRef, TypePathContext,
     UnionData, UnionId, signature::SignatureGenerics,
 };
+use rg_memsize::{MemoryRecorder, MemorySize};
 
 macro_rules! record_fields {
     ($recorder:expr, $owner:expr, $($field:ident),+ $(,)?) => {

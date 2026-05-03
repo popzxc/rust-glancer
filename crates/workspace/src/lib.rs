@@ -383,7 +383,19 @@ impl PackageId {
 ///
 /// Slots are dense and snapshot-local. Rebuild code must rebuild the whole project when Cargo
 /// metadata changes package ordering or membership, so analysis IDs never cross metadata graphs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub struct PackageSlot(pub usize);
 
 /// Where one normalized package came from.

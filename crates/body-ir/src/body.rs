@@ -30,7 +30,9 @@ pub struct BodyIrStats {
 }
 
 /// Lowered bodies for all targets inside one parsed package.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 pub struct PackageBodies {
     pub(crate) targets: Arena<TargetId, TargetBodies>,
 }
@@ -65,7 +67,7 @@ impl PackageBodies {
 }
 
 /// Lowered bodies for one target.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct TargetBodies {
     pub(crate) status: TargetBodiesStatus,
     pub(crate) function_bodies: Arena<FunctionId, Option<BodyId>>,
@@ -123,7 +125,17 @@ impl TargetBodies {
 }
 
 /// Whether one target's bodies were eagerly lowered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum TargetBodiesStatus {
     #[display("built")]
     Built,
@@ -150,7 +162,7 @@ impl TargetBodies {
 }
 
 /// Lowered body for one function.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct BodyData {
     pub owner: FunctionRef,
     pub owner_module: rg_def_map::ModuleRef,
@@ -382,14 +394,14 @@ impl BodyBuilder {
 }
 
 /// Source location attached to every body node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct BodySource {
     pub file_id: FileId,
     pub span: Span,
 }
 
 /// One lexical scope.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ScopeData {
     pub parent: Option<ScopeId>,
     pub local_items: Vec<BodyItemId>,

@@ -34,7 +34,9 @@ pub use self::{
 };
 
 /// Def maps for all targets inside one parsed package.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 pub struct Package {
     name: String,
     target_names: Arena<TargetId, String>,

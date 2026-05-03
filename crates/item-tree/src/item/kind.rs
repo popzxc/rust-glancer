@@ -12,7 +12,16 @@ use super::{
 /// Unit variants are enough for plain local definitions. Variants whose syntax
 /// matters to later lowering stages carry structured item-tree facts, boxed to
 /// keep the enum size stable as those facts grow.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum ItemKind {
     #[display("asm")]
     AsmExpr,
@@ -70,7 +79,17 @@ impl ItemKind {
 }
 
 /// Payload-independent item classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum ItemTag {
     #[display("asm")]
     AsmExpr,

@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// One lowered expression.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ExprData {
     pub source: BodySource,
     pub scope: ScopeId,
@@ -34,7 +34,7 @@ impl ExprData {
 }
 
 /// Expression forms that the first Body IR pass understands.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum ExprKind {
     Block {
         scope: ScopeId,
@@ -78,7 +78,17 @@ pub enum ExprKind {
 }
 
 /// Transparent or nearly-transparent expression wrapper understood by cheap type normalization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum ExprWrapperKind {
     #[display("paren")]
     Paren,
@@ -93,7 +103,7 @@ pub enum ExprWrapperKind {
 }
 
 /// One match arm with its pattern scope and lowered arm expression.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct MatchArmData {
     pub pat: Option<PatId>,
     pub scope: ScopeId,
@@ -101,7 +111,17 @@ pub struct MatchArmData {
 }
 
 /// Literal category used for display and future cheap inference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum LiteralKind {
     #[display("bool")]
     Bool,

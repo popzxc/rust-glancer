@@ -8,7 +8,7 @@ use crate::{ImplId, ItemId, ItemStore};
 /// The target keeps two indexes back into DefMap collection results:
 /// local defs map to semantic item ids, and local impls map to semantic impl ids. Those links let
 /// later phases move from name resolution into semantic signatures without re-lowering source.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct TargetIr {
     pub(crate) local_items: Arena<LocalDefId, Option<ItemId>>,
     pub(crate) local_impls: Vec<ImplId>,

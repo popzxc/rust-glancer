@@ -78,6 +78,37 @@ impl From<String> for Name {
     }
 }
 
+// Archive names as plain strings. That keeps archived map keys hashable and avoids making the
+// runtime interner part of the cache format.
+impl rkyv::Archive for Name {
+    type Archived = rkyv::string::ArchivedString;
+    type Resolver = rkyv::string::StringResolver;
+
+    fn resolve(&self, resolver: Self::Resolver, out: rkyv::Place<Self::Archived>) {
+        rkyv::string::ArchivedString::resolve_from_str(self.as_str(), resolver, out);
+    }
+}
+
+impl<S> rkyv::Serialize<S> for Name
+where
+    S: rkyv::rancor::Fallible + ?Sized,
+    S::Error: rkyv::rancor::Source,
+    str: rkyv::SerializeUnsized<S>,
+{
+    fn serialize(&self, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        rkyv::string::ArchivedString::serialize_from_str(self.as_str(), serializer)
+    }
+}
+
+impl<D> rkyv::Deserialize<Name, D> for rkyv::string::ArchivedString
+where
+    D: rkyv::rancor::Fallible + ?Sized,
+{
+    fn deserialize(&self, _: &mut D) -> Result<Name, D::Error> {
+        Ok(Name::new(self.as_str()))
+    }
+}
+
 impl PartialEq<str> for Name {
     fn eq(&self, other: &str) -> bool {
         self.as_str() == other

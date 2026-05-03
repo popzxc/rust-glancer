@@ -14,14 +14,14 @@ use super::header::PackageCacheHeader;
 /// `SkippedByPolicy` is valid only when the current Body IR build policy does not require bodies
 /// for this package. If a later policy needs bodies, the whole package artifact should be rejected
 /// and rebuilt through the normal project-level path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum PackageCacheBodyIrState {
     Built(Box<BodyIrPackageBundle>),
     SkippedByPolicy,
 }
 
 /// One package artifact containing every retained analysis phase we currently cache.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PackageCacheArtifact {
     pub header: PackageCacheHeader,
     pub payload: PackageCachePayload,
@@ -34,7 +34,7 @@ impl PackageCacheArtifact {
 }
 
 /// Retained package data stored together to avoid mismatched phase fragments.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PackageCachePayload {
     pub def_map: DefMapPackageBundle,
     pub semantic_ir: SemanticIrPackageBundle,

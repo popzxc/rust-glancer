@@ -19,7 +19,9 @@ use crate::{
 ///
 /// Semantic ids are dense indexes into these vectors. Keeping all item families in one store lets
 /// lowering allocate ids cheaply while the public query surface exposes stable typed references.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 pub struct ItemStore {
     pub(crate) structs: Arena<StructId, StructData>,
     pub(crate) unions: Arena<UnionId, UnionData>,
@@ -168,7 +170,7 @@ pub struct EnumVariantData<'a> {
 }
 
 /// Nominal struct lowered from a module item.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct StructData {
     pub local_def: LocalDefRef,
     pub source: ItemTreeRef,
@@ -192,7 +194,7 @@ impl StructData {
 }
 
 /// Nominal union lowered from a module item.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct UnionData {
     pub local_def: LocalDefRef,
     pub source: ItemTreeRef,
@@ -219,7 +221,7 @@ impl UnionData {
 }
 
 /// Enum definition together with variant payloads.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct EnumData {
     pub local_def: LocalDefRef,
     pub source: ItemTreeRef,
@@ -246,7 +248,7 @@ impl EnumData {
 }
 
 /// Trait signature and associated items.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct TraitData {
     pub local_def: LocalDefRef,
     pub source: ItemTreeRef,
@@ -279,7 +281,7 @@ impl TraitData {
 ///
 /// `resolved_*` fields are intentionally lossy and optimistic: they record all type/trait targets
 /// that our current path resolver can identify, without attempting a real trait solver.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ImplData {
     pub local_impl: LocalImplRef,
     pub source: ItemTreeRef,
@@ -307,7 +309,7 @@ impl ImplData {
 }
 
 /// Function signature and source identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct FunctionData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemTreeRef,
@@ -338,7 +340,7 @@ impl FunctionData {
 }
 
 /// Type alias signature and optional aliased type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct TypeAliasData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemTreeRef,
@@ -362,7 +364,7 @@ impl TypeAliasData {
 }
 
 /// Const signature and optional value body owner.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ConstData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemTreeRef,
@@ -386,7 +388,7 @@ impl ConstData {
 }
 
 /// Module-level static item.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct StaticData {
     pub local_def: LocalDefRef,
     pub source: ItemTreeRef,

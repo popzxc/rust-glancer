@@ -1,5 +1,3 @@
-use rg_memsize::{MemoryRecorder, MemorySize};
-
 use crate::{
     BindingData, BindingId, BindingKind, BodyData, BodyFieldRef, BodyFunctionData, BodyFunctionId,
     BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId, BodyImplData, BodyImplId,
@@ -11,6 +9,7 @@ use crate::{
     expr::{ExprWrapperKind, MatchArmData},
     ids::StmtId,
 };
+use rg_memsize::{MemoryRecorder, MemorySize};
 
 macro_rules! record_fields {
     ($recorder:expr, $owner:expr, $($field:ident),+ $(,)?) => {

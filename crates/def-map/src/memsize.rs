@@ -1,5 +1,3 @@
-use rg_memsize::{MemoryRecorder, MemorySize};
-
 use crate::{
     DefId, DefMap, DefMapDb, DefMapPackageBundle, DefMapStats, ImportBinding, ImportData, ImportId,
     ImportKind, ImportPath, ImportRef, ImportSourcePath, LocalDefData, LocalDefId, LocalDefKind,
@@ -7,6 +5,7 @@ use crate::{
     ModuleRef, ModuleScope, Package, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
     import::ImportSourcePathSegment, scope::ScopeNameEntry,
 };
+use rg_memsize::{MemoryRecorder, MemorySize};
 
 macro_rules! record_fields {
     ($recorder:expr, $owner:expr, $($field:ident),+ $(,)?) => {

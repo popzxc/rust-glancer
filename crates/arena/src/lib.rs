@@ -68,7 +68,7 @@ macro_rules! arena_id {
 }
 
 /// Mutable dense arena used while lowering/building a phase.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct Arena<Id, T> {
     items: Vec<T>,
     _marker: PhantomData<fn(Id) -> Id>,

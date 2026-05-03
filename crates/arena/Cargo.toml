@@ -15,4 +15,5 @@ default = []
 memsize = ["dep:rg_memsize"]
 
 [dependencies]
+rkyv.workspace = true
 rg_memsize = { workspace = true, optional = true }

@@ -1,6 +1,15 @@
 use ra_syntax::{AstNode as _, ast};
 
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum VisibilityLevel {
     #[display("private")]
     Private,

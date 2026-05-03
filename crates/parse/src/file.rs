@@ -13,7 +13,9 @@ use crate::{
 };
 
 /// Stable identifier for a parsed source file inside `FileDb`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 pub struct FileId(pub usize);
 
 impl rg_arena::ArenaId for FileId {

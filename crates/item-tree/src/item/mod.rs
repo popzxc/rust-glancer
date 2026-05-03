@@ -31,7 +31,9 @@ mod type_ref;
 mod visibility;
 
 /// Stable file-local identifier for one lowered item-tree node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 pub struct ItemTreeId(pub usize);
 
 impl rg_arena::ArenaId for ItemTreeId {
@@ -45,7 +47,9 @@ impl rg_arena::ArenaId for ItemTreeId {
 }
 
 /// Stable project-local reference to one item-tree node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 pub struct ItemTreeRef {
     pub file_id: FileId,
     pub item: ItemTreeId,

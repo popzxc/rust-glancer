@@ -9,7 +9,7 @@ use rg_parse::Span;
 use rg_text::{Name, NameInterner};
 
 /// Syntactic `extern crate` facts attached to `ItemKind::ExternCrate`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ExternCrateItem {
     pub name: Option<Name>,
     pub alias: ImportAlias,
@@ -27,7 +27,7 @@ impl ExternCrateItem {
 }
 
 /// Syntactic `use` facts attached to `ItemKind::Use`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct UseItem {
     pub imports: Vec<UseImport>,
 }
@@ -83,7 +83,7 @@ impl UseItem {
 }
 
 /// One leaf import produced by a potentially nested use tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct UseImport {
     pub kind: UseImportKind,
     pub path: UsePath,
@@ -91,7 +91,17 @@ pub struct UseImport {
 }
 
 /// Import form before name resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum UseImportKind {
     #[display("named")]
     Named,
@@ -102,7 +112,7 @@ pub enum UseImportKind {
 }
 
 /// Explicit import alias, including `as _`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum ImportAlias {
     Inferred,
     Explicit { name: Name, span: Span },
@@ -140,7 +150,7 @@ impl fmt::Display for ImportAlias {
 }
 
 /// Structured path used before semantic resolution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct UsePath {
     pub absolute: bool,
     pub segments: Vec<UsePathSegment>,
@@ -240,7 +250,7 @@ impl fmt::Display for UsePath {
 }
 
 /// One structured path segment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct UsePathSegment {
     pub kind: UsePathSegmentKind,
     pub span: Span,
@@ -252,7 +262,16 @@ impl fmt::Display for UsePathSegment {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum UsePathSegmentKind {
     #[display("{_0}")]
     Name(Name),
