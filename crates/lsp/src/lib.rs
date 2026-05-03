@@ -6,6 +6,7 @@ mod documents;
 mod engine;
 mod memory;
 mod methods;
+mod project_stats;
 mod proto;
 mod run;
 

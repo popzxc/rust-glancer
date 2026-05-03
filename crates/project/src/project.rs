@@ -165,7 +165,7 @@ impl Project {
         self.semantic_ir = semantic_ir;
         self.body_ir = body_ir;
         self.names.shrink_to_fit();
-        integration::apply_residency_for_packages(self, packages)
+        integration::restore_residency_after_rebuild(self, packages)
             .context("while attempting to apply package cache residency after package rebuild")?;
 
         Ok(())

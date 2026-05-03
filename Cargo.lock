@@ -915,6 +915,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",
+ "derive_more",
  "rg_analysis",
  "rg_def_map",
  "rg_parse",

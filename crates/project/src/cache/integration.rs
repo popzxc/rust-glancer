@@ -21,11 +21,55 @@ pub(crate) fn apply_residency(project: &mut Project) -> anyhow::Result<()> {
     let packages = (0..project.workspace.packages().len())
         .map(PackageSlot)
         .collect::<Vec<_>>();
-    apply_residency_for_packages(project, &packages)
+    write_and_offload_packages(project, &packages)
 }
 
-/// Re-applies cache residency to packages that were rebuilt in memory.
-pub(crate) fn apply_residency_for_packages(
+/// Restores the current residency policy after a package rebuild.
+///
+/// Rebuilds temporarily materialize the whole project because cross-package resolution can inspect
+/// unchanged dependencies. Only rebuilt packages need fresh artifacts; unchanged packages can be
+/// dropped back to their already-written cache entries.
+pub(crate) fn restore_residency_after_rebuild(
+    project: &mut Project,
+    rebuilt_packages: &[PackageSlot],
+) -> anyhow::Result<()> {
+    let package_count = project.workspace.packages().len();
+    let mut rebuilt = vec![false; package_count];
+    for package in rebuilt_packages {
+        if package.0 < package_count {
+            rebuilt[package.0] = true;
+        }
+    }
+
+    for package_idx in 0..package_count {
+        let package = PackageSlot(package_idx);
+        if !rebuilt[package_idx]
+            || project.package_residency.package(package) != Some(PackageResidency::Offloadable)
+        {
+            continue;
+        }
+
+        write_package_artifact(project, package)?;
+    }
+
+    let mut offloaded_packages = Vec::new();
+
+    for package_idx in 0..package_count {
+        let package = PackageSlot(package_idx);
+        if project.package_residency.package(package) != Some(PackageResidency::Offloadable) {
+            continue;
+        }
+
+        offload_package(project, package)?;
+        offloaded_packages.push(package_idx);
+    }
+
+    finish_offloading(project, &offloaded_packages, true);
+
+    Ok(())
+}
+
+fn write_and_offload_packages(
     project: &mut Project,
     packages: &[PackageSlot],
 ) -> anyhow::Result<()> {
@@ -36,48 +80,35 @@ pub(crate) fn apply_residency_for_packages(
             continue;
         }
 
-        let artifact = artifact_from_project(project, *package)?;
-        project
-            .cache_store
-            .write_artifact(&artifact)
-            .with_context(|| {
-                format!(
-                    "while attempting to write package cache artifact for package {}",
-                    package.0,
-                )
-            })?;
-
-        // Only drop resident data after the full cross-phase package artifact is durable. If a
-        // future implementation downgrades write errors to warnings, this invariant should remain.
-        project.def_map.offload_package(*package).with_context(|| {
-            format!("while attempting to offload def-map package {}", package.0)
-        })?;
-        project
-            .semantic_ir
-            .offload_package(*package)
-            .with_context(|| {
-                format!(
-                    "while attempting to offload semantic IR package {}",
-                    package.0
-                )
-            })?;
-        project.body_ir.offload_package(*package).with_context(|| {
-            format!("while attempting to offload body IR package {}", package.0)
-        })?;
+        write_package_artifact(project, *package)?;
+        offload_package(project, *package)?;
         offloaded_packages.push(package.0);
     }
 
+    finish_offloading(
+        project,
+        &offloaded_packages,
+        packages.len() == project.parse.package_count(),
+    );
+
+    Ok(())
+}
+
+fn finish_offloading(
+    project: &mut Project,
+    offloaded_packages: &[usize],
+    is_full_residency_pass: bool,
+) {
     if !offloaded_packages.is_empty() {
         // Offloading drops many strong `Name` handles from phase payloads. Prune the interner
         // immediately so dead weak entries and their Arc control blocks do not pin allocator pages
         // until a later rebuild happens to compact the project.
         project.names.shrink_to_fit();
 
-        if packages.len() == project.parse.package_count() {
+        if is_full_residency_pass {
             // Parse metadata survives package offloading because it is the source map for editor
-            // locations. On a full residency pass, pack stable offloaded source maps into shared
-            // buffers. Incremental rebuilds skip this because partially repacking an existing
-            // shared buffer would keep the old shared group alive through untouched files.
+            // locations. Once the global residency plan is restored, pack stable offloaded source
+            // maps into shared buffers so they do not keep many small allocations around.
             if offloaded_packages.len() == project.parse.package_count() {
                 project.parse.pack_line_indexes();
             } else {
@@ -87,6 +118,41 @@ pub(crate) fn apply_residency_for_packages(
             }
         }
     }
+}
+
+fn write_package_artifact(project: &Project, package: PackageSlot) -> anyhow::Result<()> {
+    let artifact = artifact_from_project(project, package)?;
+    project
+        .cache_store
+        .write_artifact(&artifact)
+        .with_context(|| {
+            format!(
+                "while attempting to write package cache artifact for package {}",
+                package.0,
+            )
+        })
+}
+
+fn offload_package(project: &mut Project, package: PackageSlot) -> anyhow::Result<()> {
+    // Only drop resident data after the full cross-phase package artifact is durable. If a future
+    // implementation downgrades write errors to warnings, this invariant should remain.
+    project
+        .def_map
+        .offload_package(package)
+        .with_context(|| format!("while attempting to offload def-map package {}", package.0))?;
+    project
+        .semantic_ir
+        .offload_package(package)
+        .with_context(|| {
+            format!(
+                "while attempting to offload semantic IR package {}",
+                package.0
+            )
+        })?;
+    project
+        .body_ir
+        .offload_package(package)
+        .with_context(|| format!("while attempting to offload body IR package {}", package.0))?;
 
     Ok(())
 }

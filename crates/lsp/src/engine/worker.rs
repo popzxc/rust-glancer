@@ -16,7 +16,8 @@ use tower_lsp_server::ls_types;
 
 use crate::{
     engine::command::EngineCommand,
-    memory::{MemoryControl, MemoryPurge, MemoryStats},
+    memory::{MemoryControl, MemoryReporter},
+    project_stats::{ProjectStats, log_retained_memory},
     proto::{completion, hover, inlay_hint, navigation, position, symbols},
 };
 
@@ -71,7 +72,10 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: goto_definition"
                     );
-                    let _ = respond_to.send(self.goto_definition(path, position));
+                    let _ =
+                        respond_to.send(self.query_request("goto_definition", || {
+                            self.goto_definition(path, position)
+                        }));
                 }
                 EngineCommand::GotoTypeDefinition {
                     path,
@@ -84,7 +88,9 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: goto_type_definition"
                     );
-                    let _ = respond_to.send(self.goto_type_definition(path, position));
+                    let _ = respond_to.send(self.query_request("goto_type_definition", || {
+                        self.goto_type_definition(path, position)
+                    }));
                 }
                 EngineCommand::Hover {
                     path,
@@ -97,7 +103,8 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: hover"
                     );
-                    let _ = respond_to.send(self.hover(path, position));
+                    let _ =
+                        respond_to.send(self.query_request("hover", || self.hover(path, position)));
                 }
                 EngineCommand::Completion {
                     path,
@@ -110,14 +117,16 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: completion"
                     );
-                    let _ = respond_to.send(self.completion(path, position));
+                    let _ = respond_to
+                        .send(self.query_request("completion", || self.completion(path, position)));
                 }
                 EngineCommand::DocumentSymbol { path, respond_to } => {
                     tracing::trace!(
                         path = %path.display(),
                         "engine command started: document_symbol"
                     );
-                    let _ = respond_to.send(self.document_symbol(path));
+                    let _ = respond_to
+                        .send(self.query_request("document_symbol", || self.document_symbol(path)));
                 }
                 EngineCommand::InlayHint {
                     path,
@@ -132,11 +141,14 @@ impl EngineWorker {
                         end_character = range.end.character,
                         "engine command started: inlay_hint"
                     );
-                    let _ = respond_to.send(self.inlay_hint(path, range));
+                    let _ = respond_to
+                        .send(self.query_request("inlay_hint", || self.inlay_hint(path, range)));
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
                     tracing::trace!(query = %query, "engine command started: workspace_symbol");
-                    let _ = respond_to.send(self.workspace_symbol(&query));
+                    let _ = respond_to.send(
+                        self.query_request("workspace_symbol", || self.workspace_symbol(&query)),
+                    );
                 }
                 EngineCommand::Shutdown(respond_to) => {
                     tracing::info!("shutting down LSP engine worker");
@@ -612,21 +624,27 @@ impl EngineWorker {
             .context("LSP engine is not initialized")
     }
 
+    /// Runs a read-only request and cleans up memory that eager offloaded transactions may leave
+    /// behind after they are dropped.
+    fn query_request<T>(
+        &self,
+        label: &'static str,
+        query: impl FnOnce() -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        MemoryReporter::report_op(self.memory_control.as_ref(), label, query)
+    }
+
     /// Hook for activities to be run after the project (re-)build.
     fn post_project_build(
         memory_control: &dyn MemoryControl,
         snapshot: AnalysisSnapshot<'_>,
         label: &'static str,
     ) {
-        // We report the memory usage and try to purge memory to make sure
-        // that we utilize the least possible amount of LSP. The expectation is that
-        // after the code has been edited, user needs memory for other things, so
-        // it isn't wise to keep it to LSP just so that future allocations are faster.
-        let before = MemoryStats::capture(memory_control);
-        let purge = MemoryPurge::try_purge(memory_control, before);
-        let stats = purge.map(MemoryPurge::after).unwrap_or(before);
-
-        stats.report(memory_control, snapshot, label, purge);
+        // Indexing can temporarily materialize most of the project. Once the snapshot is ready for
+        // editor queries, purge allocator caches and report memory separately from project shape.
+        MemoryReporter::report_current(memory_control, label);
+        ProjectStats::capture(snapshot).log_info(label);
+        log_retained_memory(snapshot, label);
     }
 }
 

@@ -844,6 +844,79 @@ pub struct Renamed;
 }
 
 #[test]
+fn source_updates_restore_offloaded_residency_for_unchanged_packages() {
+    let mut fixture = HostFixture::build_with_options(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct Before;
+pub fn use_dep(_: dep::Api) {}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Api;
+"#,
+        ProjectBuildOptions {
+            package_residency_policy: PackageResidencyPolicy::AllOffloadable,
+            ..ProjectBuildOptions::default()
+        },
+    );
+
+    fixture.check(
+        &[HostObservation::resident_stats("after build")],
+        expect![[r#"
+            resident stats `after build`
+            - def-map targets 0
+            - semantic targets 0
+            - body targets 0
+        "#]],
+    );
+
+    fixture.check_save(
+        r#"
+//- /src/lib.rs
+pub struct After;
+pub fn use_dep(_: dep::Api) {}
+"#,
+        &[
+            HostObservation::resident_stats("after save"),
+            HostObservation::workspace_symbols("After"),
+        ],
+        expect![[r#"
+            changed files
+            - app src/lib.rs
+
+            affected packages
+            - app
+
+            changed targets
+            - app[lib]
+
+            resident stats `after save`
+            - def-map targets 0
+            - semantic targets 0
+            - body targets 0
+
+            workspace symbols `After`
+            - struct After @ app[lib] src/lib.rs
+        "#]],
+    );
+}
+
+#[test]
 fn rebuilds_transitive_reverse_dependent_packages_after_dependency_changes() {
     let mut fixture = HostFixture::build(
         r#"

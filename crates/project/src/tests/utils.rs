@@ -184,6 +184,9 @@ impl HostFixture {
                 } => {
                     self.render_type_names_at(label, package, marker, &mut dump);
                 }
+                HostObservation::ResidentStats { label } => {
+                    self.render_resident_stats(label, &mut dump);
+                }
             }
         }
 
@@ -286,6 +289,21 @@ impl HostFixture {
         }
     }
 
+    fn render_resident_stats(&self, label: &str, dump: &mut String) {
+        let snapshot = self.host.snapshot();
+        let def_map = snapshot.def_map_db().stats();
+        let semantic_ir = snapshot.semantic_ir_db().stats();
+        let body_ir = snapshot.body_ir_db().stats();
+
+        writeln!(dump, "resident stats `{label}`").expect("string writes should not fail");
+        writeln!(dump, "- def-map targets {}", def_map.target_count)
+            .expect("string writes should not fail");
+        writeln!(dump, "- semantic targets {}", semantic_ir.target_count)
+            .expect("string writes should not fail");
+        writeln!(dump, "- body targets {}", body_ir.target_count)
+            .expect("string writes should not fail");
+    }
+
     fn workspace_symbol_key(&self, symbol: &WorkspaceSymbol) -> (String, String, String, String) {
         (
             symbol.kind.to_string(),
@@ -354,6 +372,9 @@ pub(super) enum HostObservation<'a> {
         package: &'a str,
         marker: &'a str,
     },
+    ResidentStats {
+        label: &'a str,
+    },
 }
 
 impl<'a> HostObservation<'a> {
@@ -374,6 +395,10 @@ impl<'a> HostObservation<'a> {
             package,
             marker,
         }
+    }
+
+    pub(super) fn resident_stats(label: &'a str) -> Self {
+        Self::ResidentStats { label }
     }
 }
 
