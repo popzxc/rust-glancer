@@ -251,3 +251,28 @@ pub struct App;
         "#]],
     );
 }
+
+#[test]
+fn stores_package_cache_artifacts_on_disk() {
+    utils::check_cache_store_artifact_io(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct App;
+"#,
+        expect![[r#"
+            cache store artifact I/O
+            missing before write true
+            artifact path target/rust_glancer/<workspace>/packages/package-0-app-494a91ea75e1f1098b52d92a260b1fbe2501f098a88e450b86ff097aff10a5f6.rgpkg
+            written bytes 1088
+            loaded package #0 app
+            corrupt read has decode context true
+            missing after invalidation true
+        "#]],
+    );
+}

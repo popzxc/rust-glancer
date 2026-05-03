@@ -1,5 +1,6 @@
 use std::{
     fmt::Write as _,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -159,6 +160,85 @@ pub(super) fn check_fixture_cache_artifact_codec(fixture: &str, expect: Expect) 
     writeln!(&mut dump, "encoded artifact bytes {}", bytes.len())
         .expect("string writes should not fail");
     render_artifact("decoded artifact", &decoded, &mut dump);
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
+pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
+    let fixture = fixture_crate(fixture);
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should normalize");
+    let cached_workspace = CachedWorkspace::build(&workspace);
+    let project = Project::build(workspace).expect("fixture project should build");
+    let artifact = package_artifact_from_project(&cached_workspace, &project, PackageSlot(0));
+    let store = PackageCacheStore::for_workspace_with_target_dir(
+        project.workspace(),
+        project.workspace().workspace_root().join("target"),
+    );
+    let path = store.package_artifact_path(&artifact.header.package);
+
+    let missing_before_write = store
+        .read_artifact(&artifact.header)
+        .expect("missing package cache artifact should not fail")
+        .is_none();
+
+    store
+        .write_artifact(&artifact)
+        .expect("package cache artifact should write to disk");
+    let loaded = store
+        .read_artifact(&artifact.header)
+        .expect("written package cache artifact should read from disk")
+        .expect("written package cache artifact should exist");
+    assert_eq!(loaded, artifact);
+    let written_len = fs::metadata(&path)
+        .expect("written package cache artifact should have file metadata")
+        .len();
+
+    // Corruption is surfaced as a cache problem, not silently treated as a miss. The higher-level
+    // invalidation layer will decide whether to wipe and rebuild.
+    fs::write(&path, b"not a package cache artifact")
+        .expect("test should overwrite package cache artifact with invalid bytes");
+    let corrupt_error = store
+        .read_artifact(&artifact.header)
+        .expect_err("corrupted package cache artifact should fail to decode");
+    let corrupt_error_text = format!("{corrupt_error:#}");
+
+    store
+        .invalidate_workspace_cache()
+        .expect("workspace cache namespace should be removable");
+    let missing_after_invalidation = store
+        .read_artifact(&artifact.header)
+        .expect("missing package cache artifact should not fail after invalidation")
+        .is_none();
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "cache store artifact I/O").expect("string writes should not fail");
+    writeln!(&mut dump, "missing before write {missing_before_write}")
+        .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "artifact path {}",
+        cache_path(project.workspace(), path),
+    )
+    .expect("string writes should not fail");
+    writeln!(&mut dump, "written bytes {written_len}").expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "loaded package #{} {}",
+        loaded.header.package.package.0, loaded.header.package.name,
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "corrupt read has decode context {}",
+        corrupt_error_text.contains("while attempting to decode package cache artifact"),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "missing after invalidation {missing_after_invalidation}",
+    )
+    .expect("string writes should not fail");
 
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
