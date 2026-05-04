@@ -4,11 +4,14 @@
 //! package identity and dependency edges, while parse metadata supplies the exact targets that were
 //! analyzed and therefore must be present in a package artifact.
 
+use std::path::Path;
+
 use rg_workspace::{PackageSlot, WorkspaceMetadata};
 
 use super::{
     CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
-    CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, PackageCacheHeader,
+    CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, Fingerprint, PackageCacheHeader,
+    fingerprint,
 };
 
 /// Cache-schema view of one workspace metadata snapshot.
@@ -89,6 +92,14 @@ impl CachedWorkspace {
     /// Builds an artifact header for one package bundle.
     pub fn artifact_header(&self, package: PackageSlot) -> Option<PackageCacheHeader> {
         Some(PackageCacheHeader::new(self.package(package)?.clone()))
+    }
+
+    /// Returns the cache generation fingerprint for this workspace graph.
+    ///
+    /// Source edits keep this stable, while package/target/dependency metadata changes select a
+    /// new artifact directory and make old generations eligible for cleanup.
+    pub fn fingerprint(&self, workspace_root: &Path) -> Fingerprint {
+        fingerprint::FingerprintBuilder::workspace_graph(workspace_root, self)
     }
 }
 

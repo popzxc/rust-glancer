@@ -182,7 +182,7 @@ impl ProjectState {
         let package_residency =
             PackageResidencyPlan::build(&workspace, build_options.package_residency_policy);
         let cached_workspace = CachedWorkspace::build(&workspace, &parse);
-        let cache_store = PackageCacheStore::for_workspace(&workspace);
+        let cache_store = PackageCacheStore::for_workspace(&workspace, &cached_workspace);
 
         Ok(Self {
             workspace,

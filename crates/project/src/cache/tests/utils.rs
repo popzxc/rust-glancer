@@ -44,6 +44,7 @@ pub(super) fn check_cache_store_paths(fixture: &str, expect: Expect) {
         &cached_workspace,
         &PackageCacheStore::for_workspace_with_target_dir(
             &workspace,
+            &cached_workspace,
             workspace.workspace_root().join("target"),
         ),
         &mut dump,
@@ -55,6 +56,7 @@ pub(super) fn check_cache_store_paths(fixture: &str, expect: Expect) {
         &cached_workspace,
         &PackageCacheStore::for_workspace_with_target_dir(
             &workspace,
+            &cached_workspace,
             PathBuf::from("custom-target"),
         ),
         &mut dump,
@@ -182,6 +184,7 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     );
     let store = PackageCacheStore::for_workspace_with_target_dir(
         project.workspace(),
+        &project.state.cached_workspace,
         project.workspace().workspace_root().join("target"),
     );
     let path = store.package_artifact_path(&artifact.header.package);
@@ -246,6 +249,60 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     writeln!(
         &mut dump,
         "missing after invalidation {missing_after_invalidation}",
+    )
+    .expect("string writes should not fail");
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
+pub(super) fn check_cache_store_generation_cleanup(fixture: &str, expect: Expect) {
+    let fixture = fixture_crate(fixture);
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should normalize");
+    let project = Project::build(workspace).expect("fixture project should build");
+    let artifact = package_artifact_from_project(
+        &project.state.cached_workspace,
+        &project.state,
+        PackageSlot(0),
+    );
+    let store = PackageCacheStore::for_workspace_with_target_dir(
+        project.workspace(),
+        &project.state.cached_workspace,
+        project.workspace().workspace_root().join("target"),
+    );
+    let current_artifact = store.package_artifact_path(&artifact.header.package);
+
+    store
+        .write_artifact(&artifact)
+        .expect("package cache artifact should write to disk");
+    let packages_dir = store.root().join("packages");
+    let stale_generation = packages_dir.join("graph-stale");
+    fs::create_dir_all(&stale_generation).expect("stale generation dir should be creatable");
+    fs::write(stale_generation.join("old.rgpkg"), b"old artifact")
+        .expect("stale generation artifact should be writable");
+
+    let current_artifact_before_cleanup = current_artifact.exists();
+    store
+        .cleanup_stale_generations()
+        .expect("stale generation cleanup should succeed");
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "cache store generation cleanup").expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "current artifact before cleanup {current_artifact_before_cleanup}",
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "stale generation after cleanup {}",
+        stale_generation.exists(),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "current artifact after cleanup {}",
+        current_artifact.exists(),
     )
     .expect("string writes should not fail");
 

@@ -67,6 +67,10 @@ pub(crate) fn restore_residency_after_rebuild(
     }
 
     finish_offloading(project, &offloaded_packages, true);
+    project
+        .cache_store
+        .cleanup_stale_generations()
+        .context("while attempting to clean stale package cache generations")?;
 
     Ok(())
 }
@@ -92,6 +96,10 @@ fn write_and_offload_packages(
         &offloaded_packages,
         packages.len() == project.parse.package_count(),
     );
+    project
+        .cache_store
+        .cleanup_stale_generations()
+        .context("while attempting to clean stale package cache generations")?;
 
     Ok(())
 }
