@@ -6,8 +6,7 @@ use rg_project::{BuildProfile, Project};
 pub(super) const TOP_MEMORY_ROWS: usize = 12;
 
 pub(super) fn print_project_summary(project: &Project) {
-    let workspace_package_count = project.parse_db().workspace_packages().count();
-    let package_count = project.parse_db().package_count();
+    let stats = project.stats();
     let residency = project.package_residency_plan();
     let resident_package_count = residency
         .packages()
@@ -15,39 +14,39 @@ pub(super) fn print_project_summary(project: &Project) {
         .filter(|decision| matches!(decision, rg_project::PackageResidency::Resident))
         .count();
     let offloaded_package_count = residency.packages().len() - resident_package_count;
-    let def_map_stats = project.def_map_db().stats();
-    let semantic_ir_stats = project.semantic_ir_db().stats();
-    let body_ir_stats = project.body_ir_db().stats();
 
     println!("rust-glancer analysis built");
-    println!("packages: {package_count} ({workspace_package_count} workspace)");
+    println!(
+        "packages: {} ({} workspace)",
+        stats.package_count, stats.workspace_package_count
+    );
     println!(
         "package residency: {} ({resident_package_count} resident, {offloaded_package_count} offloaded)",
         residency.policy().config_name(),
     );
     println!(
         "def maps: {} targets, {} modules, {} unresolved imports",
-        def_map_stats.target_count,
-        def_map_stats.module_count,
-        def_map_stats.unresolved_import_count
+        stats.def_map.target_count,
+        stats.def_map.module_count,
+        stats.def_map.unresolved_import_count
     );
     println!(
         "semantic IR: {} targets, {} type defs, {} traits, {} impls, {} functions",
-        semantic_ir_stats.target_count,
-        semantic_ir_stats.struct_count
-            + semantic_ir_stats.enum_count
-            + semantic_ir_stats.union_count,
-        semantic_ir_stats.trait_count,
-        semantic_ir_stats.impl_count,
-        semantic_ir_stats.function_count
+        stats.semantic_ir.target_count,
+        stats.semantic_ir.struct_count
+            + stats.semantic_ir.enum_count
+            + stats.semantic_ir.union_count,
+        stats.semantic_ir.trait_count,
+        stats.semantic_ir.impl_count,
+        stats.semantic_ir.function_count
     );
     println!(
         "body IR: {} targets ({} built, {} skipped), {} bodies, {} expressions",
-        body_ir_stats.target_count,
-        body_ir_stats.built_target_count,
-        body_ir_stats.skipped_target_count,
-        body_ir_stats.body_count,
-        body_ir_stats.expression_count
+        stats.body_ir.target_count,
+        stats.body_ir.built_target_count,
+        stats.body_ir.skipped_target_count,
+        stats.body_ir.body_count,
+        stats.body_ir.expression_count
     );
 }
 

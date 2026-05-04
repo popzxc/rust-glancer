@@ -7,13 +7,15 @@ use crate::{
     NavigationTarget, SymbolAt, TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{
-    BodyGenericArg, BodyIrDb, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyTy, ExprData,
-    ExprKind,
+    BodyGenericArg, BodyIrDb, BodyIrReadTxn, BodyItemRef, BodyLocalNominalTy, BodyNominalTy,
+    BodyTy, ExprData, ExprKind,
 };
-use rg_def_map::{DefMapDb, ModuleRef, PackageSlot, TargetRef};
+use rg_def_map::{DefMapDb, DefMapReadTxn, ModuleRef, PackageSlot, TargetRef};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::{FileId, ParseDb, Span};
-use rg_semantic_ir::{FunctionRef, ItemOwner, SemanticIrDb, TraitRef, TypeDefId, TypeDefRef};
+use rg_semantic_ir::{
+    FunctionRef, ItemOwner, SemanticIrDb, SemanticIrReadTxn, TraitRef, TypeDefId, TypeDefRef,
+};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::{FixtureMarkers, fixture_crate, fixture_crate_with_markers};
 
@@ -259,7 +261,20 @@ impl AnalysisFixtureDb {
     }
 
     fn analysis(&self) -> Analysis<'_> {
-        let txn = AnalysisReadTxn::new(&self.def_map, &self.semantic_ir, &self.body_ir);
+        let def_map_packages = all_package_arcs(self.parse.packages().len(), |package| {
+            self.def_map.package_arc(package)
+        });
+        let semantic_ir_packages = all_package_arcs(self.parse.packages().len(), |package| {
+            self.semantic_ir.package_arc(package)
+        });
+        let body_ir_packages = all_package_arcs(self.parse.packages().len(), |package| {
+            self.body_ir.package_arc(package)
+        });
+        let txn = AnalysisReadTxn::from_phase_txns(
+            DefMapReadTxn::from_sparse_package_arcs(def_map_packages),
+            SemanticIrReadTxn::from_sparse_package_arcs(semantic_ir_packages),
+            BodyIrReadTxn::from_sparse_package_arcs(body_ir_packages),
+        );
         Analysis::new(&txn)
     }
 
@@ -319,6 +334,15 @@ impl AnalysisFixtureDb {
             .iter()
             .any(|module| module.origin.contains_file(file_id))
     }
+}
+
+fn all_package_arcs<T>(
+    package_count: usize,
+    mut package_arc: impl FnMut(PackageSlot) -> Option<std::sync::Arc<T>>,
+) -> Vec<Option<std::sync::Arc<T>>> {
+    (0..package_count)
+        .map(|package_idx| package_arc(PackageSlot(package_idx)))
+        .collect()
 }
 
 struct AnalysisQuerySnapshot<'a> {

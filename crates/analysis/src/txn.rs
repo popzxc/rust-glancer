@@ -1,8 +1,8 @@
 //! Request-scoped analysis transactions.
 
-use rg_body_ir::{BodyIrDb, BodyIrReadTxn};
-use rg_def_map::{DefMapDb, DefMapReadTxn};
-use rg_semantic_ir::{SemanticIrDb, SemanticIrReadTxn};
+use rg_body_ir::BodyIrReadTxn;
+use rg_def_map::DefMapReadTxn;
+use rg_semantic_ir::SemanticIrReadTxn;
 
 /// Read transaction shared by all analysis queries in one request.
 ///
@@ -16,18 +16,6 @@ pub struct AnalysisReadTxn<'a> {
 }
 
 impl<'a> AnalysisReadTxn<'a> {
-    pub fn new(
-        def_map: &'a DefMapDb,
-        semantic_ir: &'a SemanticIrDb,
-        body_ir: &'a BodyIrDb,
-    ) -> Self {
-        Self::from_phase_txns(
-            def_map.read_txn(),
-            semantic_ir.read_txn(),
-            body_ir.read_txn(),
-        )
-    }
-
     pub fn from_phase_txns(
         def_map: DefMapReadTxn<'a>,
         semantic_ir: SemanticIrReadTxn<'a>,

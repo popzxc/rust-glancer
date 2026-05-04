@@ -6,12 +6,13 @@
 
 use std::{
     ffi::OsStr,
-    fs::{self, OpenOptions},
+    fs,
     io::Write as _,
     path::{Path, PathBuf},
 };
 
 use anyhow::Context as _;
+use atomic_write_file::AtomicWriteFile;
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
@@ -54,7 +55,8 @@ impl PackageCacheStore {
         }
     }
 
-    pub fn root(&self) -> &Path {
+    #[cfg(test)]
+    pub(crate) fn root(&self) -> &Path {
         &self.root
     }
 
@@ -86,21 +88,7 @@ impl PackageCacheStore {
             )
         })?;
 
-        // Write beside the destination and rename over it. This keeps readers from observing a
-        // partially-written artifact if the process exits during serialization or disk I/O.
-        let temp_path = self.write_temp_artifact(package_dir, &path, bytes.as_ref())?;
-
-        if let Err(error) = fs::rename(&temp_path, &path) {
-            let _ = fs::remove_file(&temp_path);
-            return Err(error).with_context(|| {
-                format!(
-                    "while attempting to replace package cache artifact {}",
-                    path.display(),
-                )
-            });
-        }
-
-        Ok(())
+        Self::write_artifact_bytes(&path, bytes.as_ref())
     }
 
     pub fn read_artifact(
@@ -159,59 +147,26 @@ impl PackageCacheStore {
         }
     }
 
-    fn write_temp_artifact(
-        &self,
-        package_dir: &Path,
-        artifact_path: &Path,
-        bytes: &[u8],
-    ) -> anyhow::Result<PathBuf> {
-        let file_name = artifact_path
-            .file_name()
-            .expect("package cache artifact paths should always have a file name")
-            .to_string_lossy();
-
-        // TODO: Cringe, do it better; leaving it here for now just to get things working first
-        for attempt in 0..100 {
-            let temp_path = package_dir.join(format!(
-                ".{}.{}.{}.tmp",
-                file_name,
-                std::process::id(),
-                attempt,
-            ));
-
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temp_path)
-            {
-                Ok(mut file) => {
-                    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-                        let _ = fs::remove_file(&temp_path);
-                        return Err(error).with_context(|| {
-                            format!(
-                                "while attempting to write package cache artifact {}",
-                                temp_path.display(),
-                            )
-                        });
-                    }
-
-                    return Ok(temp_path);
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!(
-                            "while attempting to create temporary package cache artifact {}",
-                            temp_path.display(),
-                        )
-                    });
-                }
-            }
-        }
-
-        anyhow::bail!(
-            "failed to allocate a temporary package cache artifact next to {}",
-            artifact_path.display(),
-        );
+    fn write_artifact_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+        // Cache artifacts must appear atomically: readers either observe the previous complete
+        // payload or the newly committed one, never a partially written file.
+        let mut file = AtomicWriteFile::options().open(path).with_context(|| {
+            format!(
+                "while attempting to start atomic package cache write {}",
+                path.display(),
+            )
+        })?;
+        file.write_all(bytes).with_context(|| {
+            format!(
+                "while attempting to write package cache artifact {}",
+                path.display(),
+            )
+        })?;
+        file.commit().with_context(|| {
+            format!(
+                "while attempting to commit package cache artifact {}",
+                path.display(),
+            )
+        })
     }
 }

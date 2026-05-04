@@ -9,9 +9,9 @@ use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    DefMap, DefMapReadTxn, ImportData, ImportId, ImportRef, LocalDefData, LocalDefId, LocalDefRef,
-    LocalImplData, LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleRef, Package,
-    PackageSlot, Path, ResolvePathResult, TargetRef, path_resolution, resolve,
+    DefMap, ImportData, ImportId, ImportRef, LocalDefData, LocalDefId, LocalDefRef, LocalImplData,
+    LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleRef, Package, PackageSlot, Path,
+    ResidentTargetRef, ResolvePathResult, TargetRef, path_resolution, resolve,
 };
 
 /// Frozen def maps for all parsed packages and targets.
@@ -70,37 +70,26 @@ impl DefMapDb {
         Ok(db)
     }
 
-    /// Starts a read transaction over package-level def-map data.
-    pub fn read_txn(&self) -> DefMapReadTxn<'_> {
-        DefMapReadTxn::new(self.packages.read_txn())
-    }
-
-    pub fn read_txn_from_package_arcs<'a>(packages: Vec<Arc<Package>>) -> DefMapReadTxn<'a> {
-        DefMapReadTxn::from_package_arcs(packages)
-    }
-
-    /// Returns all package-level def-map sets.
-    pub fn packages(&self) -> impl Iterator<Item = &Package> + '_ {
-        self.packages.iter()
-    }
-
     pub fn package_count(&self) -> usize {
         self.packages.len()
     }
 
-    /// Iterates over every target def map together with its project-wide target reference.
-    pub fn target_maps(&self) -> impl Iterator<Item = (TargetRef, &DefMap)> {
-        self.packages()
-            .enumerate()
-            .flat_map(move |(package_idx, package)| {
-                (0..package.targets().len()).filter_map(move |target_idx| {
-                    let target_ref = TargetRef {
-                        package: PackageSlot(package_idx),
-                        target: TargetId(target_idx),
-                    };
-                    self.def_map(target_ref)
-                        .map(|def_map| (target_ref, def_map))
-                })
+    /// Iterates over every resident target def map together with a resident-only target reference.
+    pub fn resident_target_maps(&self) -> impl Iterator<Item = (ResidentTargetRef, &DefMap)> {
+        self.packages
+            .resident_packages_with_slots()
+            .flat_map(move |(package_slot, package)| {
+                package
+                    .targets()
+                    .iter()
+                    .enumerate()
+                    .map(move |(target_idx, def_map)| {
+                        let target_ref = ResidentTargetRef {
+                            package: package_slot,
+                            target: TargetId(target_idx),
+                        };
+                        (target_ref, def_map)
+                    })
             })
     }
 
@@ -108,7 +97,7 @@ impl DefMapDb {
     pub fn stats(&self) -> DefMapStats {
         let mut stats = DefMapStats::default();
 
-        for (_, target) in self.target_maps() {
+        for (_, target) in self.resident_target_maps() {
             stats.target_count += 1;
             stats.module_count += target.modules().len();
             stats.local_def_count += target.local_defs().len();
@@ -276,7 +265,7 @@ impl DefMapDb {
 
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
-        for package in self.packages.iter_unique_mut() {
+        for package in self.packages.resident_packages_unique_mut() {
             package.shrink_to_fit();
         }
     }
@@ -299,4 +288,40 @@ pub struct DefMapStats {
     pub local_impl_count: usize,
     pub import_count: usize,
     pub unresolved_import_count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_arena::Arena;
+
+    use super::*;
+
+    #[test]
+    fn target_maps_preserve_package_slots_when_middle_package_is_offloaded() {
+        let mut db = DefMapDb {
+            packages: PackageStore::from_vec(vec![
+                package_with_one_target("workspace"),
+                package_with_one_target("offloaded"),
+                package_with_one_target("dependency"),
+            ]),
+        };
+
+        db.offload_package(PackageSlot(1))
+            .expect("middle package should exist");
+
+        let target_packages = db
+            .resident_target_maps()
+            .map(|(target, _)| target.package.expose_package_slot())
+            .collect::<Vec<_>>();
+
+        assert_eq!(target_packages, vec![PackageSlot(0), PackageSlot(2)]);
+    }
+
+    fn package_with_one_target(name: &str) -> Package {
+        Package {
+            name: name.to_string(),
+            target_names: Arena::from_vec(vec![format!("{name}_lib")]),
+            targets: Arena::from_vec(vec![DefMap::default()]),
+        }
+    }
 }

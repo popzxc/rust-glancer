@@ -10,8 +10,13 @@ use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    BuildProfile, BuildProfileOptions, CachedWorkspace, PackageCacheStore, PackageResidencyPlan,
-    PackageResidencyPolicy, cache::integration, profile::BuildProfiler, txn::ProjectReadTxn,
+    BuildProfile, BuildProfileOptions, PackageResidencyPlan, PackageResidencyPolicy,
+    cache::{CachedWorkspace, PackageCacheStore, integration},
+    profile::BuildProfiler,
+};
+
+use super::{
+    demand::PackageDemand, inventory::ProjectInventory, stats::ProjectStats, txn::ProjectReadTxn,
 };
 
 /// Configuration that affects how a project snapshot is built and retained.
@@ -23,7 +28,7 @@ pub struct ProjectBuildOptions {
 
 /// Fully built project pipeline state.
 #[derive(Debug, Clone)]
-pub struct Project {
+pub(crate) struct ProjectState {
     pub(crate) workspace: WorkspaceMetadata,
     pub(crate) cached_workspace: CachedWorkspace,
     pub(crate) cache_store: PackageCacheStore,
@@ -36,14 +41,9 @@ pub struct Project {
     pub(crate) body_ir: BodyIrDb,
 }
 
-impl Project {
-    /// Builds every analysis phase for one metadata graph.
-    pub fn build(workspace: WorkspaceMetadata) -> anyhow::Result<Self> {
-        Self::build_with_options(workspace, ProjectBuildOptions::default())
-    }
-
+impl ProjectState {
     /// Builds every analysis phase using explicit project build options.
-    pub fn build_with_options(
+    pub(crate) fn build_with_options(
         workspace: WorkspaceMetadata,
         build_options: ProjectBuildOptions,
     ) -> anyhow::Result<Self> {
@@ -58,7 +58,7 @@ impl Project {
     }
 
     /// Builds every analysis phase and returns coarse build-time profiling checkpoints.
-    pub fn build_profiled(
+    pub(crate) fn build_profiled(
         workspace: WorkspaceMetadata,
         build_options: ProjectBuildOptions,
         options: BuildProfileOptions,
@@ -312,47 +312,49 @@ impl Project {
     }
 
     /// Returns the normalized workspace metadata this project was built from.
-    pub fn workspace(&self) -> &WorkspaceMetadata {
+    pub(crate) fn workspace(&self) -> &WorkspaceMetadata {
         &self.workspace
     }
 
     /// Returns package residency decisions for this project snapshot.
-    pub fn package_residency_plan(&self) -> &PackageResidencyPlan {
+    pub(crate) fn package_residency_plan(&self) -> &PackageResidencyPlan {
         &self.package_residency
     }
 
     /// Returns the parse database built for this project.
-    pub fn parse_db(&self) -> &ParseDb {
+    pub(crate) fn parse_db(&self) -> &ParseDb {
         &self.parse
+    }
+
+    /// Returns residency-independent package, target, and parsed-file metadata.
+    pub(crate) fn inventory(&self) -> ProjectInventory<'_> {
+        ProjectInventory::new(&self.workspace, &self.parse)
+    }
+
+    /// Returns coarse status counters without exposing raw phase databases.
+    pub(crate) fn stats(&self) -> ProjectStats {
+        ProjectStats::capture(self)
     }
 
     pub(crate) fn parse_db_mut(&mut self) -> &mut ParseDb {
         &mut self.parse
     }
 
-    /// Returns the def-map database built for this project.
-    pub fn def_map_db(&self) -> &DefMapDb {
-        &self.def_map
-    }
-
-    /// Returns the semantic IR database built for this project.
-    pub fn semantic_ir_db(&self) -> &SemanticIrDb {
-        &self.semantic_ir
-    }
-
-    /// Returns the body IR database built for this project.
-    pub fn body_ir_db(&self) -> &BodyIrDb {
-        &self.body_ir
-    }
-
     /// Starts a read transaction over resident packages and materialized cache artifacts.
-    pub fn read_txn(&self) -> anyhow::Result<ProjectReadTxn<'_>> {
+    pub(crate) fn read_txn(&self) -> anyhow::Result<ProjectReadTxn<'_>> {
         ProjectReadTxn::new(self)
+    }
+
+    pub(crate) fn read_txn_for_demand(
+        &self,
+        demand: &PackageDemand,
+    ) -> anyhow::Result<ProjectReadTxn<'_>> {
+        ProjectReadTxn::for_demand(self, demand)
     }
 
     /// Returns the high-level query API for this frozen project analysis.
     #[allow(dead_code)]
-    pub fn analysis<'a>(&self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
+    pub(crate) fn analysis<'a>(&self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
         Analysis::new(txn.analysis())
     }
 }

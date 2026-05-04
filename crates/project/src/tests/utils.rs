@@ -1,4 +1,8 @@
-use std::{fmt::Write as _, fs, path::Path};
+use std::{
+    fmt::Write as _,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use expect_test::Expect;
 use rg_analysis::WorkspaceSymbol;
@@ -7,14 +11,12 @@ use rg_parse::{FileId, ParseDb};
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate_with_markers};
 
-use crate::{
-    AnalysisChangeSummary, AnalysisHost, FileContext, ProjectBuildOptions, SavedFileChange,
-};
+use crate::{AnalysisChangeSummary, FileContext, Project, ProjectBuildOptions, SavedFileChange};
 
 pub(super) struct HostFixture {
     fixture: CrateFixture,
     markers: FixtureMarkers,
-    host: AnalysisHost,
+    host: Project,
 }
 
 impl HostFixture {
@@ -26,8 +28,8 @@ impl HostFixture {
         let (fixture, markers) = fixture_crate_with_markers(spec);
         let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
             .expect("fixture workspace metadata should build");
-        let host = AnalysisHost::build_with_options(workspace, options)
-            .expect("analysis host should build");
+        let host =
+            Project::build_with_options(workspace, options).expect("analysis project should build");
 
         Self {
             fixture,
@@ -44,29 +46,18 @@ impl HostFixture {
     }
 
     pub(super) fn remove_cache_namespace(&self) {
-        match fs::remove_dir_all(self.host.project.cache_store.root()) {
+        match fs::remove_dir_all(self.host.state.cache_store.root()) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => panic!(
                 "fixture cache namespace {} should be removable: {error}",
-                self.host.project.cache_store.root().display(),
+                self.host.state.cache_store.root().display(),
             ),
         }
     }
 
     pub(super) fn corrupt_package_cache_artifact(&self, package_name: &str) {
-        let package = package_slot_by_name(self.host.snapshot().parse_db(), package_name);
-        let header = self
-            .host
-            .project
-            .cached_workspace
-            .artifact_header(package)
-            .expect("fixture package should have a cache artifact header");
-        let path = self
-            .host
-            .project
-            .cache_store
-            .package_artifact_path(&header.package);
+        let path = self.package_cache_artifact_path(package_name);
 
         fs::write(&path, b"not a package cache artifact").unwrap_or_else(|error| {
             panic!(
@@ -76,19 +67,61 @@ impl HostFixture {
         });
     }
 
+    pub(super) fn remove_package_cache_artifact(&self, package_name: &str) {
+        let path = self.package_cache_artifact_path(package_name);
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!(
+                "fixture package cache artifact {} should be removable: {error}",
+                path.display(),
+            ),
+        }
+    }
+
     pub(super) fn package_cache_artifact_exists(&self, package_name: &str) -> bool {
+        self.package_cache_artifact_path(package_name).exists()
+    }
+
+    pub(super) fn document_symbol_names(&self, relative_path: &str) -> Vec<String> {
+        let snapshot = self.host.snapshot();
+        let contexts = snapshot
+            .file_contexts_for_path(self.fixture.path(relative_path))
+            .expect("fixture path should resolve to file contexts");
+        let targets = contexts
+            .iter()
+            .flat_map(|context| context.targets.iter().copied())
+            .collect::<Vec<_>>();
+        let analysis = snapshot
+            .analysis_for_targets(&targets)
+            .expect("fixture analysis should materialize");
+        let mut names = Vec::new();
+
+        for context in contexts {
+            for target in context.targets {
+                for symbol in analysis.document_symbols(target, context.file) {
+                    push_document_symbol_names(&symbol, &mut names);
+                }
+            }
+        }
+
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    fn package_cache_artifact_path(&self, package_name: &str) -> PathBuf {
         let package = package_slot_by_name(self.host.snapshot().parse_db(), package_name);
         let header = self
             .host
-            .project
+            .state
             .cached_workspace
             .artifact_header(package)
             .expect("fixture package should have a cache artifact header");
         self.host
-            .project
+            .state
             .cache_store
             .package_artifact_path(&header.package)
-            .exists()
     }
 
     pub(super) fn check(&self, observations: &[HostObservation<'_>], expect: Expect) {
@@ -245,10 +278,10 @@ impl HostFixture {
         writeln!(dump, "workspace symbols `{query}`").expect("string writes should not fail");
 
         let snapshot = self.host.snapshot();
-        let txn = snapshot
-            .read_txn()
-            .expect("fixture read transaction should start");
-        let mut symbols = snapshot.analysis(&txn).workspace_symbols(query);
+        let mut symbols = snapshot
+            .full_analysis()
+            .expect("fixture analysis should materialize")
+            .workspace_symbols(query);
         symbols.sort_by(|left, right| {
             self.workspace_symbol_key(left)
                 .cmp(&self.workspace_symbol_key(right))
@@ -338,17 +371,18 @@ impl HostFixture {
     }
 
     fn render_resident_stats(&self, label: &str, dump: &mut String) {
-        let snapshot = self.host.snapshot();
-        let def_map = snapshot.def_map_db().stats();
-        let semantic_ir = snapshot.semantic_ir_db().stats();
-        let body_ir = snapshot.body_ir_db().stats();
+        let stats = self.host.snapshot().stats();
 
         writeln!(dump, "resident stats `{label}`").expect("string writes should not fail");
-        writeln!(dump, "- def-map targets {}", def_map.target_count)
+        writeln!(dump, "- def-map targets {}", stats.def_map.target_count)
             .expect("string writes should not fail");
-        writeln!(dump, "- semantic targets {}", semantic_ir.target_count)
-            .expect("string writes should not fail");
-        writeln!(dump, "- body targets {}", body_ir.target_count)
+        writeln!(
+            dump,
+            "- semantic targets {}",
+            stats.semantic_ir.target_count
+        )
+        .expect("string writes should not fail");
+        writeln!(dump, "- body targets {}", stats.body_ir.target_count)
             .expect("string writes should not fail");
     }
 
@@ -465,7 +499,7 @@ fn file_id_for_path(parse: &ParseDb, path: &Path) -> FileId {
 }
 
 fn nominal_type_names_at(
-    host: &AnalysisHost,
+    host: &Project,
     package_name: &str,
     path: &Path,
     offset: u32,
@@ -479,17 +513,17 @@ fn nominal_type_names_at(
         .into_iter()
         .next()
         .expect("fixture file should be owned by a target");
-    let txn = snapshot
-        .read_txn()
-        .expect("fixture read transaction should start");
-    let Some(ty) = snapshot.analysis(&txn).type_at(target, file_id, offset) else {
+    let analysis = snapshot
+        .analysis_for_targets(&[target])
+        .expect("fixture analysis should materialize");
+    let Some(ty) = analysis.type_at(target, file_id, offset) else {
         return Vec::new();
     };
 
     ty.type_defs()
         .into_iter()
-        .filter_map(|ty| snapshot.semantic_ir_db().local_def_for_type_def(ty))
-        .filter_map(|local_def| snapshot.def_map_db().local_def(local_def))
+        .filter_map(|ty| host.state.semantic_ir.local_def_for_type_def(ty))
+        .filter_map(|local_def| host.state.def_map.local_def(local_def))
         .map(|local_def| local_def.name.to_string())
         .collect()
 }
@@ -503,4 +537,11 @@ fn package_slot_by_name(parse: &ParseDb, package_name: &str) -> PackageSlot {
             (package.package_name() == package_name).then_some(PackageSlot(idx))
         })
         .unwrap_or_else(|| panic!("fixture package {package_name} should be parsed"))
+}
+
+fn push_document_symbol_names(symbol: &rg_analysis::DocumentSymbol, names: &mut Vec<String>) {
+    names.push(symbol.name.clone());
+    for child in &symbol.children {
+        push_document_symbol_names(child, names);
+    }
 }

@@ -22,18 +22,10 @@ pub struct SemanticIrReadTxn<'db> {
 }
 
 impl<'db> SemanticIrReadTxn<'db> {
-    pub(crate) fn new(packages: PackageStoreReadTxn<'db, PackageIr>) -> Self {
-        Self { packages }
-    }
-
-    pub fn from_package_arcs(packages: Vec<Arc<PackageIr>>) -> Self {
+    pub fn from_sparse_package_arcs(packages: Vec<Option<Arc<PackageIr>>>) -> Self {
         Self {
-            packages: PackageStoreReadTxn::from_arcs(packages),
+            packages: PackageStoreReadTxn::from_sparse_arcs(packages),
         }
-    }
-
-    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'_, PackageIr>> + '_ {
-        self.packages.iter()
     }
 
     pub fn package(&self, package: PackageSlot) -> Option<PackageRead<'_, PackageIr>> {
@@ -47,9 +39,9 @@ impl<'db> SemanticIrReadTxn<'db> {
     }
 
     pub fn target_irs(&self) -> impl Iterator<Item = (TargetRef, &TargetIr)> + '_ {
-        self.packages()
-            .enumerate()
-            .flat_map(|(package_idx, package)| {
+        self.packages
+            .packages_with_slots()
+            .flat_map(|(package_slot, package)| {
                 let package = package.into_ref();
                 package
                     .targets()
@@ -58,7 +50,7 @@ impl<'db> SemanticIrReadTxn<'db> {
                     .map(move |(target_idx, target_ir)| {
                         (
                             TargetRef {
-                                package: PackageSlot(package_idx),
+                                package: package_slot,
                                 target: TargetId(target_idx),
                             },
                             target_ir,

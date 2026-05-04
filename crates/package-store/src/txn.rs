@@ -5,31 +5,15 @@ use std::sync::Arc;
 
 use rg_workspace::PackageSlot;
 
-use crate::{PackageEntry, PackageStore};
-
 /// Read-only package-store view used by query transactions.
 #[derive(Debug)]
 pub struct PackageStoreReadTxn<'db, T> {
-    packages: Vec<Arc<T>>,
+    packages: Vec<Option<Arc<T>>>,
     _marker: std::marker::PhantomData<&'db T>,
 }
 
 impl<'db, T> PackageStoreReadTxn<'db, T> {
-    pub(crate) fn from_resident_store(store: &'db PackageStore<T>) -> Self {
-        let packages = store
-            .packages
-            .iter()
-            .map(|package| match package {
-                PackageEntry::Resident(package) => Arc::clone(package),
-                PackageEntry::Offloaded => {
-                    panic!("offloaded packages must be materialized before starting a read txn")
-                }
-            })
-            .collect();
-        Self::from_arcs(packages)
-    }
-
-    pub fn from_arcs(packages: Vec<Arc<T>>) -> Self {
+    pub fn from_sparse_arcs(packages: Vec<Option<Arc<T>>>) -> Self {
         Self {
             packages,
             _marker: std::marker::PhantomData,
@@ -39,19 +23,31 @@ impl<'db, T> PackageStoreReadTxn<'db, T> {
     pub fn read(&self, package: PackageSlot) -> Option<PackageRead<'_, T>> {
         self.packages
             .get(package.0)
+            .and_then(Option::as_ref)
             .map(|package| PackageRead::Resident(package.as_ref()))
     }
 
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = PackageRead<'_, T>> + '_ {
+    /// Iterates over every materialized package together with its original package slot.
+    pub fn packages_with_slots(
+        &self,
+    ) -> impl Iterator<Item = (PackageSlot, PackageRead<'_, T>)> + '_ {
         self.packages
             .iter()
-            .map(|package| PackageRead::Resident(package.as_ref()))
+            .enumerate()
+            .filter_map(|(package_idx, package)| {
+                package.as_ref().map(|package| {
+                    (
+                        PackageSlot(package_idx),
+                        PackageRead::Resident(package.as_ref()),
+                    )
+                })
+            })
     }
 }
 
 impl<T> Clone for PackageStoreReadTxn<'_, T> {
     fn clone(&self) -> Self {
-        Self::from_arcs(self.packages.clone())
+        Self::from_sparse_arcs(self.packages.clone())
     }
 }
 

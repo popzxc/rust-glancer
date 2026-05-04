@@ -38,6 +38,7 @@ description = "A Rust workspace for rust-glancer."
 
 [workspace.dependencies]
 anyhow = "1.0.102"
+atomic-write-file = "0.3.0"
 blake3 = "1.8.2"
 clap = "4.5.50"
 cargo_metadata = "0.23"

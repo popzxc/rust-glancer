@@ -1,0 +1,72 @@
+//! Rebuilds the whole analysis project after workspace graph changes.
+//!
+//! When Cargo metadata can change package, target, or dependency slots, partial reuse becomes more
+//! dangerous than useful. This path reloads metadata and rebuilds every non-sysroot package so the
+//! downstream phase databases return to a single consistent snapshot.
+
+use anyhow::Context as _;
+
+use rg_workspace::WorkspaceMetadata;
+
+use super::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, state::ProjectState};
+
+pub(super) fn rebuild_workspace_graph(
+    project: &mut Project,
+    changes: &[SavedFileChange],
+) -> anyhow::Result<AnalysisChangeSummary> {
+    let manifest_path = project
+        .state
+        .workspace()
+        .workspace_root()
+        .join("Cargo.toml");
+    let sysroot = project.state.workspace().sysroot_sources();
+    let workspace = WorkspaceMetadata::from_manifest_path(&manifest_path)
+        .with_context(|| format!("while attempting to load {}", manifest_path.display()))?
+        .with_sysroot_sources(sysroot);
+    let build_options = project.state.build_options;
+
+    project.state = ProjectState::build_with_options(workspace, build_options)
+        .context("while attempting to build refreshed analysis project")?;
+
+    let changed_files = changed_source_files_for_saved_paths(project, changes);
+    let mut affected_packages = Vec::new();
+    let mut changed_targets = Vec::new();
+
+    // The rebuilt project has already restored its package residency, so raw phase databases may
+    // be empty under aggressive offloading. Inventory stays resident and carries the stable package
+    // and target ids needed for a change summary.
+    let inventory = project.state.inventory();
+    for package in inventory.non_sysroot_packages() {
+        let package_slot = package.slot();
+        affected_packages.push(package_slot);
+        changed_targets.extend(inventory.target_refs_for_package(package_slot));
+    }
+
+    Ok(AnalysisChangeSummary {
+        changed_files,
+        affected_packages,
+        changed_targets,
+    })
+}
+
+fn changed_source_files_for_saved_paths(
+    project: &Project,
+    changes: &[SavedFileChange],
+) -> Vec<ChangedFile> {
+    let mut changed_files = Vec::new();
+    let inventory = project.state.inventory();
+
+    for change in changes {
+        for file in inventory.file_refs_for_path(&change.path) {
+            let changed_file = ChangedFile {
+                package: file.package,
+                file: file.file,
+            };
+            if !changed_files.contains(&changed_file) {
+                changed_files.push(changed_file);
+            }
+        }
+    }
+
+    changed_files
+}

@@ -1,3 +1,4 @@
+use rg_package_store::ResidentPackageSlot;
 use rg_parse::TargetId;
 
 use rg_workspace::PackageSlot;
@@ -51,6 +52,22 @@ impl_arena_id!(ModuleId, LocalDefId, LocalImplId, ImportId);
 pub struct TargetRef {
     pub package: PackageSlot,
     pub target: TargetId,
+}
+
+/// Target reference proven to come from a resident phase-DB package entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ResidentTargetRef {
+    pub package: ResidentPackageSlot,
+    pub target: TargetId,
+}
+
+impl ResidentTargetRef {
+    pub fn expose_target_ref(self) -> TargetRef {
+        TargetRef {
+            package: self.package.expose_package_slot(),
+            target: self.target,
+        }
+    }
 }
 
 /// Stable reference to one module across the whole project analysis.

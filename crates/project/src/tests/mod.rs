@@ -316,6 +316,55 @@ path = "src/tool.rs"
 }
 
 #[test]
+fn workspace_graph_rebuild_reports_changed_targets_when_packages_are_offloaded() {
+    let mut fixture = HostFixture::build_with_options(
+        r#"
+//- /Cargo.toml
+[package]
+name = "offloaded_target_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Lib;
+
+//- /src/tool.rs
+fn main() {}
+"#,
+        ProjectBuildOptions {
+            package_residency_policy: PackageResidencyPolicy::AllOffloadable,
+            ..ProjectBuildOptions::default()
+        },
+    );
+
+    fixture.check_save(
+        r#"
+//- /Cargo.toml
+[package]
+name = "offloaded_target_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "tool"
+path = "src/tool.rs"
+"#,
+        &[],
+        expect![[r#"
+            changed files
+            - <none>
+
+            affected packages
+            - offloaded_target_fixture
+
+            changed targets
+            - offloaded_target_fixture[bin]
+            - offloaded_target_fixture[lib]
+        "#]],
+    );
+}
+
+#[test]
 fn rebuilds_project_after_auto_discovered_target_is_added() {
     let mut fixture = HostFixture::build(
         r#"
@@ -929,6 +978,66 @@ pub struct Api;
         "#]],
     );
     assert!(fixture.package_cache_artifact_exists("dep"));
+}
+
+#[test]
+fn file_local_queries_do_not_materialize_unrelated_offloaded_packages() {
+    let fixture = HostFixture::build_with_options(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app", "dep", "unrelated"]
+resolver = "3"
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /app/src/lib.rs
+pub struct Local;
+pub fn use_dep(_: dep::Api) {}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Api;
+
+//- /unrelated/Cargo.toml
+[package]
+name = "unrelated"
+version = "0.1.0"
+edition = "2024"
+
+//- /unrelated/src/lib.rs
+pub struct Unrelated;
+"#,
+        ProjectBuildOptions {
+            package_residency_policy: PackageResidencyPolicy::AllOffloadable,
+            ..ProjectBuildOptions::default()
+        },
+    );
+
+    assert!(fixture.package_cache_artifact_exists("unrelated"));
+    fixture.remove_package_cache_artifact("unrelated");
+    assert!(!fixture.package_cache_artifact_exists("unrelated"));
+
+    assert_eq!(
+        fixture.document_symbol_names("app/src/lib.rs"),
+        vec!["Local", "use_dep"],
+    );
+    assert!(
+        !fixture.package_cache_artifact_exists("unrelated"),
+        "narrow file-local queries should not recover artifacts outside their demand set",
+    );
 }
 
 #[test]

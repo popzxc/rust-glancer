@@ -76,7 +76,8 @@ impl CachedWorkspace {
     }
 
     /// Returns all cached packages in `WorkspaceMetadata::packages()` order.
-    pub fn packages(&self) -> &[CachedPackage] {
+    #[cfg(test)]
+    pub(super) fn packages(&self) -> &[CachedPackage] {
         &self.packages
     }
 

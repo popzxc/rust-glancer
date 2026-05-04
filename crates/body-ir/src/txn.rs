@@ -19,18 +19,10 @@ pub struct BodyIrReadTxn<'db> {
 }
 
 impl<'db> BodyIrReadTxn<'db> {
-    pub(crate) fn new(packages: PackageStoreReadTxn<'db, PackageBodies>) -> Self {
-        Self { packages }
-    }
-
-    pub fn from_package_arcs(packages: Vec<Arc<PackageBodies>>) -> Self {
+    pub fn from_sparse_package_arcs(packages: Vec<Option<Arc<PackageBodies>>>) -> Self {
         Self {
-            packages: PackageStoreReadTxn::from_arcs(packages),
+            packages: PackageStoreReadTxn::from_sparse_arcs(packages),
         }
-    }
-
-    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'_, PackageBodies>> + '_ {
-        self.packages.iter()
     }
 
     pub fn package(&self, package: PackageSlot) -> Option<PackageRead<'_, PackageBodies>> {

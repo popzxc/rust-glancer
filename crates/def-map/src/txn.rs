@@ -18,19 +18,10 @@ pub struct DefMapReadTxn<'db> {
 }
 
 impl<'db> DefMapReadTxn<'db> {
-    pub(crate) fn new(packages: PackageStoreReadTxn<'db, Package>) -> Self {
-        Self { packages }
-    }
-
-    pub fn from_package_arcs(packages: Vec<Arc<Package>>) -> Self {
+    pub fn from_sparse_package_arcs(packages: Vec<Option<Arc<Package>>>) -> Self {
         Self {
-            packages: PackageStoreReadTxn::from_arcs(packages),
+            packages: PackageStoreReadTxn::from_sparse_arcs(packages),
         }
-    }
-
-    /// Returns all package-level def-map sets available in this transaction.
-    pub fn packages(&self) -> impl ExactSizeIterator<Item = PackageRead<'_, Package>> + '_ {
-        self.packages.iter()
     }
 
     /// Returns one package by package slot.
@@ -47,17 +38,21 @@ impl<'db> DefMapReadTxn<'db> {
 
     /// Iterates over every target def map together with its project-wide target reference.
     pub fn target_maps(&self) -> impl Iterator<Item = (TargetRef, &DefMap)> + '_ {
-        self.packages()
-            .enumerate()
-            .flat_map(move |(package_idx, package)| {
-                (0..package.targets().len()).filter_map(move |target_idx| {
-                    let target_ref = TargetRef {
-                        package: PackageSlot(package_idx),
-                        target: TargetId(target_idx),
-                    };
-                    self.def_map(target_ref)
-                        .map(|def_map| (target_ref, def_map))
-                })
+        self.packages
+            .packages_with_slots()
+            .flat_map(move |(package_slot, package)| {
+                let package = package.into_ref();
+                package
+                    .targets()
+                    .iter()
+                    .enumerate()
+                    .map(move |(target_idx, def_map)| {
+                        let target_ref = TargetRef {
+                            package: package_slot,
+                            target: TargetId(target_idx),
+                        };
+                        (target_ref, def_map)
+                    })
             })
     }
 

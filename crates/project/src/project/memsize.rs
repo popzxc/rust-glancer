@@ -1,12 +1,16 @@
 use rg_memsize::{MemoryRecorder, MemorySize};
 
-use crate::{
-    AnalysisChangeSummary, AnalysisHost, CachedDependency, CachedPackage, CachedPackageId,
-    CachedPackageSlot, CachedPackageSource, CachedPath, CachedRustEdition, CachedTarget,
-    CachedTargetKind, CachedWorkspace, ChangedFile, FileContext, PackageCacheArtifact,
-    PackageCacheBodyIrState, PackageCacheHeader, PackageCachePayload, PackageCacheSchemaVersion,
-    PackageResidency, PackageResidencyPlan, PackageResidencyPolicy, Project, ProjectBuildOptions,
-    SavedFileChange,
+use crate::cache::{
+    CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
+    CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, CachedWorkspace,
+    PackageCacheArtifact, PackageCacheBodyIrState, PackageCacheHeader, PackageCachePayload,
+    PackageCacheSchemaVersion,
+};
+use crate::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
+
+use super::{
+    AnalysisChangeSummary, ChangedFile, FileContext, Project, SavedFileChange,
+    state::{ProjectBuildOptions, ProjectState},
 };
 
 macro_rules! record_fields {
@@ -19,7 +23,7 @@ macro_rules! record_fields {
     };
 }
 
-impl MemorySize for Project {
+impl MemorySize for ProjectState {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         record_fields!(
             recorder,
@@ -171,10 +175,10 @@ impl MemorySize for PackageResidency {
     fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
 }
 
-impl MemorySize for AnalysisHost {
+impl MemorySize for Project {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.scope("project", |recorder| {
-            self.project.record_memory_children(recorder);
+        recorder.scope("state", |recorder| {
+            self.state.record_memory_children(recorder);
         });
     }
 }

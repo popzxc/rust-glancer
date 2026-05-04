@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 
-use rg_def_map::{DefMapDb, LocalDefRef, ModuleRef, PackageSlot, Path, TargetRef};
+use rg_def_map::{
+    DefMapDb, LocalDefRef, ModuleRef, PackageSlot, Path, ResidentTargetRef, TargetRef,
+};
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStore;
 use rg_parse::TargetId;
@@ -12,9 +14,9 @@ use rg_parse::TargetId;
 use crate::{
     AssocItemId, ConstData, ConstRef, EnumData, EnumVariantData, EnumVariantRef, FieldData,
     FieldRef, FunctionData, FunctionRef, ImplData, ImplRef, ItemId, ItemOwner, PackageIr,
-    SemanticIrReadTxn, SemanticIrStats, SemanticTypePathResolution, StaticData, StaticRef,
-    StructData, TargetIr, TraitData, TraitImplRef, TraitRef, TypeAliasData, TypeAliasRef,
-    TypeDefId, TypeDefRef, TypePathContext, UnionData, lower, push_unique, resolution,
+    SemanticIrStats, SemanticTypePathResolution, StaticData, StaticRef, StructData, TargetIr,
+    TraitData, TraitImplRef, TraitRef, TypeAliasData, TypeAliasRef, TypeDefId, TypeDefRef,
+    TypePathContext, UnionData, lower, push_unique, resolution,
 };
 
 /// Semantic item graph for all analyzed packages and targets.
@@ -64,15 +66,6 @@ impl SemanticIrDb {
         Ok(next)
     }
 
-    /// Starts a read transaction over package-level semantic IR data.
-    pub fn read_txn(&self) -> SemanticIrReadTxn<'_> {
-        SemanticIrReadTxn::new(self.packages.read_txn())
-    }
-
-    pub fn read_txn_from_package_arcs<'a>(packages: Vec<Arc<PackageIr>>) -> SemanticIrReadTxn<'a> {
-        SemanticIrReadTxn::from_package_arcs(packages)
-    }
-
     pub(crate) fn new(packages: Vec<PackageIr>) -> Self {
         Self {
             packages: PackageStore::from_vec(packages),
@@ -81,7 +74,7 @@ impl SemanticIrDb {
 
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
-        for package in self.packages.iter_unique_mut() {
+        for package in self.packages.resident_packages_unique_mut() {
             package.shrink_to_fit();
         }
     }
@@ -98,7 +91,7 @@ impl SemanticIrDb {
     pub fn stats(&self) -> SemanticIrStats {
         let mut stats = SemanticIrStats::default();
 
-        for package in self.packages.iter() {
+        for package in self.packages.resident_packages() {
             for target in package.targets() {
                 let items = target.items();
                 stats.target_count += 1;
@@ -117,11 +110,7 @@ impl SemanticIrDb {
         stats
     }
 
-    /// Returns all package-level semantic IR sets.
-    pub fn packages(&self) -> impl Iterator<Item = &PackageIr> + '_ {
-        self.packages.iter()
-    }
-
+    /// Returns resident package-level semantic IR sets, skipping offloaded packages.
     pub fn package_count(&self) -> usize {
         self.packages.len()
     }
@@ -148,20 +137,19 @@ impl SemanticIrDb {
         self.package(target.package)?.target(target.target)
     }
 
-    /// Iterates over every target IR together with its project-wide target reference.
-    pub fn target_irs(&self) -> impl Iterator<Item = (TargetRef, &TargetIr)> {
+    /// Iterates over every resident target IR together with a resident-only target reference.
+    pub fn resident_target_irs(&self) -> impl Iterator<Item = (ResidentTargetRef, &TargetIr)> {
         self.packages
-            .iter()
-            .enumerate()
-            .flat_map(|(package_idx, package)| {
+            .resident_packages_with_slots()
+            .flat_map(|(package_slot, package)| {
                 package
                     .targets()
                     .iter()
                     .enumerate()
                     .map(move |(target_idx, target_ir)| {
                         (
-                            TargetRef {
-                                package: PackageSlot(package_idx),
+                            ResidentTargetRef {
+                                package: package_slot,
                                 target: TargetId(target_idx),
                             },
                             target_ir,
@@ -742,8 +730,11 @@ impl SemanticIrDb {
     }
 
     pub(crate) fn impl_refs(&self) -> Vec<ImplRef> {
-        self.target_irs()
-            .flat_map(|(target, _)| self.impls(target).map(|(impl_ref, _)| impl_ref))
+        self.resident_target_irs()
+            .flat_map(|(target, _)| {
+                self.impls(target.expose_target_ref())
+                    .map(|(impl_ref, _)| impl_ref)
+            })
             .collect()
     }
 
@@ -765,4 +756,32 @@ fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
     slots.sort_by_key(|slot| slot.0);
     slots.dedup();
     slots
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_irs_preserve_package_slots_when_middle_package_is_offloaded() {
+        let mut db = SemanticIrDb::new(vec![
+            package_with_one_target(),
+            package_with_one_target(),
+            package_with_one_target(),
+        ]);
+
+        db.offload_package(PackageSlot(1))
+            .expect("middle package should exist");
+
+        let target_packages = db
+            .resident_target_irs()
+            .map(|(target, _)| target.package.expose_package_slot())
+            .collect::<Vec<_>>();
+
+        assert_eq!(target_packages, vec![PackageSlot(0), PackageSlot(2)]);
+    }
+
+    fn package_with_one_target() -> PackageIr {
+        PackageIr::new(vec![TargetIr::new(0)])
+    }
 }

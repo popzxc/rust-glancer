@@ -11,12 +11,13 @@ use rg_semantic_ir::{PackageIr, SemanticIrPackageBundle};
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
-use crate::{
+use crate::cache::{
     CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
     CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, CachedWorkspace,
     PackageCacheArtifact, PackageCacheBodyIrState, PackageCacheCodec, PackageCacheHeader,
-    PackageCachePayload, PackageCacheStore, PackageResidencyPolicy, Project, ProjectBuildOptions,
+    PackageCachePayload, PackageCacheStore,
 };
+use crate::{PackageResidencyPolicy, Project, ProjectBuildOptions, project::state::ProjectState};
 
 pub(super) fn check_cached_workspace(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
@@ -149,8 +150,11 @@ pub(super) fn check_fixture_cache_artifact_codec(fixture: &str, expect: Expect) 
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
     let project = Project::build(workspace).expect("fixture project should build");
-    let artifact =
-        package_artifact_from_project(&project.cached_workspace, &project, PackageSlot(0));
+    let artifact = package_artifact_from_project(
+        &project.state.cached_workspace,
+        &project.state,
+        PackageSlot(0),
+    );
 
     let bytes = PackageCacheCodec::encode_artifact(&artifact)
         .expect("package cache artifact should serialize");
@@ -171,8 +175,11 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
     let project = Project::build(workspace).expect("fixture project should build");
-    let artifact =
-        package_artifact_from_project(&project.cached_workspace, &project, PackageSlot(0));
+    let artifact = package_artifact_from_project(
+        &project.state.cached_workspace,
+        &project.state,
+        PackageSlot(0),
+    );
     let store = PackageCacheStore::for_workspace_with_target_dir(
         project.workspace(),
         project.workspace().workspace_root().join("target"),
@@ -257,11 +264,12 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
         },
     )
     .expect("fixture project should build");
-    let dep = package_slot_by_name(project.parse_db(), "dep");
-    let txn = project
-        .read_txn()
+    let dep = package_slot_by_name(project.snapshot().parse_db(), "dep");
+    let analysis = project
+        .snapshot()
+        .full_analysis()
         .expect("offloaded package read transaction should materialize");
-    let mut symbols = project.analysis(&txn).workspace_symbols("DepType");
+    let mut symbols = analysis.workspace_symbols("DepType");
     symbols.sort_by_key(|symbol| {
         (
             symbol.kind,
@@ -276,13 +284,14 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
     writeln!(
         &mut dump,
         "dep resident {}",
-        project.def_map_db().package(dep).is_some(),
+        project.state.def_map.package(dep).is_some(),
     )
     .expect("string writes should not fail");
     writeln!(&mut dump, "symbols").expect("string writes should not fail");
 
     for symbol in symbols {
         let package = project
+            .snapshot()
             .parse_db()
             .package(symbol.target.package.0)
             .expect("workspace symbol package should be parsed");
@@ -305,7 +314,7 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
 
 fn package_artifact_from_project(
     cached_workspace: &CachedWorkspace,
-    project: &Project,
+    project: &ProjectState,
     package: PackageSlot,
 ) -> PackageCacheArtifact {
     let header = cached_workspace

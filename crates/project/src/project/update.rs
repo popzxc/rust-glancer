@@ -10,10 +10,10 @@ use anyhow::Context as _;
 
 use rg_def_map::{PackageSlot, TargetRef};
 
-use super::{AnalysisChangeSummary, AnalysisHost, ChangedFile, SavedFileChange};
+use super::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange};
 
 pub(super) fn apply_source_changes(
-    host: &mut AnalysisHost,
+    project: &mut Project,
     changes: Vec<SavedFileChange>,
 ) -> anyhow::Result<AnalysisChangeSummary> {
     let mut changed_files = Vec::new();
@@ -21,8 +21,8 @@ pub(super) fn apply_source_changes(
     let mut fallback_saved_paths = Vec::new();
 
     for change in changes {
-        let changed = host
-            .project
+        let changed = project
+            .state
             .parse_db_mut()
             .reparse_saved_file(&change.path)
             .with_context(|| {
@@ -41,8 +41,8 @@ pub(super) fn apply_source_changes(
             // case, package roots are the coarse ownership boundary: rebuilding the containing
             // package lets item-tree lowering rediscover any newly materialized `mod foo;` files
             // through the normal Rust module rules.
-            for package_slot in host
-                .project
+            for package_slot in project
+                .state
                 .workspace()
                 .package_slots_containing_path(&change.path)
             {
@@ -64,19 +64,20 @@ pub(super) fn apply_source_changes(
         }
     }
 
-    let affected_packages = affected_packages(host, &changed_files, &fallback_package_roots);
+    let affected_packages = affected_packages(project, &changed_files, &fallback_package_roots);
     if !affected_packages.is_empty() {
-        host.project
+        project
+            .state
             .rebuild_packages(&affected_packages)
             .context("while attempting to rebuild affected analysis packages")?;
     }
     promote_discovered_fallback_files(
-        host,
+        project,
         &fallback_saved_paths,
         &fallback_package_roots,
         &mut changed_files,
     );
-    let changed_targets = targets_for_changed_files(host, &changed_files)
+    let changed_targets = targets_for_changed_files(project, &changed_files)
         .context("while attempting to report changed analysis targets")?;
 
     Ok(AnalysisChangeSummary {
@@ -87,14 +88,15 @@ pub(super) fn apply_source_changes(
 }
 
 fn affected_packages(
-    host: &AnalysisHost,
+    project: &Project,
     changed_files: &[ChangedFile],
     fallback_package_roots: &[PackageSlot],
 ) -> Vec<PackageSlot> {
     let mut changed_package_ids = changed_files
         .iter()
         .filter_map(|changed_file| {
-            host.project
+            project
+                .state
                 .workspace()
                 .packages()
                 .get(changed_file.package.0)
@@ -103,7 +105,7 @@ fn affected_packages(
         .collect::<Vec<_>>();
 
     for package_slot in fallback_package_roots {
-        let Some(package) = host.project.workspace().packages().get(package_slot.0) else {
+        let Some(package) = project.state.workspace().packages().get(package_slot.0) else {
             continue;
         };
         if !changed_package_ids.contains(&package.id) {
@@ -111,7 +113,8 @@ fn affected_packages(
         }
     }
 
-    host.project
+    project
+        .state
         .workspace()
         .reverse_dependency_closure(&changed_package_ids)
         .into_iter()
@@ -120,14 +123,14 @@ fn affected_packages(
 }
 
 fn promote_discovered_fallback_files(
-    host: &AnalysisHost,
+    project: &Project,
     fallback_saved_paths: &[PathBuf],
     fallback_package_roots: &[PackageSlot],
     changed_files: &mut Vec<ChangedFile>,
 ) {
     for saved_path in fallback_saved_paths {
         for package_slot in fallback_package_roots {
-            let Some(package) = host.project.parse_db().package(package_slot.0) else {
+            let Some(package) = project.state.parse_db().package(package_slot.0) else {
                 continue;
             };
 
@@ -151,11 +154,17 @@ fn promote_discovered_fallback_files(
 }
 
 fn targets_for_changed_files(
-    host: &AnalysisHost,
+    project: &Project,
     changed_files: &[ChangedFile],
 ) -> anyhow::Result<Vec<TargetRef>> {
-    let txn = host.project.read_txn()?;
-    let analysis = host.project.analysis(&txn);
+    let packages = changed_files
+        .iter()
+        .map(|changed_file| changed_file.package)
+        .collect::<Vec<_>>();
+    let snapshot = project.snapshot();
+    // Reporting changed targets only needs package-local file ownership. Avoid materializing
+    // dependency closures on the save path when semantic resolution is not involved.
+    let analysis = snapshot.shallow_analysis(&packages)?;
     let mut targets = Vec::new();
 
     for changed_file in changed_files {

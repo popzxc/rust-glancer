@@ -14,12 +14,16 @@ use super::{
 pub struct PackageCacheCodec;
 
 impl PackageCacheCodec {
-    pub fn encode_header(header: &PackageCacheHeader) -> anyhow::Result<rkyv::util::AlignedVec> {
+    #[cfg(test)]
+    pub(super) fn encode_header(
+        header: &PackageCacheHeader,
+    ) -> anyhow::Result<rkyv::util::AlignedVec> {
         Self::encode_with_cleared_arena(header)
             .context("while attempting to serialize package cache header")
     }
 
-    pub fn decode_header(bytes: &[u8]) -> anyhow::Result<PackageCacheHeader> {
+    #[cfg(test)]
+    pub(super) fn decode_header(bytes: &[u8]) -> anyhow::Result<PackageCacheHeader> {
         let header = rkyv::from_bytes::<PackageCacheHeader, rkyv::rancor::Error>(bytes)
             .map_err(|error| anyhow::anyhow!("{error}"))
             .context("while attempting to deserialize package cache header")?;

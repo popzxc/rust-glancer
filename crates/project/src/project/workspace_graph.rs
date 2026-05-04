@@ -2,10 +2,10 @@
 //!
 //! Source saves can usually reuse package and target slots, but manifest or lockfile edits may add,
 //! remove, or reorder packages, dependencies, or targets. Those graph-level changes are uncommon
-//! enough that the host intentionally treats them as a full-project rebuild boundary instead of
+//! enough that the project intentionally treats them as a full-project rebuild boundary instead of
 //! forcing every downstream phase to support slot remapping.
 //!
-//! Saved paths are canonicalized by `AnalysisHost`, and workspace metadata paths are canonicalized
+//! Saved paths are canonicalized by `Project`, and workspace metadata paths are canonicalized
 //! when `WorkspaceMetadata` is built. That lets this module express graph checks as direct path
 //! comparisons instead of carrying defensive path-normalization fallbacks.
 

@@ -38,12 +38,19 @@ pub(super) fn build_db(
 ) -> anyhow::Result<BodyIrDb> {
     let mut packages = Vec::with_capacity(semantic_ir.package_count());
 
-    for (package_idx, package_ir) in semantic_ir.packages().enumerate() {
+    for package_idx in 0..semantic_ir.package_count() {
+        let package = PackageSlot(package_idx);
+        let package_ir = semantic_ir.package(package).with_context(|| {
+            format!(
+                "while attempting to fetch semantic IR package {} for body lowering",
+                package.0,
+            )
+        })?;
         packages.push(build_package(
             parse,
             semantic_ir,
             policy,
-            package_idx,
+            package,
             package_ir.targets().len(),
             interner,
         )?);
@@ -56,18 +63,18 @@ pub(super) fn build_package(
     parse: &ParseDb,
     semantic_ir: &SemanticIrDb,
     policy: BodyIrBuildPolicy,
-    package_idx: usize,
+    package: PackageSlot,
     target_count: usize,
     interner: &mut NameInterner,
 ) -> anyhow::Result<PackageBodies> {
     let parse_package = parse
-        .package(package_idx)
-        .with_context(|| format!("while attempting to fetch parse package {package_idx}"))?;
+        .package(package.0)
+        .with_context(|| format!("while attempting to fetch parse package {}", package.0))?;
     let mut targets = Vec::with_capacity(target_count);
 
     for target_idx in 0..target_count {
         let target_ref = TargetRef {
-            package: PackageSlot(package_idx),
+            package,
             target: TargetId(target_idx),
         };
         let function_count = semantic_ir.function_count(target_ref);

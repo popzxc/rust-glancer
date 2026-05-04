@@ -24,7 +24,7 @@ pub use self::{
     db::{DefMapDb, DefMapStats},
     ids::{
         DefId, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
-        ModuleRef, TargetRef,
+        ModuleRef, ResidentTargetRef, TargetRef,
     },
     import::{ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath},
     path::{Path, PathSegment},

@@ -11,9 +11,9 @@ use rg_text::NameInterner;
 
 use crate::{
     BodyData, BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyIrBuildPolicy,
-    BodyIrReadTxn, BodyIrStats, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyRef,
-    BodyResolution, BodyTy, BodyTypePathResolution, PackageBodies, ScopeId, TargetBodies,
-    TargetBodiesStatus, lower, resolution,
+    BodyIrStats, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyResolution, BodyTy,
+    BodyTypePathResolution, PackageBodies, ScopeId, TargetBodies, TargetBodiesStatus, lower,
+    resolution,
 };
 
 /// Body-level IR for all analyzed packages and targets.
@@ -111,14 +111,8 @@ impl BodyIrDb {
                         package.0
                     )
                 })?;
-            let rebuilt = lower::build_package(
-                parse,
-                semantic_ir,
-                policy,
-                package.0,
-                target_count,
-                interner,
-            )?;
+            let rebuilt =
+                lower::build_package(parse, semantic_ir, policy, *package, target_count, interner)?;
             next.packages.replace(*package, rebuilt).with_context(|| {
                 format!("while attempting to replace body IR package {}", package.0)
             })?;
@@ -129,15 +123,6 @@ impl BodyIrDb {
         Ok(next)
     }
 
-    /// Starts a read transaction over package-level Body IR data.
-    pub fn read_txn(&self) -> BodyIrReadTxn<'_> {
-        BodyIrReadTxn::new(self.packages.read_txn())
-    }
-
-    pub fn read_txn_from_package_arcs<'a>(packages: Vec<Arc<PackageBodies>>) -> BodyIrReadTxn<'a> {
-        BodyIrReadTxn::from_package_arcs(packages)
-    }
-
     pub(crate) fn new(packages: Vec<PackageBodies>) -> Self {
         Self {
             packages: PackageStore::from_vec(packages),
@@ -146,7 +131,7 @@ impl BodyIrDb {
 
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
-        for package in self.packages.iter_unique_mut() {
+        for package in self.packages.resident_packages_unique_mut() {
             package.shrink_to_fit();
         }
     }
@@ -162,7 +147,7 @@ impl BodyIrDb {
     pub fn stats(&self) -> BodyIrStats {
         let mut stats = BodyIrStats::default();
 
-        for package in self.packages.iter() {
+        for package in self.packages.resident_packages() {
             for target in package.targets() {
                 stats.target_count += 1;
                 match target.status() {
@@ -185,11 +170,7 @@ impl BodyIrDb {
         stats
     }
 
-    /// Returns all package-level body IR sets.
-    pub fn packages(&self) -> impl Iterator<Item = &PackageBodies> + '_ {
-        self.packages.iter()
-    }
-
+    /// Returns resident package-level body IR sets, skipping offloaded packages.
     pub fn package_count(&self) -> usize {
         self.packages.len()
     }

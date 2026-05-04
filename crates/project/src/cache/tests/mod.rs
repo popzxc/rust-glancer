@@ -247,7 +247,7 @@ edition = "2024"
 pub struct App;
 "#,
         expect![[r#"
-            encoded artifact bytes 1080
+            encoded artifact bytes 1088
             decoded artifact
             schema 1
             package #0 app
@@ -276,7 +276,7 @@ pub struct App;
             cache store artifact I/O
             missing before write true
             artifact path target/rust_glancer/<workspace>/packages/package-0-app-494a91ea75e1f1098b52d92a260b1fbe2501f098a88e450b86ff097aff10a5f6.rgpkg
-            written bytes 1080
+            written bytes 1088
             loaded package #0 app
             corrupt read has decode context true
             missing after invalidation true

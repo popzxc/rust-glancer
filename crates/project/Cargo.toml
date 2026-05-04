@@ -12,6 +12,7 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+atomic-write-file.workspace = true
 blake3.workspace = true
 derive_more.workspace = true
 rkyv.workspace = true

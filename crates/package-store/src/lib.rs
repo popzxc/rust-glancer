@@ -14,6 +14,25 @@ use rg_workspace::PackageSlot;
 
 pub use self::txn::{PackageRead, PackageStoreReadTxn};
 
+/// Package slot proven to come from a resident package-store entry.
+///
+/// This is intentionally distinct from `PackageSlot`: resident iterators describe storage state,
+/// not the full project graph. Callers that really need to promote it back to a graph slot must do
+/// so explicitly at the boundary where that choice is still visible in code review.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ResidentPackageSlot(PackageSlot);
+
+impl ResidentPackageSlot {
+    fn new(package: PackageSlot) -> Self {
+        Self(package)
+    }
+
+    pub fn expose_package_slot(self) -> PackageSlot {
+        self.0
+    }
+}
+
 /// Retained storage state for one package slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PackageEntry<T> {
@@ -46,13 +65,23 @@ impl<T> PackageStore<T> {
         self.packages.shrink_to_fit();
     }
 
-    /// Starts a read transaction over this store.
-    pub fn read_txn(&self) -> PackageStoreReadTxn<'_, T> {
-        PackageStoreReadTxn::from_resident_store(self)
+    /// Iterates over resident package payloads, skipping offloaded slots.
+    pub fn resident_packages(&self) -> impl Iterator<Item = &T> + '_ {
+        self.packages.iter().filter_map(PackageEntry::as_ref)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &T> + '_ {
-        self.packages.iter().filter_map(PackageEntry::as_ref)
+    /// Iterates over resident package payloads together with their original package slots.
+    pub fn resident_packages_with_slots(
+        &self,
+    ) -> impl Iterator<Item = (ResidentPackageSlot, &T)> + '_ {
+        self.packages
+            .iter()
+            .enumerate()
+            .filter_map(|(package_idx, package)| {
+                package
+                    .as_ref()
+                    .map(|package| (ResidentPackageSlot::new(PackageSlot(package_idx)), package))
+            })
     }
 
     pub fn get(&self, package: PackageSlot) -> Option<&T> {
@@ -97,7 +126,7 @@ impl<T> PackageStore<T> {
     }
 
     /// Iterates over package payloads that this snapshot uniquely owns.
-    pub fn iter_unique_mut(&mut self) -> impl Iterator<Item = &mut T> + '_ {
+    pub fn resident_packages_unique_mut(&mut self) -> impl Iterator<Item = &mut T> + '_ {
         self.packages
             .iter_mut()
             .filter_map(PackageEntry::unique_mut)
@@ -156,9 +185,11 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use rg_workspace::PackageSlot;
 
-    use crate::PackageStore;
+    use crate::{PackageStore, PackageStoreReadTxn};
 
     #[test]
     fn cloned_stores_replace_packages_independently() {
@@ -177,13 +208,32 @@ mod tests {
 
     #[test]
     fn read_transactions_return_package_handles() {
-        let store = PackageStore::from_vec(vec!["workspace"]);
-        let txn = store.read_txn();
+        let txn = PackageStoreReadTxn::from_sparse_arcs(vec![Some(Arc::new("workspace"))]);
 
         let package = txn.read(PackageSlot(0)).expect("package slot should exist");
 
         assert_eq!(*package, "workspace");
         assert_eq!(package.into_ref(), &"workspace");
+    }
+
+    #[test]
+    fn sparse_read_transactions_preserve_original_package_slots() {
+        let txn = PackageStoreReadTxn::from_sparse_arcs(vec![
+            Some(Arc::new("workspace")),
+            None,
+            Some(Arc::new("dependency")),
+        ]);
+
+        let packages_with_slots = txn
+            .packages_with_slots()
+            .map(|(slot, package)| (slot.0, *package))
+            .collect::<Vec<_>>();
+
+        assert!(txn.read(PackageSlot(1)).is_none());
+        assert_eq!(
+            packages_with_slots,
+            vec![(0, "workspace"), (2, "dependency")]
+        );
     }
 
     #[test]
@@ -197,5 +247,26 @@ mod tests {
         assert_eq!(store.get(PackageSlot(0)), Some(&"workspace"));
         assert_eq!(store.get(PackageSlot(1)), None);
         assert!(!store.is_resident(PackageSlot(1)));
+    }
+
+    #[test]
+    fn resident_iterators_preserve_original_package_slots() {
+        let mut store = PackageStore::from_vec(vec!["workspace", "offloaded", "dependency"]);
+
+        store
+            .offload(PackageSlot(1))
+            .expect("package slot should exist");
+
+        let residents = store.resident_packages().copied().collect::<Vec<_>>();
+        let residents_with_slots = store
+            .resident_packages_with_slots()
+            .map(|(slot, package)| (slot.expose_package_slot().0, *package))
+            .collect::<Vec<_>>();
+
+        assert_eq!(residents, vec!["workspace", "dependency"]);
+        assert_eq!(
+            residents_with_slots,
+            vec![(0, "workspace"), (2, "dependency")]
+        );
     }
 }
