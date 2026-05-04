@@ -1041,6 +1041,90 @@ pub struct Unrelated;
 }
 
 #[test]
+fn source_updates_do_not_materialize_unrelated_offloaded_packages() {
+    let mut fixture = HostFixture::build_with_options(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app", "dep", "unrelated"]
+resolver = "3"
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /app/src/lib.rs
+pub struct Before;
+pub fn use_dep(_: dep::Api) {}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Api;
+
+//- /unrelated/Cargo.toml
+[package]
+name = "unrelated"
+version = "0.1.0"
+edition = "2024"
+
+//- /unrelated/src/lib.rs
+pub struct Unrelated;
+"#,
+        ProjectBuildOptions {
+            package_residency_policy: PackageResidencyPolicy::AllOffloadable,
+            ..ProjectBuildOptions::default()
+        },
+    );
+
+    assert!(fixture.package_cache_artifact_exists("unrelated"));
+    fixture.remove_package_cache_artifact("unrelated");
+    assert!(!fixture.package_cache_artifact_exists("unrelated"));
+
+    fixture.check_save(
+        r#"
+//- /app/src/lib.rs
+pub struct After;
+pub fn use_dep(_: dep::Api) {}
+"#,
+        &[HostObservation::resident_stats("after save")],
+        expect![[r#"
+            changed files
+            - app app/src/lib.rs
+
+            affected packages
+            - app
+
+            changed targets
+            - app[lib]
+
+            resident stats `after save`
+            - def-map targets 0
+            - semantic targets 0
+            - body targets 0
+        "#]],
+    );
+
+    assert_eq!(
+        fixture.document_symbol_names("app/src/lib.rs"),
+        vec!["After", "use_dep"],
+    );
+    assert!(
+        !fixture.package_cache_artifact_exists("unrelated"),
+        "source updates should not recover artifacts outside their rebuild demand set",
+    );
+}
+
+#[test]
 fn source_updates_rebuild_missing_offloaded_package_cache_artifacts() {
     let mut fixture = HostFixture::build_with_options(
         r#"

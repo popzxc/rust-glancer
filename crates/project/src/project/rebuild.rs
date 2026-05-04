@@ -25,6 +25,9 @@ pub(super) fn rebuild_workspace_graph(
         .with_sysroot_sources(sysroot);
     let build_options = project.state.build_options;
 
+    // Cargo graph edits can add, remove, or reorder packages, targets, and dependencies. Starting
+    // from scratch keeps every phase on one slot-stable snapshot instead of trying to partially
+    // reuse state whose internal ids may no longer describe the refreshed metadata graph.
     project.state = ProjectState::build_with_options(workspace, build_options)
         .context("while attempting to build refreshed analysis project")?;
 

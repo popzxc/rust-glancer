@@ -28,9 +28,9 @@ pub(crate) fn apply_residency(project: &mut ProjectState) -> anyhow::Result<()> 
 
 /// Restores the current residency policy after a package rebuild.
 ///
-/// Rebuilds temporarily materialize the whole project because cross-package resolution can inspect
-/// unchanged dependencies. Only rebuilt packages need fresh artifacts; unchanged packages can be
-/// dropped back to their already-written cache entries.
+/// Rebuilds materialize the package being replaced plus the dependencies it can inspect. Only
+/// rebuilt packages need fresh artifacts; unchanged packages can be dropped back to their
+/// already-written cache entries.
 pub(crate) fn restore_residency_after_rebuild(
     project: &mut ProjectState,
     rebuilt_packages: &[PackageSlot],
@@ -180,12 +180,15 @@ fn offload_package(project: &mut ProjectState, package: PackageSlot) -> anyhow::
     Ok(())
 }
 
-/// Restores offloaded packages into the project before an in-place rebuild.
+/// Restores the packages one in-place rebuild can inspect.
 ///
-/// Rebuild phases can consult packages outside the rebuild set as part of name/import resolution,
-/// so the mutable project must be fully resident before those phases start replacing packages.
-pub(crate) fn materialize_project(project: &mut ProjectState) -> anyhow::Result<()> {
-    match try_materialize_project(project) {
+/// Rebuild phases may resolve through dependencies that are not themselves being replaced. The
+/// caller supplies that dependency-expanded demand so unrelated offloaded packages can stay cold.
+pub(crate) fn materialize_packages(
+    project: &mut ProjectState,
+    demand: &PackageDemand,
+) -> anyhow::Result<()> {
+    match try_materialize_packages(project, demand) {
         Ok(()) => Ok(()),
         Err(error) if is_cache_artifact_unavailable(&error) => {
             recover_resident_project_from_source(project).with_context(|| {
@@ -198,46 +201,61 @@ pub(crate) fn materialize_project(project: &mut ProjectState) -> anyhow::Result<
     }
 }
 
-fn try_materialize_project(project: &mut ProjectState) -> anyhow::Result<()> {
-    for package_idx in 0..project.workspace.packages().len() {
+fn try_materialize_packages(
+    project: &mut ProjectState,
+    demand: &PackageDemand,
+) -> anyhow::Result<()> {
+    for package_idx in 0..demand.package_count() {
         let package = PackageSlot(package_idx);
+        if !demand.contains(package) {
+            continue;
+        }
         if resident_package_arcs(project, package).is_some() {
             continue;
         }
 
         let artifact = read_artifact(project, package)?;
-        let payload = artifact.payload;
-        project
-            .def_map
-            .replace_package(package, payload.def_map.into_package())
-            .with_context(|| {
-                format!(
-                    "while attempting to restore def-map package {} from cache",
-                    package.0,
-                )
-            })?;
-        project
-            .semantic_ir
-            .replace_package(package, payload.semantic_ir.into_package())
-            .with_context(|| {
-                format!(
-                    "while attempting to restore semantic IR package {} from cache",
-                    package.0,
-                )
-            })?;
-        project
-            .body_ir
-            .replace_package(
-                package,
-                body_ir_package_from_payload(package, payload.body_ir)?,
-            )
-            .with_context(|| {
-                format!(
-                    "while attempting to restore body IR package {} from cache",
-                    package.0,
-                )
-            })?;
+        restore_package_from_payload(project, package, artifact.payload)?;
     }
+
+    Ok(())
+}
+
+fn restore_package_from_payload(
+    project: &mut ProjectState,
+    package: PackageSlot,
+    payload: PackageCachePayload,
+) -> anyhow::Result<()> {
+    project
+        .def_map
+        .replace_package(package, payload.def_map.into_package())
+        .with_context(|| {
+            format!(
+                "while attempting to restore def-map package {} from cache",
+                package.0,
+            )
+        })?;
+    project
+        .semantic_ir
+        .replace_package(package, payload.semantic_ir.into_package())
+        .with_context(|| {
+            format!(
+                "while attempting to restore semantic IR package {} from cache",
+                package.0,
+            )
+        })?;
+    project
+        .body_ir
+        .replace_package(
+            package,
+            body_ir_package_from_payload(package, payload.body_ir)?,
+        )
+        .with_context(|| {
+            format!(
+                "while attempting to restore body IR package {} from cache",
+                package.0,
+            )
+        })?;
 
     Ok(())
 }

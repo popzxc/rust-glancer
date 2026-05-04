@@ -1,14 +1,14 @@
-//! Query-scoped package materialization plans.
+//! Narrow package materialization plans.
 //!
 //! Project residency decides what stays in memory between requests. Demand is narrower: it says
-//! which package artifacts one read transaction needs to materialize before running a query.
+//! which package artifacts one query or rebuild needs to materialize before it can inspect them.
 
 use std::collections::HashSet;
 
 use rg_def_map::{PackageSlot, TargetRef};
 use rg_workspace::{PackageId, TargetKind, WorkspaceMetadata};
 
-/// Package slots that should be available inside one analysis read transaction.
+/// Package slots that should be available inside one analysis operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PackageDemand {
     packages: Vec<bool>,
@@ -31,6 +31,32 @@ impl PackageDemand {
         demand
     }
 
+    /// Demands packages plus every dependency their targets can name during rebuild resolution.
+    pub(crate) fn packages_with_dependencies(
+        workspace: &WorkspaceMetadata,
+        packages: &[PackageSlot],
+    ) -> Self {
+        let mut demand = Self::empty(workspace);
+        let mut expanded = HashSet::new();
+        let mut stack = Vec::new();
+
+        for package in packages {
+            demand.insert(*package);
+
+            let Some(metadata) = workspace.packages().get(package.0) else {
+                continue;
+            };
+            for target in &metadata.targets {
+                if expanded.insert((*package, target.kind.clone())) {
+                    stack.push((*package, target.kind.clone()));
+                }
+            }
+        }
+
+        demand.expand_visible_dependencies(workspace, &mut expanded, &mut stack);
+        demand
+    }
+
     /// Demands target packages plus the transitive dependencies visible from those targets.
     pub(crate) fn targets(workspace: &WorkspaceMetadata, targets: &[TargetRef]) -> Self {
         let mut demand = Self::empty(workspace);
@@ -48,6 +74,16 @@ impl PackageDemand {
             }
         }
 
+        demand.expand_visible_dependencies(workspace, &mut expanded, &mut stack);
+        demand
+    }
+
+    fn expand_visible_dependencies(
+        &mut self,
+        workspace: &WorkspaceMetadata,
+        expanded: &mut HashSet<(PackageSlot, TargetKind)>,
+        stack: &mut Vec<(PackageSlot, TargetKind)>,
+    ) {
         while let Some((package, target_kind)) = stack.pop() {
             let Some(metadata) = workspace.packages().get(package.0) else {
                 continue;
@@ -62,7 +98,7 @@ impl PackageDemand {
                 else {
                     continue;
                 };
-                demand.insert(dependency_slot);
+                self.insert(dependency_slot);
                 // Dependencies are reached as library crates. Their own dev/build dependencies
                 // are not visible to the original target query.
                 if expanded.insert((dependency_slot, TargetKind::Lib)) {
@@ -70,8 +106,6 @@ impl PackageDemand {
                 }
             }
         }
-
-        demand
     }
 
     pub(crate) fn contains(&self, package: PackageSlot) -> bool {

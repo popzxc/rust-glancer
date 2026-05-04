@@ -87,7 +87,11 @@ impl ProjectState {
             return Ok(());
         }
 
-        integration::materialize_project(self)
+        // Rebuilding one package can resolve names through its dependencies, but unrelated
+        // packages should stay offloaded so save handling does not recreate full-project spikes.
+        let materialized_packages =
+            PackageDemand::packages_with_dependencies(&self.workspace, packages);
+        integration::materialize_packages(self, &materialized_packages)
             .context("while attempting to materialize package cache before package rebuild")?;
 
         let package_indices = packages.iter().map(|package| package.0).collect::<Vec<_>>();
