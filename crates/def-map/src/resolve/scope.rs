@@ -13,8 +13,8 @@ use rg_text::{Name, NameInterner};
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    DefMap as FrozenDefMap, DefMapDb, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleRef,
-    Package as DefMapPackage, PackageSlot, TargetRef,
+    DefMap as FrozenDefMap, DefMapReadTxn, LocalDefKind, LocalDefRef, ModuleData, ModuleId,
+    ModuleRef, Package as DefMapPackage, PackageSlot, TargetRef,
     collect::TargetState,
     path_resolution::{PathResolutionEnv, resolve_path_to_modules_with_env},
     scope::{ModuleScopeBuilder, ScopeEntryRef},
@@ -152,14 +152,14 @@ impl ScopeMatrix {
 /// Dirty package reads come from fresh target state and the current fixed-point scope snapshot.
 /// Clean package reads fall through to the frozen baseline when one exists.
 struct FinalizeResolutionEnv<'a> {
-    old: Option<&'a DefMapDb>,
+    old: Option<&'a DefMapReadTxn<'a>>,
     states: &'a FinalizeTargetStates,
     current_scopes: &'a ScopeMatrix,
 }
 
 impl<'a> FinalizeResolutionEnv<'a> {
     fn new(
-        old: Option<&'a DefMapDb>,
+        old: Option<&'a DefMapReadTxn<'a>>,
         states: &'a FinalizeTargetStates,
         current_scopes: &'a ScopeMatrix,
     ) -> Self {
@@ -172,75 +172,104 @@ impl<'a> FinalizeResolutionEnv<'a> {
 }
 
 impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
-    fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef> {
+    fn extern_root(
+        &self,
+        target: TargetRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
         if let Some(state) = self.states.target(target) {
-            return state.implicit_roots.get(name).copied();
+            return Ok(state.implicit_roots.get(name).copied());
         }
 
-        self.old?
-            .def_map(target)?
-            .extern_prelude()
-            .get(name)
-            .copied()
+        Ok(self
+            .old
+            .map(|old| old.def_map(target))
+            .transpose()?
+            .flatten()
+            .and_then(|def_map| def_map.extern_prelude().get(name).copied()))
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Option<ModuleRef> {
+    fn prelude_module(
+        &self,
+        target: TargetRef,
+    ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
         if let Some(state) = self.states.target(target) {
-            return state.prelude;
+            return Ok(state.prelude);
         }
 
-        self.old?.def_map(target)?.prelude()
+        Ok(self
+            .old
+            .map(|old| old.def_map(target))
+            .transpose()?
+            .flatten()
+            .and_then(|def_map| def_map.prelude()))
     }
 
-    fn root_module(&self, target: TargetRef) -> Option<ModuleRef> {
-        Some(ModuleRef {
-            target,
-            module: if let Some(state) = self.states.target(target) {
-                state.def_map.root_module()?
-            } else {
-                self.old?.def_map(target)?.root_module()?
-            },
-        })
+    fn root_module(
+        &self,
+        target: TargetRef,
+    ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
+        let module = if let Some(state) = self.states.target(target) {
+            state.def_map.root_module()
+        } else {
+            self.old
+                .map(|old| old.def_map(target))
+                .transpose()?
+                .flatten()
+                .and_then(|def_map| def_map.root_module())
+        };
+
+        Ok(module.map(|module| ModuleRef { target, module }))
     }
 
-    fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData> {
+    fn module_data(
+        &self,
+        module_ref: ModuleRef,
+    ) -> Result<Option<&ModuleData>, rg_package_store::PackageStoreError> {
         if let Some(state) = self.states.target(module_ref.target) {
-            return state.def_map.module(module_ref.module);
+            return Ok(state.def_map.module(module_ref.module));
         }
 
-        self.old?
-            .def_map(module_ref.target)?
-            .module(module_ref.module)
+        Ok(self
+            .old
+            .map(|old| old.def_map(module_ref.target))
+            .transpose()?
+            .flatten()
+            .and_then(|def_map| def_map.module(module_ref.module)))
     }
 
     fn module_scope_entry<'a>(
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Option<ScopeEntryRef<'a>> {
+    ) -> Result<Option<ScopeEntryRef<'a>>, rg_package_store::PackageStoreError> {
         if self.states.package(module_ref.target.package).is_some() {
-            return self.current_scopes.module_scope(module_ref)?.entry(name);
+            return Ok(self
+                .current_scopes
+                .module_scope(module_ref)
+                .and_then(|scope| scope.entry(name)));
         }
 
-        self.module_data(module_ref)?
-            .scope
-            .entry(name)
-            .map(|entry| entry.as_ref())
+        Ok(self
+            .module_data(module_ref)?
+            .and_then(|module| module.scope.entry(name))
+            .map(|entry| entry.as_ref()))
     }
 
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Vec<(&'a Name, ScopeEntryRef<'a>)> {
+    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, rg_package_store::PackageStoreError> {
         if self.states.package(module_ref.target.package).is_some() {
-            return self
+            return Ok(self
                 .current_scopes
                 .module_scope(module_ref)
                 .map(|scope| scope.entries().collect())
-                .unwrap_or_default();
+                .unwrap_or_default());
         }
 
-        self.module_data(module_ref)
+        Ok(self
+            .module_data(module_ref)?
             .map(|module| {
                 module
                     .scope
@@ -248,26 +277,32 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
                     .map(|(name, entry)| (name, entry.as_ref()))
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
-    fn local_def_kind(&self, local_def_ref: LocalDefRef) -> Option<LocalDefKind> {
+    fn local_def_kind(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<LocalDefKind>, rg_package_store::PackageStoreError> {
         if let Some(state) = self.states.target(local_def_ref.target) {
-            return state
+            return Ok(state
                 .def_map
                 .local_defs
                 .get(local_def_ref.local_def)
-                .map(|local_def| local_def.kind);
+                .map(|local_def| local_def.kind));
         }
 
-        self.old?
-            .local_def(local_def_ref)
-            .map(|local_def| local_def.kind)
+        Ok(self
+            .old
+            .map(|old| old.local_def(local_def_ref))
+            .transpose()?
+            .flatten()
+            .map(|local_def| local_def.kind))
     }
 }
 
 pub(super) fn finalize_target_states(
-    old: Option<&DefMapDb>,
+    old: Option<&DefMapReadTxn<'_>>,
     workspace: &WorkspaceMetadata,
     packages: &[Package],
     target_states: &mut FinalizeTargetStates,
@@ -300,7 +335,7 @@ pub(super) fn freeze_package_states(
 }
 
 fn select_preludes(
-    old: Option<&DefMapDb>,
+    old: Option<&DefMapReadTxn<'_>>,
     workspace: &WorkspaceMetadata,
     packages: &[Package],
     states: &mut FinalizeTargetStates,
@@ -335,7 +370,7 @@ fn select_preludes(
                 continue;
             };
             let Some(prelude_module) =
-                resolve_path_to_modules_with_env(&env, state.target, root_module, &prelude_path)
+                resolve_path_to_modules_with_env(&env, state.target, root_module, &prelude_path)?
                     .into_iter()
                     .next()
             else {
@@ -366,7 +401,7 @@ fn select_preludes(
 /// Imports can depend on names introduced by other imports, so one pass is not enough. Each pass
 /// reads from the previous scope matrix and writes into a fresh matrix seeded from base scopes.
 fn finalize_scopes(
-    old: Option<&DefMapDb>,
+    old: Option<&DefMapReadTxn<'_>>,
     states: &mut FinalizeTargetStates,
 ) -> anyhow::Result<()> {
     let mut current_scopes = states.base_scopes();
@@ -389,7 +424,7 @@ fn finalize_scopes(
         }
 
         if next_scopes == current_scopes {
-            freeze_resolved_scopes(old, states, &current_scopes);
+            freeze_resolved_scopes(old, states, &current_scopes)?;
             return Ok(());
         }
 
@@ -398,15 +433,15 @@ fn finalize_scopes(
 }
 
 fn freeze_resolved_scopes(
-    old: Option<&DefMapDb>,
+    old: Option<&DefMapReadTxn<'_>>,
     states: &mut FinalizeTargetStates,
     current_scopes: &ScopeMatrix,
-) {
+) -> anyhow::Result<()> {
     // Once the import graph reaches a fixed point, freeze the resolved scopes into the public
     // def-map payload and preserve unresolved imports for query consumers.
     let unresolved_imports = {
         let env = FinalizeResolutionEnv::new(old, states, current_scopes);
-        UnresolvedImports::collect(states, &env)
+        UnresolvedImports::collect(states, &env)?
     };
 
     for (_, package_states) in states.iter_dirty_mut_enumerated() {
@@ -414,6 +449,8 @@ fn freeze_resolved_scopes(
             freeze_target_scopes(state, current_scopes, &unresolved_imports);
         }
     }
+
+    Ok(())
 }
 
 fn freeze_target_scopes(

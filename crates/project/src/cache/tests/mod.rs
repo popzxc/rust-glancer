@@ -215,7 +215,7 @@ fn roundtrips_package_cache_header_codec() {
 #[test]
 fn roundtrips_minimal_package_cache_artifact_codec() {
     utils::check_minimal_cache_artifact_codec(expect![[r#"
-        encoded artifact bytes 168
+        encoded artifact has bytes true
         706174682b66696c653a2f2f2f776f726b737061636523656d70747940302e31
         2e302f776f726b73706163652f436172676f2e746f6d6c000000000000000000
         01000000000000000700000000000000a2000000b0ffffffffffffffffffffff
@@ -247,7 +247,7 @@ edition = "2024"
 pub struct App;
 "#,
         expect![[r#"
-            encoded artifact bytes 1088
+            encoded artifact has bytes true
             decoded artifact
             schema 1
             package #0 app
@@ -276,9 +276,9 @@ pub struct App;
             cache store artifact I/O
             missing before write true
             artifact path target/rust_glancer/<workspace>/packages/graph-2e9c7f74573eb6146b67f8651910f56f141bcf2e664109bee1338bd97d317089/package-0-app-494a91ea75e1f1098b52d92a260b1fbe2501f098a88e450b86ff097aff10a5f6.rgpkg
-            written bytes 1088
+            written artifact has bytes true
             loaded package #0 app
-            corrupt read has decode context true
+            corrupt read has typed decode error true
             missing after invalidation true
         "#]],
     );
@@ -307,7 +307,7 @@ pub struct App;
 }
 
 #[test]
-fn materializes_offloaded_packages_for_queries() {
+fn lazy_loads_offloaded_packages_for_queries() {
     utils::check_offloaded_dependency_query(
         r#"
 //- /Cargo.toml

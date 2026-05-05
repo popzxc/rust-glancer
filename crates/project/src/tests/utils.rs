@@ -99,7 +99,10 @@ impl HostFixture {
 
         for context in contexts {
             for target in context.targets {
-                for symbol in analysis.document_symbols(target, context.file) {
+                for symbol in analysis
+                    .document_symbols(target, context.file)
+                    .expect("fixture document symbols should resolve")
+                {
                     push_document_symbol_names(&symbol, &mut names);
                 }
             }
@@ -108,6 +111,19 @@ impl HostFixture {
         names.sort();
         names.dedup();
         names
+    }
+
+    pub(super) fn workspace_symbols_error(&self, query: &str) -> String {
+        let analysis = self
+            .host
+            .snapshot()
+            .full_analysis()
+            .expect("fixture analysis should construct before lazy package load");
+
+        match analysis.workspace_symbols(query) {
+            Ok(_) => panic!("fixture workspace symbol query should fail"),
+            Err(error) => format!("{error:#}"),
+        }
     }
 
     fn package_cache_artifact_path(&self, package_name: &str) -> PathBuf {
@@ -281,7 +297,8 @@ impl HostFixture {
         let mut symbols = snapshot
             .full_analysis()
             .expect("fixture analysis should materialize")
-            .workspace_symbols(query);
+            .workspace_symbols(query)
+            .expect("fixture workspace symbols should resolve");
         symbols.sort_by(|left, right| {
             self.workspace_symbol_key(left)
                 .cmp(&self.workspace_symbol_key(right))
@@ -516,7 +533,10 @@ fn nominal_type_names_at(
     let analysis = snapshot
         .analysis_for_targets(&[target])
         .expect("fixture analysis should materialize");
-    let Some(ty) = analysis.type_at(target, file_id, offset) else {
+    let Some(ty) = analysis
+        .type_at(target, file_id, offset)
+        .expect("fixture type query should resolve")
+    else {
         return Vec::new();
     };
 

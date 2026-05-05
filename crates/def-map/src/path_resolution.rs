@@ -14,6 +14,7 @@ use super::{
     scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
 };
 use rg_item_tree::VisibilityLevel;
+use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
 /// Result of resolving a path against the frozen def-map graph.
@@ -25,76 +26,107 @@ pub struct ResolvePathResult {
 
 /// Minimal scope graph required by the path resolver.
 pub(super) trait PathResolutionEnv {
-    fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef>;
+    fn extern_root(
+        &self,
+        target: TargetRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, PackageStoreError>;
 
-    fn prelude_module(&self, target: TargetRef) -> Option<ModuleRef>;
+    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError>;
 
-    fn root_module(&self, target: TargetRef) -> Option<ModuleRef>;
+    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError>;
 
-    fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData>;
+    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, PackageStoreError>;
 
     fn module_scope_entry<'a>(
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Option<ScopeEntryRef<'a>>;
+    ) -> Result<Option<ScopeEntryRef<'a>>, PackageStoreError>;
 
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Vec<(&'a Name, ScopeEntryRef<'a>)>;
+    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, PackageStoreError>;
 
-    fn local_def_kind(&self, local_def_ref: LocalDefRef) -> Option<LocalDefKind>;
+    fn local_def_kind(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<LocalDefKind>, PackageStoreError>;
 
-    fn parent_module(&self, target: TargetRef, module_id: ModuleId) -> Option<ModuleRef> {
-        let module = self.module_data(ModuleRef {
+    fn parent_module(
+        &self,
+        target: TargetRef,
+        module_id: ModuleId,
+    ) -> Result<Option<ModuleRef>, PackageStoreError> {
+        let Some(module) = self.module_data(ModuleRef {
             target,
             module: module_id,
-        })?;
+        })?
+        else {
+            return Ok(None);
+        };
 
-        Some(ModuleRef {
+        let Some(parent) = module.parent else {
+            return Ok(None);
+        };
+
+        Ok(Some(ModuleRef {
             target,
-            module: module.parent?,
-        })
+            module: parent,
+        }))
     }
 }
 
 impl PathResolutionEnv for DefMapDb {
-    fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef> {
-        self.def_map(target)?.extern_prelude().get(name).copied()
+    fn extern_root(
+        &self,
+        target: TargetRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, PackageStoreError> {
+        Ok(self
+            .resident_def_map(target)
+            .and_then(|def_map| def_map.extern_prelude().get(name).copied()))
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Option<ModuleRef> {
-        self.def_map(target)?.prelude()
+    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        Ok(self
+            .resident_def_map(target)
+            .and_then(|def_map| def_map.prelude()))
     }
 
-    fn root_module(&self, target: TargetRef) -> Option<ModuleRef> {
-        Some(ModuleRef {
-            target,
-            module: self.def_map(target)?.root_module()?,
-        })
+    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        Ok(self.resident_def_map(target).and_then(|def_map| {
+            Some(ModuleRef {
+                target,
+                module: def_map.root_module()?,
+            })
+        }))
     }
 
-    fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData> {
-        self.def_map(module_ref.target)?.module(module_ref.module)
+    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, PackageStoreError> {
+        Ok(self
+            .resident_def_map(module_ref.target)
+            .and_then(|def_map| def_map.module(module_ref.module)))
     }
 
     fn module_scope_entry<'a>(
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Option<ScopeEntryRef<'a>> {
-        self.module_data(module_ref)?
-            .scope
-            .entry(name)
-            .map(|entry| entry.as_ref())
+    ) -> Result<Option<ScopeEntryRef<'a>>, PackageStoreError> {
+        Ok(self
+            .module_data(module_ref)?
+            .and_then(|module| module.scope.entry(name))
+            .map(|entry| entry.as_ref()))
     }
 
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Vec<(&'a Name, ScopeEntryRef<'a>)> {
-        self.module_data(module_ref)
+    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, PackageStoreError> {
+        Ok(self
+            .module_data(module_ref)?
             .map(|module| {
                 module
                     .scope
@@ -102,32 +134,44 @@ impl PathResolutionEnv for DefMapDb {
                     .map(|(name, entry)| (name, entry.as_ref()))
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
-    fn local_def_kind(&self, local_def_ref: LocalDefRef) -> Option<LocalDefKind> {
-        self.local_def(local_def_ref)
-            .map(|local_def| local_def.kind)
+    fn local_def_kind(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<LocalDefKind>, PackageStoreError> {
+        Ok(self
+            .local_def(local_def_ref)
+            .map(|local_def| local_def.kind))
     }
 }
 
 impl PathResolutionEnv for DefMapReadTxn<'_> {
-    fn extern_root(&self, target: TargetRef, name: &str) -> Option<ModuleRef> {
-        self.def_map(target)?.extern_prelude().get(name).copied()
+    fn extern_root(
+        &self,
+        target: TargetRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, PackageStoreError> {
+        Ok(self
+            .def_map(target)?
+            .and_then(|def_map| def_map.extern_prelude().get(name).copied()))
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Option<ModuleRef> {
-        self.def_map(target)?.prelude()
+    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        Ok(self.def_map(target)?.and_then(|def_map| def_map.prelude()))
     }
 
-    fn root_module(&self, target: TargetRef) -> Option<ModuleRef> {
-        Some(ModuleRef {
-            target,
-            module: self.def_map(target)?.root_module()?,
-        })
+    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        Ok(self.def_map(target)?.and_then(|def_map| {
+            Some(ModuleRef {
+                target,
+                module: def_map.root_module()?,
+            })
+        }))
     }
 
-    fn module_data(&self, module_ref: ModuleRef) -> Option<&ModuleData> {
+    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, PackageStoreError> {
         self.module(module_ref)
     }
 
@@ -135,18 +179,19 @@ impl PathResolutionEnv for DefMapReadTxn<'_> {
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Option<ScopeEntryRef<'a>> {
-        self.module_data(module_ref)?
-            .scope
-            .entry(name)
-            .map(|entry| entry.as_ref())
+    ) -> Result<Option<ScopeEntryRef<'a>>, PackageStoreError> {
+        Ok(self
+            .module_data(module_ref)?
+            .and_then(|module| module.scope.entry(name))
+            .map(|entry| entry.as_ref()))
     }
 
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Vec<(&'a Name, ScopeEntryRef<'a>)> {
-        self.module_data(module_ref)
+    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, PackageStoreError> {
+        Ok(self
+            .module_data(module_ref)?
             .map(|module| {
                 module
                     .scope
@@ -154,12 +199,16 @@ impl PathResolutionEnv for DefMapReadTxn<'_> {
                     .map(|(name, entry)| (name, entry.as_ref()))
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
-    fn local_def_kind(&self, local_def_ref: LocalDefRef) -> Option<LocalDefKind> {
-        self.local_def(local_def_ref)
-            .map(|local_def| local_def.kind)
+    fn local_def_kind(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<LocalDefKind>, PackageStoreError> {
+        Ok(self
+            .local_def(local_def_ref)?
+            .map(|local_def| local_def.kind))
     }
 }
 
@@ -167,29 +216,29 @@ pub(super) fn visible_module_scope_entry_set_with_env(
     env: &impl PathResolutionEnv,
     importing_module: ModuleRef,
     source_module: ModuleRef,
-) -> ModuleScopeBuilder {
+) -> Result<ModuleScopeBuilder, PackageStoreError> {
     let mut visible_scope = ModuleScopeBuilder::default();
-    for (name, entry) in env.module_scope_entries(source_module) {
+    for (name, entry) in env.module_scope_entries(source_module)? {
         for binding in entry.types() {
-            if binding_is_visible(env, importing_module, binding) {
+            if binding_is_visible(env, importing_module, binding)? {
                 visible_scope.insert_binding(name, Namespace::Types, binding.clone());
             }
         }
 
         for binding in entry.values() {
-            if binding_is_visible(env, importing_module, binding) {
+            if binding_is_visible(env, importing_module, binding)? {
                 visible_scope.insert_binding(name, Namespace::Values, binding.clone());
             }
         }
 
         for binding in entry.macros() {
-            if binding_is_visible(env, importing_module, binding) {
+            if binding_is_visible(env, importing_module, binding)? {
                 visible_scope.insert_binding(name, Namespace::Macros, binding.clone());
             }
         }
     }
 
-    visible_scope
+    Ok(visible_scope)
 }
 
 /// Resolves a path to the definitions it denotes in the current scope snapshot.
@@ -201,7 +250,7 @@ pub(super) fn resolve_path_to_defs_with_env(
     importing_target: TargetRef,
     importing_module: ModuleId,
     path: &super::ImportPath,
-) -> Vec<DefId> {
+) -> Result<Vec<DefId>, PackageStoreError> {
     resolve_path_to_defs_with_filter(
         env,
         importing_target,
@@ -217,7 +266,7 @@ fn resolve_path_to_defs_with_filter(
     importing_module: ModuleId,
     path: &super::ImportPath,
     terminal_filter: NameResolutionFilter,
-) -> Vec<DefId> {
+) -> Result<Vec<DefId>, PackageStoreError> {
     let result = resolve_path_with_env(
         env,
         ModuleRef {
@@ -227,9 +276,9 @@ fn resolve_path_to_defs_with_filter(
         path.absolute,
         &path.segments,
         terminal_filter,
-    );
+    )?;
 
-    result.resolved
+    Ok(result.resolved)
 }
 
 /// Resolves a path and keeps only module results.
@@ -241,14 +290,14 @@ pub(super) fn resolve_path_to_modules_with_env(
     importing_target: TargetRef,
     importing_module: ModuleId,
     path: &super::ImportPath,
-) -> Vec<ModuleRef> {
+) -> Result<Vec<ModuleRef>, PackageStoreError> {
     let resolved_defs = resolve_path_to_defs_with_filter(
         env,
         importing_target,
         importing_module,
         path,
         NameResolutionFilter::TypesOnly,
-    );
+    )?;
 
     let mut modules = Vec::new();
     for resolved_def in resolved_defs {
@@ -259,7 +308,7 @@ pub(super) fn resolve_path_to_modules_with_env(
         }
     }
 
-    modules
+    Ok(modules)
 }
 
 /// Resolves a path against the already-frozen def maps.
@@ -275,6 +324,7 @@ pub fn resolve_path_in_db(
         &path.segments,
         NameResolutionFilter::AllNamespaces,
     )
+    .expect("resident def-map path resolution should not fail")
 }
 
 /// Resolves a path against one read transaction.
@@ -282,7 +332,7 @@ pub fn resolve_path_in_txn(
     txn: &DefMapReadTxn<'_>,
     importing_module: ModuleRef,
     path: &Path,
-) -> ResolvePathResult {
+) -> Result<ResolvePathResult, PackageStoreError> {
     resolve_path_with_env(
         txn,
         importing_module,
@@ -305,6 +355,7 @@ pub fn resolve_path_in_type_namespace(
         &path.segments,
         NameResolutionFilter::TypesOnly,
     )
+    .expect("resident def-map type path resolution should not fail")
 }
 
 /// Resolves a type-position path against one read transaction.
@@ -312,7 +363,7 @@ pub fn resolve_path_in_type_namespace_txn(
     txn: &DefMapReadTxn<'_>,
     importing_module: ModuleRef,
     path: &Path,
-) -> ResolvePathResult {
+) -> Result<ResolvePathResult, PackageStoreError> {
     resolve_path_with_env(
         txn,
         importing_module,
@@ -325,10 +376,12 @@ pub fn resolve_path_in_type_namespace_txn(
 pub(super) fn namespace_for_def_with_env(
     env: &impl PathResolutionEnv,
     def: DefId,
-) -> Option<Namespace> {
+) -> Result<Option<Namespace>, PackageStoreError> {
     match def {
-        DefId::Module(_) => Some(Namespace::Types),
-        DefId::Local(local_def_ref) => Some(env.local_def_kind(local_def_ref)?.namespace()),
+        DefId::Module(_) => Ok(Some(Namespace::Types)),
+        DefId::Local(local_def_ref) => Ok(env
+            .local_def_kind(local_def_ref)?
+            .map(|kind| kind.namespace())),
     }
 }
 
@@ -339,12 +392,12 @@ fn resolve_path_with_env(
     absolute: bool,
     segments: &[super::PathSegment],
     terminal_filter: NameResolutionFilter,
-) -> ResolvePathResult {
+) -> Result<ResolvePathResult, PackageStoreError> {
     let Some((first_segment, remaining_segments)) = segments.split_first() else {
-        return ResolvePathResult {
+        return Ok(ResolvePathResult {
             resolved: Vec::new(),
             unresolved_at: Some(0),
-        };
+        });
     };
 
     let mut current_defs = resolve_first_segment(
@@ -353,13 +406,13 @@ fn resolve_path_with_env(
         absolute,
         first_segment,
         NameResolutionFilter::for_segment(!remaining_segments.is_empty(), terminal_filter),
-    );
+    )?;
 
     if current_defs.is_empty() {
-        return ResolvePathResult {
+        return Ok(ResolvePathResult {
             resolved: current_defs,
             unresolved_at: Some(0),
-        };
+        });
     }
 
     for (segment_idx, segment) in remaining_segments.iter().enumerate() {
@@ -372,20 +425,20 @@ fn resolve_path_with_env(
                 segment_idx + 1 < remaining_segments.len(),
                 terminal_filter,
             ),
-        );
+        )?;
 
         if current_defs.is_empty() {
-            return ResolvePathResult {
+            return Ok(ResolvePathResult {
                 resolved: current_defs,
                 unresolved_at: Some(segment_idx + 1),
-            };
+            });
         }
     }
 
-    ResolvePathResult {
+    Ok(ResolvePathResult {
         resolved: current_defs,
         unresolved_at: None,
-    }
+    })
 }
 
 /// Resolves the first path segment, which decides the starting search space.
@@ -398,46 +451,46 @@ fn resolve_first_segment(
     absolute: bool,
     segment: &super::PathSegment,
     filter: NameResolutionFilter,
-) -> Vec<DefId> {
+) -> Result<Vec<DefId>, PackageStoreError> {
     if absolute {
         return match segment {
-            super::PathSegment::Name(name) => env
-                .extern_root(importing_module.target, name)
+            super::PathSegment::Name(name) => Ok(env
+                .extern_root(importing_module.target, name)?
                 .map(|module_ref| vec![DefId::Module(module_ref)])
-                .unwrap_or_default(),
+                .unwrap_or_default()),
             super::PathSegment::SelfKw
             | super::PathSegment::SuperKw
-            | super::PathSegment::CrateKw => Vec::new(),
+            | super::PathSegment::CrateKw => Ok(Vec::new()),
         };
     }
 
     match segment {
-        super::PathSegment::SelfKw => vec![DefId::Module(importing_module)],
-        super::PathSegment::SuperKw => env
-            .parent_module(importing_module.target, importing_module.module)
+        super::PathSegment::SelfKw => Ok(vec![DefId::Module(importing_module)]),
+        super::PathSegment::SuperKw => Ok(env
+            .parent_module(importing_module.target, importing_module.module)?
             .map(DefId::Module)
             .into_iter()
-            .collect(),
-        super::PathSegment::CrateKw => env
-            .root_module(importing_module.target)
+            .collect()),
+        super::PathSegment::CrateKw => Ok(env
+            .root_module(importing_module.target)?
             .map(DefId::Module)
             .into_iter()
-            .collect(),
+            .collect()),
         super::PathSegment::Name(name) => {
             // Shadowing is namespace-specific. Prefixes and type-position terminals walk the
             // type namespace, so same-spelling value/macro bindings do not block fallback.
             let local_defs =
-                resolve_name_in_module(env, importing_module, importing_module, name, filter);
+                resolve_name_in_module(env, importing_module, importing_module, name, filter)?;
             if !local_defs.is_empty() {
-                return local_defs;
+                return Ok(local_defs);
             }
 
-            if let Some(module_ref) = env.extern_root(importing_module.target, name) {
-                return vec![DefId::Module(module_ref)];
+            if let Some(module_ref) = env.extern_root(importing_module.target, name)? {
+                return Ok(vec![DefId::Module(module_ref)]);
             }
 
-            let Some(prelude_module) = env.prelude_module(importing_module.target) else {
-                return Vec::new();
+            let Some(prelude_module) = env.prelude_module(importing_module.target)? else {
+                return Ok(Vec::new());
             };
 
             resolve_name_in_module(env, importing_module, prelude_module, name, filter)
@@ -455,7 +508,7 @@ fn resolve_next_segment(
     current_defs: Vec<DefId>,
     segment: &super::PathSegment,
     filter: NameResolutionFilter,
-) -> Vec<DefId> {
+) -> Result<Vec<DefId>, PackageStoreError> {
     let mut next_defs = Vec::new();
 
     for current_def in current_defs {
@@ -468,18 +521,18 @@ fn resolve_next_segment(
                 push_unique_def(&mut next_defs, DefId::Module(module_ref));
             }
             super::PathSegment::SuperKw => {
-                if let Some(parent) = env.parent_module(module_ref.target, module_ref.module) {
+                if let Some(parent) = env.parent_module(module_ref.target, module_ref.module)? {
                     push_unique_def(&mut next_defs, DefId::Module(parent));
                 }
             }
             super::PathSegment::CrateKw => {
-                if let Some(root) = env.root_module(module_ref.target) {
+                if let Some(root) = env.root_module(module_ref.target)? {
                     push_unique_def(&mut next_defs, DefId::Module(root));
                 }
             }
             super::PathSegment::Name(name) => {
                 for resolved_def in
-                    resolve_name_in_module(env, importing_module, module_ref, name, filter)
+                    resolve_name_in_module(env, importing_module, module_ref, name, filter)?
                 {
                     push_unique_def(&mut next_defs, resolved_def);
                 }
@@ -487,7 +540,7 @@ fn resolve_next_segment(
         }
     }
 
-    next_defs
+    Ok(next_defs)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -517,9 +570,9 @@ fn resolve_name_in_module(
     module_ref: ModuleRef,
     name: &str,
     filter: NameResolutionFilter,
-) -> Vec<DefId> {
-    let Some(scope_entry) = env.module_scope_entry(module_ref, name) else {
-        return Vec::new();
+) -> Result<Vec<DefId>, PackageStoreError> {
+    let Some(scope_entry) = env.module_scope_entry(module_ref, name)? else {
+        return Ok(Vec::new());
     };
 
     let mut defs = Vec::new();
@@ -527,28 +580,28 @@ fn resolve_name_in_module(
     // One textual name can contribute bindings from several namespaces, so we collect them all
     // into a deduplicated result set.
     for binding in scope_entry.types() {
-        if binding_is_visible(env, importing_module, binding) {
+        if binding_is_visible(env, importing_module, binding)? {
             push_unique_def(&mut defs, binding.def);
         }
     }
 
     if matches!(filter, NameResolutionFilter::TypesOnly) {
-        return defs;
+        return Ok(defs);
     }
 
     for binding in scope_entry.values() {
-        if binding_is_visible(env, importing_module, binding) {
+        if binding_is_visible(env, importing_module, binding)? {
             push_unique_def(&mut defs, binding.def);
         }
     }
 
     for binding in scope_entry.macros() {
-        if binding_is_visible(env, importing_module, binding) {
+        if binding_is_visible(env, importing_module, binding)? {
             push_unique_def(&mut defs, binding.def);
         }
     }
 
-    defs
+    Ok(defs)
 }
 
 /// Checks whether a binding can be observed from the importing module.
@@ -556,34 +609,37 @@ fn binding_is_visible(
     env: &impl PathResolutionEnv,
     importing_module: ModuleRef,
     binding: &ScopeBinding,
-) -> bool {
+) -> Result<bool, PackageStoreError> {
     if matches!(binding.visibility, VisibilityLevel::Public) {
-        return true;
+        return Ok(true);
     }
 
     // Non-public visibility is always anchored to a module inside the target that introduced the
     // binding. Cross-target access therefore needs a public re-export first.
     if importing_module.target != binding.owner.target {
-        return false;
+        return Ok(false);
     }
 
-    match &binding.visibility {
+    Ok(match &binding.visibility {
         VisibilityLevel::Private | VisibilityLevel::Self_ => {
-            module_is_descendant_of(env, importing_module, binding.owner)
+            module_is_descendant_of(env, importing_module, binding.owner)?
         }
         VisibilityLevel::Crate => true,
-        VisibilityLevel::Super => env
-            .parent_module(binding.owner.target, binding.owner.module)
-            .is_some_and(|visible_from| {
-                module_is_descendant_of(env, importing_module, visible_from)
-            }),
-        VisibilityLevel::Restricted(path) => restricted_visibility_owner(env, binding.owner, path)
-            .is_some_and(|visible_from| {
-                module_is_descendant_of(env, importing_module, visible_from)
-            }),
+        VisibilityLevel::Super => {
+            match env.parent_module(binding.owner.target, binding.owner.module)? {
+                Some(visible_from) => module_is_descendant_of(env, importing_module, visible_from)?,
+                None => false,
+            }
+        }
+        VisibilityLevel::Restricted(path) => {
+            match restricted_visibility_owner(env, binding.owner, path)? {
+                Some(visible_from) => module_is_descendant_of(env, importing_module, visible_from)?,
+                None => false,
+            }
+        }
         VisibilityLevel::Public => true,
         VisibilityLevel::Unknown(_) => false,
-    }
+    })
 }
 
 /// Resolves the module that anchors a `pub(in path)` visibility restriction.
@@ -591,29 +647,46 @@ fn restricted_visibility_owner(
     env: &impl PathResolutionEnv,
     owner: ModuleRef,
     path: &str,
-) -> Option<ModuleRef> {
+) -> Result<Option<ModuleRef>, PackageStoreError> {
     let mut segments = path.split("::");
-    let first = segments.next()?;
+    let Some(first) = segments.next() else {
+        return Ok(None);
+    };
     let mut current = match first {
-        "crate" => env.root_module(owner.target)?,
+        "crate" => {
+            let Some(root) = env.root_module(owner.target)? else {
+                return Ok(None);
+            };
+            root
+        }
         "self" => owner,
-        "super" => env.parent_module(owner.target, owner.module)?,
-        _ => return None,
+        "super" => {
+            let Some(parent) = env.parent_module(owner.target, owner.module)? else {
+                return Ok(None);
+            };
+            parent
+        }
+        _ => return Ok(None),
     };
 
     for segment in segments {
-        let module = env.module_data(current)?;
-        let child = module
+        let Some(module) = env.module_data(current)? else {
+            return Ok(None);
+        };
+        let Some(child) = module
             .children
             .iter()
-            .find_map(|(name, child)| (name == segment).then_some(*child))?;
+            .find_map(|(name, child)| (name == segment).then_some(*child))
+        else {
+            return Ok(None);
+        };
         current = ModuleRef {
             target: current.target,
             module: child,
         };
     }
 
-    Some(current)
+    Ok(Some(current))
 }
 
 /// Returns whether `module` is the same as or nested inside `ancestor`.
@@ -621,26 +694,26 @@ fn module_is_descendant_of(
     env: &impl PathResolutionEnv,
     module: ModuleRef,
     ancestor: ModuleRef,
-) -> bool {
+) -> Result<bool, PackageStoreError> {
     if module.target != ancestor.target {
-        return false;
+        return Ok(false);
     }
 
     let mut current = Some(module.module);
     while let Some(module_id) = current {
         if module_id == ancestor.module {
-            return true;
+            return Ok(true);
         }
 
         current = env
             .module_data(ModuleRef {
                 target: module.target,
                 module: module_id,
-            })
+            })?
             .and_then(|module| module.parent);
     }
 
-    false
+    Ok(false)
 }
 
 /// Pushes one resolved definition unless it is already present in the result list.

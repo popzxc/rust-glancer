@@ -6,13 +6,14 @@
 
 use std::{
     ffi::OsStr,
-    fs,
+    fmt, fs,
     io::Write as _,
     path::{Path, PathBuf},
 };
 
 use anyhow::Context as _;
 use atomic_write_file::AtomicWriteFile;
+use rg_package_store::{MalformedCacheError, PackageStoreError};
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
@@ -31,6 +32,54 @@ pub struct PackageCacheStore {
     workspace_root: PathBuf,
     root: PathBuf,
     generation: Fingerprint,
+}
+
+/// Typed failure from reading a package artifact file.
+#[derive(Debug)]
+pub(crate) enum PackageCacheReadError {
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    Malformed {
+        source: MalformedCacheError,
+    },
+}
+
+impl PackageCacheReadError {
+    pub(super) fn into_package_store_error(
+        self,
+        slot: rg_workspace::PackageSlot,
+    ) -> PackageStoreError {
+        match self {
+            Self::Io { path, source } => PackageStoreError::io(slot, path, source),
+            Self::Malformed { source } => PackageStoreError::malformed_cache(slot, source),
+        }
+    }
+}
+
+impl fmt::Display for PackageCacheReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io { path, .. } => {
+                write!(
+                    f,
+                    "failed to read package cache artifact {}",
+                    path.display()
+                )
+            }
+            Self::Malformed { source } => write!(f, "{source}"),
+        }
+    }
+}
+
+impl std::error::Error for PackageCacheReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::Malformed { source } => Some(source),
+        }
+    }
 }
 
 impl PackageCacheStore {
@@ -159,37 +208,33 @@ impl PackageCacheStore {
     pub fn read_artifact(
         &self,
         header: &PackageCacheHeader,
-    ) -> anyhow::Result<Option<PackageCacheArtifact>> {
+    ) -> Result<Option<PackageCacheArtifact>, PackageCacheReadError> {
         let path = self.package_artifact_path(&header.package);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "while attempting to read package cache artifact {}",
-                        path.display(),
-                    )
-                });
-            }
+            Err(source) => return Err(PackageCacheReadError::Io { path, source }),
         };
 
-        let artifact = PackageCacheCodec::decode_artifact(&bytes).with_context(|| {
-            format!(
-                "while attempting to decode package cache artifact {}",
-                path.display(),
-            )
+        let artifact = PackageCacheCodec::decode_artifact(&bytes).map_err(|error| {
+            PackageCacheReadError::Malformed {
+                source: MalformedCacheError::Decode {
+                    path: path.clone(),
+                    reason: format!("{error:#}"),
+                },
+            }
         })?;
 
         if artifact.header != *header {
-            anyhow::bail!(
-                "package cache artifact {} has header for package #{} `{}`, expected package #{} `{}`",
-                path.display(),
-                artifact.header.package.package.0,
-                artifact.header.package.name,
-                header.package.package.0,
-                header.package.name,
-            );
+            return Err(PackageCacheReadError::Malformed {
+                source: MalformedCacheError::HeaderMismatch {
+                    path,
+                    actual_slot: artifact.header.package.package.0,
+                    actual_name: artifact.header.package.name,
+                    expected_slot: header.package.package.0,
+                    expected_name: header.package.name.clone(),
+                },
+            });
         }
 
         Ok(Some(artifact))

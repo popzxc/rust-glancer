@@ -4,6 +4,7 @@
 //! on LSP enums or protocol structs. The future server can map this data into document/workspace
 //! symbol responses without teaching the analysis layer about client capabilities.
 
+use anyhow::Result;
 use rg_body_ir::{BodyData, BodyImplData, BodyItemData};
 use rg_def_map::{LocalDefRef, ModuleData, ModuleId, ModuleOrigin, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
@@ -28,41 +29,41 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         &self,
         target: TargetRef,
         file_id: FileId,
-    ) -> Vec<DocumentSymbol> {
+    ) -> Result<Vec<DocumentSymbol>> {
         let mut symbols = Vec::new();
 
-        self.push_module_document_symbols(target, file_id, &mut symbols);
-        self.push_nominal_document_symbols(target, file_id, &mut symbols);
-        self.push_trait_document_symbols(target, file_id, &mut symbols);
-        self.push_impl_document_symbols(target, file_id, &mut symbols);
-        self.push_module_function_document_symbols(target, file_id, &mut symbols);
-        self.push_module_type_alias_document_symbols(target, file_id, &mut symbols);
-        self.push_module_const_document_symbols(target, file_id, &mut symbols);
-        self.push_static_document_symbols(target, file_id, &mut symbols);
+        self.push_module_document_symbols(target, file_id, &mut symbols)?;
+        self.push_nominal_document_symbols(target, file_id, &mut symbols)?;
+        self.push_trait_document_symbols(target, file_id, &mut symbols)?;
+        self.push_impl_document_symbols(target, file_id, &mut symbols)?;
+        self.push_module_function_document_symbols(target, file_id, &mut symbols)?;
+        self.push_module_type_alias_document_symbols(target, file_id, &mut symbols)?;
+        self.push_module_const_document_symbols(target, file_id, &mut symbols)?;
+        self.push_static_document_symbols(target, file_id, &mut symbols)?;
 
         // Body-local items belong to their owning function in an editor outline. The semantic
         // function symbol may itself be top-level, trait-owned, or impl-owned, so attachment walks
         // the already-built hierarchy instead of duplicating owner-specific logic.
-        self.attach_body_local_document_symbols(target, file_id, &mut symbols);
+        self.attach_body_local_document_symbols(target, file_id, &mut symbols)?;
 
         let mut symbols = Self::nest_module_document_symbols(symbols);
         Self::sort_document_symbols(&mut symbols);
-        symbols
+        Ok(symbols)
     }
 
-    pub(super) fn workspace_symbols(&self, query: &str) -> Vec<WorkspaceSymbol> {
+    pub(super) fn workspace_symbols(&self, query: &str) -> Result<Vec<WorkspaceSymbol>> {
         let query = WorkspaceSymbolQuery::new(query);
         let mut symbols = Vec::new();
 
-        for (target, _) in self.0.semantic_ir.target_irs() {
-            self.push_module_workspace_symbols(target, &query, &mut symbols);
-            self.push_nominal_workspace_symbols(target, &query, &mut symbols);
-            self.push_trait_workspace_symbols(target, &query, &mut symbols);
-            self.push_impl_workspace_symbols(target, &query, &mut symbols);
-            self.push_function_workspace_symbols(target, &query, &mut symbols);
-            self.push_type_alias_workspace_symbols(target, &query, &mut symbols);
-            self.push_const_workspace_symbols(target, &query, &mut symbols);
-            self.push_static_workspace_symbols(target, &query, &mut symbols);
+        for (target, _) in self.0.semantic_ir.materialize_included_target_irs()? {
+            self.push_module_workspace_symbols(target, &query, &mut symbols)?;
+            self.push_nominal_workspace_symbols(target, &query, &mut symbols)?;
+            self.push_trait_workspace_symbols(target, &query, &mut symbols)?;
+            self.push_impl_workspace_symbols(target, &query, &mut symbols)?;
+            self.push_function_workspace_symbols(target, &query, &mut symbols)?;
+            self.push_type_alias_workspace_symbols(target, &query, &mut symbols)?;
+            self.push_const_workspace_symbols(target, &query, &mut symbols)?;
+            self.push_static_workspace_symbols(target, &query, &mut symbols)?;
         }
 
         symbols.sort_by_key(|symbol| {
@@ -76,7 +77,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 symbol.span.map(|span| span.text.start),
             )
         });
-        symbols
+        Ok(symbols)
     }
 
     fn push_module_document_symbols(
@@ -84,8 +85,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
-    ) {
-        for (_, data) in self.0.def_map.modules(target) {
+    ) -> Result<()> {
+        for (_, data) in self.0.def_map.modules(target)? {
             let Some(name) = data.name.as_ref().map(ToString::to_string) else {
                 continue;
             };
@@ -105,6 +106,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 children: Vec::new(),
             });
         }
+
+        Ok(())
     }
 
     fn push_nominal_document_symbols(
@@ -112,27 +115,35 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
-    ) {
-        for (_, data) in self.0.semantic_ir.structs(target) {
-            if let Some(symbol) = self.struct_document_symbol(data, file_id) {
+    ) -> Result<()> {
+        for (_, data) in self.0.semantic_ir.structs(target)? {
+            if let Some(symbol) = self.struct_document_symbol(data, file_id)? {
                 symbols.push(symbol);
             }
         }
-        for (_, data) in self.0.semantic_ir.unions(target) {
-            if let Some(symbol) = self.union_document_symbol(data, file_id) {
+        for (_, data) in self.0.semantic_ir.unions(target)? {
+            if let Some(symbol) = self.union_document_symbol(data, file_id)? {
                 symbols.push(symbol);
             }
         }
-        for (_, data) in self.0.semantic_ir.enums(target) {
-            if let Some(symbol) = self.enum_document_symbol(data, file_id) {
+        for (_, data) in self.0.semantic_ir.enums(target)? {
+            if let Some(symbol) = self.enum_document_symbol(data, file_id)? {
                 symbols.push(symbol);
             }
         }
+
+        Ok(())
     }
 
-    fn struct_document_symbol(&self, data: &StructData, file_id: FileId) -> Option<DocumentSymbol> {
-        let def = self.local_def_symbol_source(data.local_def, file_id)?;
-        Some(DocumentSymbol {
+    fn struct_document_symbol(
+        &self,
+        data: &StructData,
+        file_id: FileId,
+    ) -> Result<Option<DocumentSymbol>> {
+        let Some(def) = self.local_def_symbol_source(data.local_def, file_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(DocumentSymbol {
             name: data.name.to_string(),
             kind: SymbolKind::Struct,
             file_id,
@@ -150,12 +161,18 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                     )
                 })
                 .collect(),
-        })
+        }))
     }
 
-    fn union_document_symbol(&self, data: &UnionData, file_id: FileId) -> Option<DocumentSymbol> {
-        let def = self.local_def_symbol_source(data.local_def, file_id)?;
-        Some(DocumentSymbol {
+    fn union_document_symbol(
+        &self,
+        data: &UnionData,
+        file_id: FileId,
+    ) -> Result<Option<DocumentSymbol>> {
+        let Some(def) = self.local_def_symbol_source(data.local_def, file_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(DocumentSymbol {
             name: data.name.to_string(),
             kind: SymbolKind::Union,
             file_id,
@@ -172,12 +189,18 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                     )
                 })
                 .collect(),
-        })
+        }))
     }
 
-    fn enum_document_symbol(&self, data: &EnumData, file_id: FileId) -> Option<DocumentSymbol> {
-        let def = self.local_def_symbol_source(data.local_def, file_id)?;
-        Some(DocumentSymbol {
+    fn enum_document_symbol(
+        &self,
+        data: &EnumData,
+        file_id: FileId,
+    ) -> Result<Option<DocumentSymbol>> {
+        let Some(def) = self.local_def_symbol_source(data.local_def, file_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(DocumentSymbol {
             name: data.name.to_string(),
             kind: SymbolKind::Enum,
             file_id,
@@ -208,7 +231,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                         .collect(),
                 })
                 .collect(),
-        })
+        }))
     }
 
     fn push_trait_document_symbols(
@@ -216,9 +239,9 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
-    ) {
-        for (_, data) in self.0.semantic_ir.traits(target) {
-            let Some(def) = self.local_def_symbol_source(data.local_def, file_id) else {
+    ) -> Result<()> {
+        for (_, data) in self.0.semantic_ir.traits(target)? {
+            let Some(def) = self.local_def_symbol_source(data.local_def, file_id)? else {
                 continue;
             };
 
@@ -228,9 +251,11 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 file_id,
                 span: def.span,
                 selection_span: def.selection_span,
-                children: self.assoc_item_document_symbols(target, &data.items, file_id),
+                children: self.assoc_item_document_symbols(target, &data.items, file_id)?,
             });
         }
+
+        Ok(())
     }
 
     fn push_impl_document_symbols(
@@ -238,9 +263,9 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
-    ) {
-        for (impl_ref, data) in self.0.semantic_ir.impls(target) {
-            let Some(local_impl) = self.0.def_map.local_impl(data.local_impl) else {
+    ) -> Result<()> {
+        for (impl_ref, data) in self.0.semantic_ir.impls(target)? {
+            let Some(local_impl) = self.0.def_map.local_impl(data.local_impl)? else {
                 continue;
             };
             if local_impl.file_id != file_id {
@@ -253,9 +278,15 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 file_id,
                 span: local_impl.span,
                 selection_span: local_impl.span,
-                children: self.assoc_item_document_symbols(impl_ref.target, &data.items, file_id),
+                children: self.assoc_item_document_symbols(
+                    impl_ref.target,
+                    &data.items,
+                    file_id,
+                )?,
             });
         }
+
+        Ok(())
     }
 
     fn push_module_function_document_symbols(
@@ -263,13 +294,15 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
-    ) {
-        for (_, data) in self.0.semantic_ir.functions(target) {
+    ) -> Result<()> {
+        for (_, data) in self.0.semantic_ir.functions(target)? {
             if !matches!(data.owner, ItemOwner::Module(_)) || data.source.file_id != file_id {
                 continue;
             }
             symbols.push(self.function_document_symbol(data, SymbolKind::Function));
         }
+
+        Ok(())
     }
 
     fn push_module_type_alias_document_symbols(
@@ -277,13 +310,15 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
-    ) {
-        for (_, data) in self.0.semantic_ir.type_aliases(target) {
+    ) -> Result<()> {
+        for (_, data) in self.0.semantic_ir.type_aliases(target)? {
             if !matches!(data.owner, ItemOwner::Module(_)) || data.source.file_id != file_id {
                 continue;
             }
             symbols.push(self.type_alias_document_symbol(data));
         }
+
+        Ok(())
     }
 
     fn push_module_const_document_symbols(
@@ -291,13 +326,15 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
-    ) {
-        for (_, data) in self.0.semantic_ir.consts(target) {
+    ) -> Result<()> {
+        for (_, data) in self.0.semantic_ir.consts(target)? {
             if !matches!(data.owner, ItemOwner::Module(_)) || data.source.file_id != file_id {
                 continue;
             }
             symbols.push(self.const_document_symbol(data));
         }
+
+        Ok(())
     }
 
     fn push_static_document_symbols(
@@ -305,13 +342,15 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
-    ) {
-        for (_, data) in self.0.semantic_ir.statics(target) {
+    ) -> Result<()> {
+        for (_, data) in self.0.semantic_ir.statics(target)? {
             if data.source.file_id != file_id {
                 continue;
             }
             symbols.push(self.static_document_symbol(data));
         }
+
+        Ok(())
     }
 
     fn assoc_item_document_symbols(
@@ -319,14 +358,14 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         items: &[AssocItemId],
         file_id: FileId,
-    ) -> Vec<DocumentSymbol> {
+    ) -> Result<Vec<DocumentSymbol>> {
         let mut symbols = Vec::new();
 
         for item in items {
             match item {
                 AssocItemId::Function(id) => {
                     let function_ref = FunctionRef { target, id: *id };
-                    let Some(data) = self.0.semantic_ir.function_data(function_ref) else {
+                    let Some(data) = self.0.semantic_ir.function_data(function_ref)? else {
                         continue;
                     };
                     if data.source.file_id == file_id {
@@ -335,7 +374,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 }
                 AssocItemId::TypeAlias(id) => {
                     let type_alias_ref = TypeAliasRef { target, id: *id };
-                    let Some(data) = self.0.semantic_ir.type_alias_data(type_alias_ref) else {
+                    let Some(data) = self.0.semantic_ir.type_alias_data(type_alias_ref)? else {
                         continue;
                     };
                     if data.source.file_id == file_id {
@@ -344,7 +383,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 }
                 AssocItemId::Const(id) => {
                     let const_ref = ConstRef { target, id: *id };
-                    let Some(data) = self.0.semantic_ir.const_data(const_ref) else {
+                    let Some(data) = self.0.semantic_ir.const_data(const_ref)? else {
                         continue;
                     };
                     if data.source.file_id == file_id {
@@ -354,7 +393,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
             }
         }
 
-        symbols
+        Ok(symbols)
     }
 
     fn function_document_symbol(&self, data: &FunctionData, kind: SymbolKind) -> DocumentSymbol {
@@ -406,9 +445,9 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
-    ) {
-        let Some(target_bodies) = self.0.body_ir.target_bodies(target) else {
-            return;
+    ) -> Result<()> {
+        let Some(target_bodies) = self.0.body_ir.target_bodies(target)? else {
+            return Ok(());
         };
 
         for body in target_bodies.bodies() {
@@ -421,7 +460,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 continue;
             }
 
-            let Some(function) = self.0.semantic_ir.function_data(body.owner) else {
+            let Some(function) = self.0.semantic_ir.function_data(body.owner)? else {
                 continue;
             };
             // Body-local structs and impls should appear under the function that contains them,
@@ -430,6 +469,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 parent.children.append(&mut children);
             }
         }
+
+        Ok(())
     }
 
     fn body_local_document_symbols(&self, body: &BodyData, file_id: FileId) -> Vec<DocumentSymbol> {
@@ -527,8 +568,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        for (ty, data) in self.0.semantic_ir.structs(target) {
+    ) -> Result<()> {
+        for (ty, data) in self.0.semantic_ir.structs(target)? {
             self.push_local_def_workspace_symbol(
                 target,
                 data.local_def,
@@ -537,11 +578,11 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 None,
                 query,
                 symbols,
-            );
-            self.push_field_workspace_symbols(ty, &data.name, query, symbols);
+            )?;
+            self.push_field_workspace_symbols(ty, &data.name, query, symbols)?;
         }
 
-        for (ty, data) in self.0.semantic_ir.unions(target) {
+        for (ty, data) in self.0.semantic_ir.unions(target)? {
             self.push_local_def_workspace_symbol(
                 target,
                 data.local_def,
@@ -550,11 +591,11 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 None,
                 query,
                 symbols,
-            );
-            self.push_field_workspace_symbols(ty, &data.name, query, symbols);
+            )?;
+            self.push_field_workspace_symbols(ty, &data.name, query, symbols)?;
         }
 
-        for (_, data) in self.0.semantic_ir.enums(target) {
+        for (_, data) in self.0.semantic_ir.enums(target)? {
             self.push_local_def_workspace_symbol(
                 target,
                 data.local_def,
@@ -563,7 +604,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 None,
                 query,
                 symbols,
-            );
+            )?;
             for variant in &data.variants {
                 self.push_workspace_symbol(
                     WorkspaceSymbolInput {
@@ -579,6 +620,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 );
             }
         }
+
+        Ok(())
     }
 
     fn push_module_workspace_symbols(
@@ -586,8 +629,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        for (module_ref, data) in self.0.def_map.modules(target) {
+    ) -> Result<()> {
+        for (module_ref, data) in self.0.def_map.modules(target)? {
             let Some(name) = data.name.as_ref().map(ToString::to_string) else {
                 continue;
             };
@@ -602,12 +645,14 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                     kind: SymbolKind::Module,
                     file_id: source.file_id,
                     span: Some(source.selection_span),
-                    container_name: self.module_container_name(module_ref),
+                    container_name: self.module_container_name(module_ref)?,
                 },
                 query,
                 symbols,
             );
         }
+
+        Ok(())
     }
 
     fn push_trait_workspace_symbols(
@@ -615,8 +660,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        for (_, data) in self.0.semantic_ir.traits(target) {
+    ) -> Result<()> {
+        for (_, data) in self.0.semantic_ir.traits(target)? {
             self.push_local_def_workspace_symbol(
                 target,
                 data.local_def,
@@ -625,15 +670,17 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 None,
                 query,
                 symbols,
-            );
+            )?;
             self.push_assoc_item_workspace_symbols(
                 target,
                 &data.items,
                 &Self::trait_label(data),
                 query,
                 symbols,
-            );
+            )?;
         }
+
+        Ok(())
     }
 
     fn push_impl_workspace_symbols(
@@ -641,16 +688,18 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        for (impl_ref, data) in self.0.semantic_ir.impls(target) {
+    ) -> Result<()> {
+        for (impl_ref, data) in self.0.semantic_ir.impls(target)? {
             self.push_assoc_item_workspace_symbols(
                 impl_ref.target,
                 &data.items,
                 &Self::impl_label(data),
                 query,
                 symbols,
-            );
+            )?;
         }
+
+        Ok(())
     }
 
     fn push_function_workspace_symbols(
@@ -658,8 +707,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        for (_, data) in self.0.semantic_ir.functions(target) {
+    ) -> Result<()> {
+        for (_, data) in self.0.semantic_ir.functions(target)? {
             if !matches!(data.owner, ItemOwner::Module(_)) {
                 continue;
             }
@@ -676,6 +725,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 symbols,
             );
         }
+
+        Ok(())
     }
 
     fn push_type_alias_workspace_symbols(
@@ -683,13 +734,15 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        for (_, data) in self.0.semantic_ir.type_aliases(target) {
+    ) -> Result<()> {
+        for (_, data) in self.0.semantic_ir.type_aliases(target)? {
             if !matches!(data.owner, ItemOwner::Module(_)) {
                 continue;
             }
             self.push_type_alias_workspace_symbol(target, data, None, query, symbols);
         }
+
+        Ok(())
     }
 
     fn push_const_workspace_symbols(
@@ -697,13 +750,15 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        for (_, data) in self.0.semantic_ir.consts(target) {
+    ) -> Result<()> {
+        for (_, data) in self.0.semantic_ir.consts(target)? {
             if !matches!(data.owner, ItemOwner::Module(_)) {
                 continue;
             }
             self.push_const_workspace_symbol(target, data, None, query, symbols);
         }
+
+        Ok(())
     }
 
     fn push_static_workspace_symbols(
@@ -711,8 +766,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        for (_, data) in self.0.semantic_ir.statics(target) {
+    ) -> Result<()> {
+        for (_, data) in self.0.semantic_ir.statics(target)? {
             self.push_local_def_workspace_symbol(
                 target,
                 data.local_def,
@@ -721,8 +776,10 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 None,
                 query,
                 symbols,
-            );
+            )?;
         }
+
+        Ok(())
     }
 
     fn push_assoc_item_workspace_symbols(
@@ -732,12 +789,12 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         container_name: &str,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
+    ) -> Result<()> {
         for item in items {
             match item {
                 AssocItemId::Function(id) => {
                     let function_ref = FunctionRef { target, id: *id };
-                    let Some(data) = self.0.semantic_ir.function_data(function_ref) else {
+                    let Some(data) = self.0.semantic_ir.function_data(function_ref)? else {
                         continue;
                     };
                     self.push_workspace_symbol(
@@ -755,7 +812,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 }
                 AssocItemId::TypeAlias(id) => {
                     let type_alias_ref = TypeAliasRef { target, id: *id };
-                    let Some(data) = self.0.semantic_ir.type_alias_data(type_alias_ref) else {
+                    let Some(data) = self.0.semantic_ir.type_alias_data(type_alias_ref)? else {
                         continue;
                     };
                     self.push_type_alias_workspace_symbol(
@@ -768,7 +825,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 }
                 AssocItemId::Const(id) => {
                     let const_ref = ConstRef { target, id: *id };
-                    let Some(data) = self.0.semantic_ir.const_data(const_ref) else {
+                    let Some(data) = self.0.semantic_ir.const_data(const_ref)? else {
                         continue;
                     };
                     self.push_const_workspace_symbol(
@@ -781,6 +838,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 }
             }
         }
+
+        Ok(())
     }
 
     fn push_field_workspace_symbols(
@@ -789,9 +848,9 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         container_name: &str,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        for field_ref in self.0.semantic_ir.fields_for_type(ty) {
-            let Some(field_data) = self.0.semantic_ir.field_data(field_ref) else {
+    ) -> Result<()> {
+        for field_ref in self.0.semantic_ir.fields_for_type(ty)? {
+            let Some(field_data) = self.0.semantic_ir.field_data(field_ref)? else {
                 continue;
             };
             let name = Self::field_label(
@@ -814,6 +873,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 symbols,
             );
         }
+
+        Ok(())
     }
 
     fn push_local_def_workspace_symbol(
@@ -825,9 +886,9 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         container_name: Option<String>,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        let Some(data) = self.0.def_map.local_def(local_def) else {
-            return;
+    ) -> Result<()> {
+        let Some(data) = self.0.def_map.local_def(local_def)? else {
+            return Ok(());
         };
 
         self.push_workspace_symbol(
@@ -842,6 +903,8 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
             query,
             symbols,
         );
+
+        Ok(())
     }
 
     fn push_type_alias_workspace_symbol(
@@ -923,16 +986,18 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         &self,
         local_def: LocalDefRef,
         file_id: FileId,
-    ) -> Option<SymbolSource> {
-        let data = self.0.def_map.local_def(local_def)?;
+    ) -> Result<Option<SymbolSource>> {
+        let Some(data) = self.0.def_map.local_def(local_def)? else {
+            return Ok(None);
+        };
         if data.file_id != file_id {
-            return None;
+            return Ok(None);
         }
 
-        Some(SymbolSource {
+        Ok(Some(SymbolSource {
             span: data.span,
             selection_span: data.name_span.unwrap_or(data.span),
-        })
+        }))
     }
 
     fn module_declaration_source(module: &ModuleData) -> Option<SymbolSourceWithFile> {
@@ -956,30 +1021,34 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         })
     }
 
-    fn module_container_name(&self, module_ref: ModuleRef) -> Option<String> {
-        let module = self.0.def_map.module(module_ref)?;
-        let parent = module.parent?;
-        let path = self.module_path(module_ref.target, parent);
+    fn module_container_name(&self, module_ref: ModuleRef) -> Result<Option<String>> {
+        let Some(module) = self.0.def_map.module(module_ref)? else {
+            return Ok(None);
+        };
+        let Some(parent) = module.parent else {
+            return Ok(None);
+        };
+        let path = self.module_path(module_ref.target, parent)?;
 
-        (!path.is_empty()).then_some(path)
+        Ok((!path.is_empty()).then_some(path))
     }
 
-    fn module_path(&self, target: TargetRef, module: ModuleId) -> String {
-        let Some(data) = self.0.def_map.module(ModuleRef { target, module }) else {
-            return String::new();
+    fn module_path(&self, target: TargetRef, module: ModuleId) -> Result<String> {
+        let Some(data) = self.0.def_map.module(ModuleRef { target, module })? else {
+            return Ok(String::new());
         };
         let Some(name) = &data.name else {
-            return String::new();
+            return Ok(String::new());
         };
         let Some(parent) = data.parent else {
-            return name.to_string();
+            return Ok(name.to_string());
         };
 
-        let parent_path = self.module_path(target, parent);
+        let parent_path = self.module_path(target, parent)?;
         if parent_path.is_empty() {
-            name.to_string()
+            Ok(name.to_string())
         } else {
-            format!("{parent_path}::{name}")
+            Ok(format!("{parent_path}::{name}"))
         }
     }
 

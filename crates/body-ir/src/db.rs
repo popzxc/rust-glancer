@@ -1,19 +1,17 @@
 //! Resident Body IR database and body-query helpers.
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 
-use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
-use rg_package_store::PackageStore;
-use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TraitApplicability};
+use rg_def_map::{DefMapDb, Package as DefMapPackage, PackageSlot, Path, TargetRef};
+use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
+use rg_semantic_ir::{FieldRef, FunctionRef, PackageIr, SemanticIrDb, TraitApplicability};
 use rg_text::NameInterner;
 
 use crate::{
     BodyData, BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyIrBuildPolicy,
-    BodyIrStats, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyResolution, BodyTy,
-    BodyTypePathResolution, PackageBodies, ScopeId, TargetBodies, TargetBodiesStatus, lower,
-    resolution,
+    BodyIrReadTxn, BodyIrStats, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyRef,
+    BodyResolution, BodyTy, BodyTypePathResolution, PackageBodies, ScopeId, TargetBodies,
+    TargetBodiesStatus, lower, resolution,
 };
 
 /// Body-level IR for all analyzed packages and targets.
@@ -68,42 +66,25 @@ impl BodyIrDb {
         Ok(db)
     }
 
-    /// Returns a new Body IR snapshot with selected packages rebuilt.
-    pub fn rebuild_packages(
-        &self,
+    /// Returns a new Body IR snapshot with selected packages rebuilt against lazy read views.
+    pub fn rebuild_packages_with_interner_and_loaders<'db>(
+        &'db self,
         parse: &rg_parse::ParseDb,
-        def_map: &rg_def_map::DefMapDb,
-        semantic_ir: &rg_semantic_ir::SemanticIrDb,
-        policy: BodyIrBuildPolicy,
-        packages: &[PackageSlot],
-    ) -> anyhow::Result<Self> {
-        let mut interner = NameInterner::new();
-        self.rebuild_packages_with_interner(
-            parse,
-            def_map,
-            semantic_ir,
-            policy,
-            packages,
-            &mut interner,
-        )
-    }
-
-    /// Returns a new Body IR snapshot with selected packages rebuilt using retained names.
-    pub fn rebuild_packages_with_interner(
-        &self,
-        parse: &rg_parse::ParseDb,
-        def_map: &rg_def_map::DefMapDb,
-        semantic_ir: &rg_semantic_ir::SemanticIrDb,
+        def_map: &'db rg_def_map::DefMapDb,
+        semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
         policy: BodyIrBuildPolicy,
         packages: &[PackageSlot],
         interner: &mut NameInterner,
+        def_map_loader: PackageLoader<'db, DefMapPackage>,
+        semantic_ir_loader: PackageLoader<'db, PackageIr>,
+        subset: &PackageSubset,
     ) -> anyhow::Result<Self> {
         let mut next = self.clone();
         let packages = normalized_package_slots(packages);
 
         for package in &packages {
             let target_count = semantic_ir
-                .package(*package)
+                .resident_package(*package)
                 .map(|package| package.targets().len())
                 .with_context(|| {
                     format!(
@@ -118,7 +99,15 @@ impl BodyIrDb {
             })?;
         }
 
-        resolution::resolve_bodies_for_packages(&mut next, def_map, semantic_ir, &packages);
+        let def_map_txn = def_map.read_txn_for_subset(def_map_loader, subset);
+        let semantic_ir_txn = semantic_ir.read_txn_for_subset(semantic_ir_loader, subset);
+        resolution::resolve_bodies_for_packages(
+            &mut next,
+            &def_map_txn,
+            &semantic_ir_txn,
+            &packages,
+        )
+        .context("while attempting to resolve rebuilt body IR packages")?;
         next.shrink_packages(&packages);
         Ok(next)
     }
@@ -131,8 +120,10 @@ impl BodyIrDb {
 
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
-        for package in self.packages.resident_packages_unique_mut() {
-            package.shrink_to_fit();
+        for entry in self.packages.raw_entries_mut() {
+            if let Some(package) = entry.as_resident_unique_mut() {
+                package.shrink_to_fit();
+            }
         }
     }
 
@@ -147,7 +138,10 @@ impl BodyIrDb {
     pub fn stats(&self) -> BodyIrStats {
         let mut stats = BodyIrStats::default();
 
-        for package in self.packages.resident_packages() {
+        for entry in self.packages.raw_entries() {
+            let Some(package) = entry.as_resident() else {
+                continue;
+            };
             for target in package.targets() {
                 stats.target_count += 1;
                 match target.status() {
@@ -175,13 +169,26 @@ impl BodyIrDb {
         self.packages.len()
     }
 
-    /// Returns one package by package slot.
-    pub fn package(&self, package: PackageSlot) -> Option<&PackageBodies> {
-        self.packages.get(package)
+    /// Returns one resident package by package slot.
+    pub fn resident_package(&self, package: PackageSlot) -> Option<&PackageBodies> {
+        self.packages
+            .raw_entry(package)
+            .and_then(|entry| entry.as_resident())
     }
 
-    pub fn package_arc(&self, package: PackageSlot) -> Option<Arc<PackageBodies>> {
-        self.packages.get_arc(package)
+    pub fn read_txn<'db>(
+        &'db self,
+        loader: PackageLoader<'db, PackageBodies>,
+    ) -> BodyIrReadTxn<'db> {
+        BodyIrReadTxn::from_package_store(self.packages.read_txn(loader))
+    }
+
+    pub fn read_txn_for_subset<'db>(
+        &'db self,
+        loader: PackageLoader<'db, PackageBodies>,
+        subset: &PackageSubset,
+    ) -> BodyIrReadTxn<'db> {
+        BodyIrReadTxn::from_package_store(self.packages.read_txn_for_subset(loader, subset))
     }
 
     pub fn replace_package(&mut self, package: PackageSlot, bodies: PackageBodies) -> Option<()> {
@@ -192,15 +199,15 @@ impl BodyIrDb {
         self.packages.offload(package)
     }
 
-    /// Returns one target body IR by project-wide target reference.
-    pub fn target_bodies(&self, target: TargetRef) -> Option<&TargetBodies> {
-        self.package(target.package)?.target(target.target)
+    /// Returns one resident target body IR by project-wide target reference.
+    pub fn resident_target_bodies(&self, target: TargetRef) -> Option<&TargetBodies> {
+        self.resident_package(target.package)?.target(target.target)
     }
 
     /// Returns the body associated with a semantic function, if that function has a body.
     pub fn body_for_function(&self, function: FunctionRef) -> Option<BodyRef> {
         let body = self
-            .target_bodies(function.target)?
+            .resident_target_bodies(function.target)?
             .body_for_function(function.id)?;
         Some(BodyRef {
             target: function.target,
@@ -210,7 +217,8 @@ impl BodyIrDb {
 
     /// Returns one body by project-wide body reference.
     pub fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
-        self.target_bodies(body_ref.target)?.body(body_ref.body)
+        self.resident_target_bodies(body_ref.target)?
+            .body(body_ref.body)
     }
 
     pub fn resolve_type_path_in_scope(
@@ -222,6 +230,7 @@ impl BodyIrDb {
         path: &Path,
     ) -> BodyTypePathResolution {
         resolution::resolve_type_path_in_scope(self, def_map, semantic_ir, body_ref, scope, path)
+            .expect("resident body type-path resolution should not fail")
     }
 
     pub fn resolve_value_path_in_scope(
@@ -235,6 +244,7 @@ impl BodyIrDb {
         // This is intentionally exposed as a query, not just a build-time helper: analysis uses it
         // to resolve the exact qualified-path prefix selected by the cursor.
         resolution::resolve_value_path_in_scope(self, def_map, semantic_ir, body_ref, scope, path)
+            .expect("resident body value-path resolution should not fail")
     }
 
     pub fn ty_for_field(
@@ -244,6 +254,7 @@ impl BodyIrDb {
         field_ref: FieldRef,
     ) -> Option<BodyTy> {
         resolution::ty_for_field(def_map, semantic_ir, field_ref)
+            .expect("resident semantic field type conversion should not fail")
     }
 
     pub fn semantic_function_applies_to_receiver(
@@ -259,6 +270,7 @@ impl BodyIrDb {
             function_ref,
             receiver_ty,
         )
+        .expect("resident semantic method candidate check should not fail")
     }
 
     pub fn semantic_trait_function_candidates_for_receiver(
@@ -272,6 +284,7 @@ impl BodyIrDb {
             semantic_ir,
             receiver_ty,
         )
+        .expect("resident semantic trait candidate lookup should not fail")
     }
 
     pub fn local_function_applies_to_receiver(
@@ -288,6 +301,7 @@ impl BodyIrDb {
             function_ref,
             receiver_ty,
         )
+        .expect("resident local method candidate check should not fail")
     }
 
     pub fn fields_for_local_type(&self, item_ref: BodyItemRef) -> Vec<BodyFieldRef> {

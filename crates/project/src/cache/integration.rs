@@ -4,18 +4,24 @@
 //! databases. Lower crates expose package-level hooks, but they do not know where artifacts live or
 //! which residency policy selected a package for offloading.
 
-use std::{fmt, sync::Arc};
+use std::sync::{Arc, OnceLock};
 
 use anyhow::Context as _;
 use rg_analysis::AnalysisReadTxn;
-use rg_body_ir::{BodyIrPackageBundle, BodyIrReadTxn, PackageBodies};
-use rg_def_map::{DefMapPackageBundle, DefMapReadTxn, Package as DefMapPackage, PackageSlot};
-use rg_semantic_ir::{PackageIr, SemanticIrPackageBundle, SemanticIrReadTxn};
+use rg_body_ir::{BodyIrPackageBundle, PackageBodies};
+use rg_def_map::{DefMapPackageBundle, Package as DefMapPackage, PackageSlot};
+use rg_package_store::{
+    LoadPackage, MalformedCacheError, PackageLoader, PackageStoreError, PackageSubset,
+};
+use rg_semantic_ir::{PackageIr, SemanticIrPackageBundle};
 
 use crate::{
     PackageResidency,
-    cache::{PackageCacheArtifact, PackageCacheBodyIrState, PackageCachePayload},
-    project::{demand::PackageDemand, state::ProjectState},
+    cache::{
+        CachedWorkspace, PackageCacheArtifact, PackageCacheBodyIrState, PackageCachePayload,
+        PackageCacheStore,
+    },
+    project::{state::ProjectState, subset},
 };
 
 /// Writes and offloads every package selected by the current residency policy.
@@ -28,7 +34,7 @@ pub(crate) fn apply_residency(project: &mut ProjectState) -> anyhow::Result<()> 
 
 /// Restores the current residency policy after a package rebuild.
 ///
-/// Rebuilds materialize the package being replaced plus the dependencies it can inspect. Only
+/// Rebuilds replace the changed packages while lazily reading any dependencies they inspect. Only
 /// rebuilt packages need fresh artifacts; unchanged packages can be dropped back to their
 /// already-written cache entries.
 pub(crate) fn restore_residency_after_rebuild(
@@ -143,19 +149,6 @@ fn write_package_artifact(project: &ProjectState, package: PackageSlot) -> anyho
         })
 }
 
-fn write_residency_artifacts(project: &ProjectState) -> anyhow::Result<()> {
-    for package_idx in 0..project.workspace.packages().len() {
-        let package = PackageSlot(package_idx);
-        if project.package_residency.package(package) != Some(PackageResidency::Offloadable) {
-            continue;
-        }
-
-        write_package_artifact(project, package)?;
-    }
-
-    Ok(())
-}
-
 fn offload_package(project: &mut ProjectState, package: PackageSlot) -> anyhow::Result<()> {
     // Only drop resident data after the full cross-phase package artifact is durable. If a future
     // implementation downgrades write errors to warnings, this invariant should remain.
@@ -180,87 +173,9 @@ fn offload_package(project: &mut ProjectState, package: PackageSlot) -> anyhow::
     Ok(())
 }
 
-/// Restores the packages one in-place rebuild can inspect.
-///
-/// Rebuild phases may resolve through dependencies that are not themselves being replaced. The
-/// caller supplies that dependency-expanded demand so unrelated offloaded packages can stay cold.
-pub(crate) fn materialize_packages(
+pub(crate) fn recover_residency_after_cache_load_failure(
     project: &mut ProjectState,
-    demand: &PackageDemand,
 ) -> anyhow::Result<()> {
-    match try_materialize_packages(project, demand) {
-        Ok(()) => Ok(()),
-        Err(error) if is_cache_artifact_unavailable(&error) => {
-            recover_resident_project_from_source(project).with_context(|| {
-                format!(
-                    "while attempting to recover analysis project after package cache became unavailable: {error}",
-                )
-            })
-        }
-        Err(error) => Err(error),
-    }
-}
-
-fn try_materialize_packages(
-    project: &mut ProjectState,
-    demand: &PackageDemand,
-) -> anyhow::Result<()> {
-    for package_idx in 0..demand.package_count() {
-        let package = PackageSlot(package_idx);
-        if !demand.contains(package) {
-            continue;
-        }
-        if resident_package_arcs(project, package).is_some() {
-            continue;
-        }
-
-        let artifact = read_artifact(project, package)?;
-        restore_package_from_payload(project, package, artifact.payload)?;
-    }
-
-    Ok(())
-}
-
-fn restore_package_from_payload(
-    project: &mut ProjectState,
-    package: PackageSlot,
-    payload: PackageCachePayload,
-) -> anyhow::Result<()> {
-    project
-        .def_map
-        .replace_package(package, payload.def_map.into_package())
-        .with_context(|| {
-            format!(
-                "while attempting to restore def-map package {} from cache",
-                package.0,
-            )
-        })?;
-    project
-        .semantic_ir
-        .replace_package(package, payload.semantic_ir.into_package())
-        .with_context(|| {
-            format!(
-                "while attempting to restore semantic IR package {} from cache",
-                package.0,
-            )
-        })?;
-    project
-        .body_ir
-        .replace_package(
-            package,
-            body_ir_package_from_payload(package, payload.body_ir)?,
-        )
-        .with_context(|| {
-            format!(
-                "while attempting to restore body IR package {} from cache",
-                package.0,
-            )
-        })?;
-
-    Ok(())
-}
-
-fn recover_resident_project_from_source(project: &mut ProjectState) -> anyhow::Result<()> {
     project
         .cache_store
         .invalidate_workspace_cache()
@@ -268,119 +183,172 @@ fn recover_resident_project_from_source(project: &mut ProjectState) -> anyhow::R
     project
         .rebuild_resident_from_source()
         .context("while attempting to rebuild resident analysis project from source")?;
-    write_residency_artifacts(project)
-        .context("while attempting to rewrite package cache artifacts after recovery")?;
+    apply_residency(project).context("while attempting to reapply package cache residency")?;
 
     Ok(())
 }
 
-/// Builds a query transaction with every package materialized back into owned memory.
-pub(crate) fn materialized_analysis_txn(
-    project: &ProjectState,
-) -> anyhow::Result<AnalysisReadTxn<'_>> {
-    let demand = PackageDemand::all(&project.workspace);
-    materialized_analysis_txn_for_demand(project, &demand)
+/// Builds a request-scoped analysis transaction over logical package slots.
+pub(crate) fn logical_analysis_txn(project: &ProjectState) -> anyhow::Result<AnalysisReadTxn<'_>> {
+    let subset = subset::all(&project.workspace);
+    logical_analysis_txn_for_subset(project, &subset)
 }
 
-/// Builds a query transaction with only demanded packages materialized.
-pub(crate) fn materialized_analysis_txn_for_demand<'a>(
+/// Builds a request-scoped analysis transaction over the requested package subset.
+pub(crate) fn logical_analysis_txn_for_subset<'a>(
     project: &'a ProjectState,
-    demand: &PackageDemand,
+    subset: &PackageSubset,
 ) -> anyhow::Result<AnalysisReadTxn<'a>> {
-    match try_materialized_analysis_txn(project, demand) {
-        Ok(txn) => Ok(txn),
-        Err(error) if is_cache_artifact_unavailable(&error) => {
-            rebuilt_analysis_txn_from_source(project, demand).with_context(|| {
-                format!(
-                    "while attempting to recover analysis transaction after package cache became unavailable: {error}",
-                )
-            })
-        }
-        Err(error) => Err(error),
-    }
-}
-
-fn try_materialized_analysis_txn<'a>(
-    project: &'a ProjectState,
-    demand: &PackageDemand,
-) -> anyhow::Result<AnalysisReadTxn<'a>> {
-    let mut def_map_packages = vec![None; demand.package_count()];
-    let mut semantic_ir_packages = vec![None; demand.package_count()];
-    let mut body_ir_packages = vec![None; demand.package_count()];
-
-    for package_idx in 0..demand.package_count() {
-        let package = PackageSlot(package_idx);
-        if !demand.contains(package) {
-            continue;
-        }
-
-        match resident_package_arcs(project, package) {
-            Some((def_map, semantic_ir, body_ir)) => {
-                def_map_packages[package_idx] = Some(def_map);
-                semantic_ir_packages[package_idx] = Some(semantic_ir);
-                body_ir_packages[package_idx] = Some(body_ir);
-            }
-            None => {
-                let artifact = read_artifact(project, package)?;
-                let payload = artifact.payload;
-                def_map_packages[package_idx] = Some(Arc::new(payload.def_map.into_package()));
-                semantic_ir_packages[package_idx] =
-                    Some(Arc::new(payload.semantic_ir.into_package()));
-                body_ir_packages[package_idx] = Some(Arc::new(body_ir_package_from_payload(
-                    package,
-                    payload.body_ir,
-                )?));
-            }
-        }
-    }
+    let loaders = package_read_loaders(project);
 
     Ok(AnalysisReadTxn::from_phase_txns(
-        DefMapReadTxn::from_sparse_package_arcs(def_map_packages),
-        SemanticIrReadTxn::from_sparse_package_arcs(semantic_ir_packages),
-        BodyIrReadTxn::from_sparse_package_arcs(body_ir_packages),
+        project
+            .def_map
+            .read_txn_for_subset(loaders.def_map.clone(), subset),
+        project
+            .semantic_ir
+            .read_txn_for_subset(loaders.semantic_ir.clone(), subset),
+        project.body_ir.read_txn_for_subset(loaders.body_ir, subset),
     ))
 }
 
-fn rebuilt_analysis_txn_from_source<'a>(
-    project: &'a ProjectState,
-    demand: &PackageDemand,
-) -> anyhow::Result<AnalysisReadTxn<'a>> {
-    project
-        .cache_store
-        .invalidate_workspace_cache()
-        .context("while attempting to invalidate package cache namespace")?;
+/// Loader adapters that share one package-artifact read cache.
+#[derive(Clone)]
+pub(crate) struct PackageReadLoaders {
+    pub(crate) def_map: PackageLoader<'static, DefMapPackage>,
+    pub(crate) semantic_ir: PackageLoader<'static, PackageIr>,
+    pub(crate) body_ir: PackageLoader<'static, PackageBodies>,
+}
 
-    let mut rebuilt =
-        ProjectState::build_resident_with_options(project.workspace.clone(), project.build_options)
-            .context("while attempting to rebuild analysis transaction from source")?;
-    rebuilt.cache_store = project.cache_store.clone();
-    write_residency_artifacts(&rebuilt)
-        .context("while attempting to rewrite package cache artifacts after recovery")?;
+pub(crate) fn package_read_loaders(project: &ProjectState) -> PackageReadLoaders {
+    let bundle_loader = Arc::new(PackageBundleLoader::new(project));
+    PackageReadLoaders {
+        def_map: PackageLoader::new(DefMapPackageLoader {
+            bundles: Arc::clone(&bundle_loader),
+        }),
+        semantic_ir: PackageLoader::new(SemanticIrPackageLoader {
+            bundles: Arc::clone(&bundle_loader),
+        }),
+        body_ir: PackageLoader::new(BodyIrPackageLoader {
+            bundles: bundle_loader,
+        }),
+    }
+}
 
-    let mut def_map_packages = vec![None; demand.package_count()];
-    let mut semantic_ir_packages = vec![None; demand.package_count()];
-    let mut body_ir_packages = vec![None; demand.package_count()];
+/// Shared request cache for package artifacts read by the phase-specific loaders.
+#[derive(Debug)]
+struct PackageBundleLoader {
+    cached_workspace: CachedWorkspace,
+    cache_store: PackageCacheStore,
+    bundles: Vec<OnceLock<Arc<LoadedPackageBundle>>>,
+}
 
-    for package_idx in 0..demand.package_count() {
-        let package = PackageSlot(package_idx);
-        if !demand.contains(package) {
-            continue;
+impl PackageBundleLoader {
+    fn new(project: &ProjectState) -> Self {
+        let package_count = project.workspace.packages().len();
+        Self {
+            cached_workspace: project.cached_workspace.clone(),
+            cache_store: project.cache_store.clone(),
+            bundles: (0..package_count).map(|_| OnceLock::new()).collect(),
         }
-
-        let (def_map, semantic_ir, body_ir) = resident_package_arcs(&rebuilt, package)
-            .with_context(|| {
-                format!("while attempting to collect rebuilt package {}", package.0)
-            })?;
-        def_map_packages[package_idx] = Some(def_map);
-        semantic_ir_packages[package_idx] = Some(semantic_ir);
-        body_ir_packages[package_idx] = Some(body_ir);
     }
 
-    Ok(AnalysisReadTxn::from_phase_txns(
-        DefMapReadTxn::from_sparse_package_arcs(def_map_packages),
-        SemanticIrReadTxn::from_sparse_package_arcs(semantic_ir_packages),
-        BodyIrReadTxn::from_sparse_package_arcs(body_ir_packages),
-    ))
+    fn load_bundle(&self, package: PackageSlot) -> Result<&LoadedPackageBundle, PackageStoreError> {
+        let Some(cell) = self.bundles.get(package.0) else {
+            return Err(PackageStoreError::MissingSlot { slot: package });
+        };
+
+        if let Some(bundle) = cell.get() {
+            return Ok(bundle.as_ref());
+        }
+
+        let bundle = Arc::new(self.load_bundle_uncached(package)?);
+        let _ = cell.set(bundle);
+        Ok(cell
+            .get()
+            .expect("package bundle cell should be initialized after successful load")
+            .as_ref())
+    }
+
+    fn load_bundle_uncached(
+        &self,
+        package: PackageSlot,
+    ) -> Result<LoadedPackageBundle, PackageStoreError> {
+        let artifact = self.read_artifact(package)?;
+        let payload = artifact.payload;
+        let body_ir = body_ir_package_from_payload(package, payload.body_ir).map_err(|error| {
+            PackageStoreError::malformed_cache(
+                package,
+                MalformedCacheError::InvalidPayload {
+                    reason: error.to_string(),
+                },
+            )
+        })?;
+
+        Ok(LoadedPackageBundle {
+            def_map: Arc::new(payload.def_map.into_package()),
+            semantic_ir: Arc::new(payload.semantic_ir.into_package()),
+            body_ir: Arc::new(body_ir),
+        })
+    }
+
+    fn read_artifact(
+        &self,
+        package: PackageSlot,
+    ) -> Result<PackageCacheArtifact, PackageStoreError> {
+        let Some(header) = self.cached_workspace.artifact_header(package) else {
+            return Err(PackageStoreError::stale_package(
+                package,
+                "workspace cache graph has no package header",
+            ));
+        };
+
+        match self.cache_store.read_artifact(&header) {
+            Ok(Some(artifact)) => Ok(artifact),
+            Ok(None) => Err(PackageStoreError::missing_package(package)),
+            Err(error) => Err(error.into_package_store_error(package)),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct LoadedPackageBundle {
+    def_map: Arc<DefMapPackage>,
+    semantic_ir: Arc<PackageIr>,
+    body_ir: Arc<PackageBodies>,
+}
+
+#[derive(Debug)]
+struct DefMapPackageLoader {
+    bundles: Arc<PackageBundleLoader>,
+}
+
+impl LoadPackage<DefMapPackage> for DefMapPackageLoader {
+    fn load(&self, slot: PackageSlot) -> Result<Arc<DefMapPackage>, PackageStoreError> {
+        Ok(Arc::clone(&self.bundles.load_bundle(slot)?.def_map))
+    }
+}
+
+#[derive(Debug)]
+struct SemanticIrPackageLoader {
+    bundles: Arc<PackageBundleLoader>,
+}
+
+impl LoadPackage<PackageIr> for SemanticIrPackageLoader {
+    fn load(&self, slot: PackageSlot) -> Result<Arc<PackageIr>, PackageStoreError> {
+        Ok(Arc::clone(&self.bundles.load_bundle(slot)?.semantic_ir))
+    }
+}
+
+#[derive(Debug)]
+struct BodyIrPackageLoader {
+    bundles: Arc<PackageBundleLoader>,
+}
+
+impl LoadPackage<PackageBodies> for BodyIrPackageLoader {
+    fn load(&self, slot: PackageSlot) -> Result<Arc<PackageBodies>, PackageStoreError> {
+        Ok(Arc::clone(&self.bundles.load_bundle(slot)?.body_ir))
+    }
 }
 
 fn artifact_from_project(
@@ -396,19 +364,22 @@ fn artifact_from_project(
                 package.0,
             )
         })?;
-    let def_map = project.def_map.package(package).with_context(|| {
+    let def_map = project.def_map.resident_package(package).with_context(|| {
         format!(
             "while attempting to fetch resident def-map package {}",
             package.0,
         )
     })?;
-    let semantic_ir = project.semantic_ir.package(package).with_context(|| {
-        format!(
-            "while attempting to fetch resident semantic IR package {}",
-            package.0,
-        )
-    })?;
-    let body_ir = project.body_ir.package(package).with_context(|| {
+    let semantic_ir = project
+        .semantic_ir
+        .resident_package(package)
+        .with_context(|| {
+            format!(
+                "while attempting to fetch resident semantic IR package {}",
+                package.0,
+            )
+        })?;
+    let body_ir = project.body_ir.resident_package(package).with_context(|| {
         format!(
             "while attempting to fetch resident body IR package {}",
             package.0,
@@ -423,102 +394,6 @@ fn artifact_from_project(
             PackageCacheBodyIrState::Built(Box::new(BodyIrPackageBundle::new(body_ir.clone()))),
         ),
     ))
-}
-
-fn resident_package_arcs(
-    project: &ProjectState,
-    package: PackageSlot,
-) -> Option<(Arc<DefMapPackage>, Arc<PackageIr>, Arc<PackageBodies>)> {
-    Some((
-        project.def_map.package_arc(package)?,
-        project.semantic_ir.package_arc(package)?,
-        project.body_ir.package_arc(package)?,
-    ))
-}
-
-fn read_artifact(
-    project: &ProjectState,
-    package: PackageSlot,
-) -> anyhow::Result<PackageCacheArtifact> {
-    let header = project
-        .cached_workspace
-        .artifact_header(package)
-        .with_context(|| {
-            format!(
-                "while attempting to build package cache header for package {}",
-                package.0,
-            )
-        })?;
-
-    match project.cache_store.read_artifact(&header) {
-        Ok(Some(artifact)) => Ok(artifact),
-        Ok(None) => Err(PackageCacheArtifactUnavailable::missing(package).into()),
-        Err(error) => Err(PackageCacheArtifactUnavailable::invalid(package, error).into()),
-    }
-}
-
-fn is_cache_artifact_unavailable(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.is::<PackageCacheArtifactUnavailable>())
-}
-
-#[derive(Debug)]
-struct PackageCacheArtifactUnavailable {
-    package: PackageSlot,
-    reason: PackageCacheArtifactUnavailableReason,
-}
-
-impl PackageCacheArtifactUnavailable {
-    fn missing(package: PackageSlot) -> Self {
-        Self {
-            package,
-            reason: PackageCacheArtifactUnavailableReason::Missing,
-        }
-    }
-
-    fn invalid(package: PackageSlot, error: anyhow::Error) -> Self {
-        Self {
-            package,
-            reason: PackageCacheArtifactUnavailableReason::Invalid(error),
-        }
-    }
-}
-
-impl fmt::Display for PackageCacheArtifactUnavailable {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.reason {
-            PackageCacheArtifactUnavailableReason::Missing => {
-                write!(
-                    f,
-                    "missing package cache artifact for package {}",
-                    self.package.0,
-                )
-            }
-            PackageCacheArtifactUnavailableReason::Invalid(_) => {
-                write!(
-                    f,
-                    "invalid package cache artifact for package {}",
-                    self.package.0,
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for PackageCacheArtifactUnavailable {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.reason {
-            PackageCacheArtifactUnavailableReason::Missing => None,
-            PackageCacheArtifactUnavailableReason::Invalid(error) => Some(error.as_ref()),
-        }
-    }
-}
-
-#[derive(Debug)]
-enum PackageCacheArtifactUnavailableReason {
-    Missing,
-    Invalid(anyhow::Error),
 }
 
 fn body_ir_package_from_payload(

@@ -40,7 +40,7 @@ pub(super) fn build_db(
 
     for package_idx in 0..semantic_ir.package_count() {
         let package = PackageSlot(package_idx);
-        let package_ir = semantic_ir.package(package).with_context(|| {
+        let package_ir = semantic_ir.resident_package(package).with_context(|| {
             format!(
                 "while attempting to fetch semantic IR package {} for body lowering",
                 package.0,

@@ -39,7 +39,7 @@ pub(super) fn build_package(
     package: PackageSlot,
 ) -> anyhow::Result<PackageIr> {
     let def_map_package = def_map
-        .package(package)
+        .resident_package(package)
         .with_context(|| format!("while attempting to fetch def-map package {}", package.0))?;
     let item_tree_package = item_tree
         .package(package.0)

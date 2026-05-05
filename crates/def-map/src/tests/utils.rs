@@ -176,7 +176,7 @@ impl<'a> FixtureTarget<'a> {
     fn def_map(&self) -> &'a DefMap {
         self.db
             .def_map_db()
-            .def_map(self.target_ref)
+            .resident_def_map(self.target_ref)
             .expect("target def map should exist in fixture db")
     }
 }
@@ -257,7 +257,7 @@ impl<'a> FixtureEntry<'a> {
             DefId::Local(local_def_ref) => local_def_ref.target,
         };
         self.db.parse_db().packages().get(target_ref.package.0)?;
-        self.db.def_map_db().def_map(target_ref)?;
+        self.db.def_map_db().resident_def_map(target_ref)?;
 
         Some(FixtureBindingOrigin {
             db: self.db,
@@ -280,7 +280,7 @@ impl FixtureBindingOrigin<'_> {
 
         self.db
             .def_map_db()
-            .def_map(module_ref.target)?
+            .resident_def_map(module_ref.target)?
             .module(module_ref.module)
             .and_then(|module| module.name.as_deref())
     }
@@ -388,7 +388,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
         let def_map = self
             .project
             .def_map_db()
-            .def_map(target_ref)
+            .resident_def_map(target_ref)
             .expect("target def map should exist while resolving path snapshot query");
 
         def_map
@@ -406,7 +406,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
         let module = self
             .project
             .def_map_db()
-            .def_map(target_ref)
+            .resident_def_map(target_ref)
             .expect("target def map should exist while building module path")
             .module(module_id)
             .expect("module id should exist while building module path");
@@ -573,7 +573,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
     fn def_map(&self) -> &'a DefMap {
         self.project
             .def_map_db()
-            .def_map(self.target_ref)
+            .resident_def_map(self.target_ref)
             .expect("target def map should exist while rendering snapshot")
     }
 
@@ -647,7 +647,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
             .parse_db()
             .packages()
             .get(target_ref.package.0)?;
-        self.project.def_map_db().def_map(target_ref)?;
+        self.project.def_map_db().resident_def_map(target_ref)?;
 
         Some(BindingOrigin {
             project: self.project,
@@ -678,7 +678,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
         let module = self
             .project
             .def_map_db()
-            .def_map(target_ref)
+            .resident_def_map(target_ref)
             .expect("target def map should exist while building relative module path")
             .module(module_id)
             .expect("module id should exist while building relative module path");
@@ -741,7 +741,7 @@ impl ResolvedDefOrigin<'_> {
                 let local_def = self
                     .project
                     .def_map_db()
-                    .def_map(local_def_ref.target)
+                    .resident_def_map(local_def_ref.target)
                     .expect("target def map should exist while dumping")
                     .local_defs
                     .get(local_def_ref.local_def)
@@ -779,7 +779,7 @@ impl ResolvedDefOrigin<'_> {
         let module = self
             .project
             .def_map_db()
-            .def_map(target_ref)
+            .resident_def_map(target_ref)
             .expect("target def map should exist while building relative module path")
             .module(module_id)
             .expect("module id should exist while building relative module path");

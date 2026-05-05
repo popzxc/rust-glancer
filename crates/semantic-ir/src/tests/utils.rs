@@ -322,7 +322,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         let def_map = self
             .project
             .def_map_db()
-            .def_map(target_ref)
+            .resident_def_map(target_ref)
             .expect("target def map should exist while rendering semantic query");
 
         def_map
@@ -363,7 +363,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         let target_ir = self
             .project
             .semantic_ir_db()
-            .target_ir(ty.target)
+            .resident_target_ir(ty.target)
             .expect("target semantic IR should exist while rendering type ref");
 
         match ty.id {
@@ -470,7 +470,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         let module = self
             .project
             .def_map_db()
-            .def_map(module_ref.target)
+            .resident_def_map(module_ref.target)
             .expect("target def map should exist while rendering query module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering query module path");
@@ -505,12 +505,12 @@ impl TargetSemanticIrSnapshot<'_> {
         let def_map = self
             .project
             .def_map_db()
-            .def_map(self.target_ref)
+            .resident_def_map(self.target_ref)
             .expect("target def map should exist while rendering semantic IR");
         let target_ir = self
             .project
             .semantic_ir_db()
-            .target_ir(self.target_ref)
+            .resident_target_ir(self.target_ref)
             .expect("target semantic IR should exist while rendering");
 
         for (idx, (module_path, module_id)) in self.sorted_modules().into_iter().enumerate() {
@@ -826,7 +826,7 @@ impl TargetSemanticIrSnapshot<'_> {
         let def_map = self
             .project
             .def_map_db()
-            .def_map(self.target_ref)
+            .resident_def_map(self.target_ref)
             .expect("target def map should exist while sorting semantic IR modules");
         let mut modules = def_map
             .modules()
@@ -845,7 +845,7 @@ impl TargetSemanticIrSnapshot<'_> {
         let module = self
             .project
             .def_map_db()
-            .def_map(self.target_ref)
+            .resident_def_map(self.target_ref)
             .expect("target def map should exist while rendering module path")
             .module(module_id)
             .expect("module id should exist while rendering module path");
@@ -866,7 +866,7 @@ impl TargetSemanticIrSnapshot<'_> {
     fn items(&self) -> &ItemStore {
         self.project
             .semantic_ir_db()
-            .target_ir(self.target_ref)
+            .resident_target_ir(self.target_ref)
             .expect("target semantic IR should exist while rendering items")
             .items()
     }

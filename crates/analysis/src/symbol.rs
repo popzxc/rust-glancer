@@ -25,19 +25,20 @@ impl<'a, 'db> SymbolFinder<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Option<SymbolAt> {
+    ) -> anyhow::Result<Option<SymbolAt>> {
         let mut candidates = Vec::new();
-        candidates.extend(self.body_symbol_candidates(target, file_id, offset));
+        candidates.extend(self.body_symbol_candidates(target, file_id, offset)?);
         candidates.extend(cursor::item_signature_candidates(
             self.0, target, file_id, offset,
-        ));
+        )?);
 
         // Overlapping syntax is common around type paths and expressions. The narrowest span is
         // the best proxy for the thing the user actually placed the cursor on.
-        candidates
+        let symbol = candidates
             .into_iter()
             .min_by_key(|candidate| candidate.span.len())
-            .map(|candidate| candidate.symbol)
+            .map(|candidate| candidate.symbol);
+        Ok(symbol)
     }
 
     fn body_symbol_candidates(
@@ -45,13 +46,15 @@ impl<'a, 'db> SymbolFinder<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Vec<SymbolCandidate> {
-        self.0
+    ) -> anyhow::Result<Vec<SymbolCandidate>> {
+        let candidates = self
+            .0
             .body_ir
-            .cursor_candidates(target, file_id, offset)
+            .cursor_candidates(target, file_id, offset)?
             .into_iter()
             .map(body_cursor_candidate_to_symbol_candidate)
-            .collect()
+            .collect();
+        Ok(candidates)
     }
 }
 

@@ -1,10 +1,10 @@
-pub(crate) mod demand;
 mod inventory;
 mod memsize;
 mod rebuild;
 mod snapshot;
 pub(crate) mod state;
 mod stats;
+pub(crate) mod subset;
 pub(crate) mod txn;
 mod update;
 mod workspace_graph;
@@ -83,6 +83,17 @@ impl Project {
     /// Returns coarse status counters without exposing raw phase databases.
     pub fn stats(&self) -> ProjectStats {
         self.state.stats()
+    }
+
+    /// Returns whether an analysis error came from disposable package-cache storage.
+    pub fn is_recoverable_cache_load_failure(error: &anyhow::Error) -> bool {
+        ProjectState::is_recoverable_cache_load_failure(error)
+    }
+
+    /// Rebuilds the project from source and rewrites offloadable package cache artifacts.
+    pub fn recover_after_cache_load_failure(&mut self) -> anyhow::Result<()> {
+        crate::cache::integration::recover_residency_after_cache_load_failure(&mut self.state)
+            .context("while attempting to recover analysis project after package cache load failed")
     }
 
     /// Applies one saved file replacement and refreshes derived analysis state.

@@ -13,7 +13,7 @@ use rg_workspace::{SysrootSources, WorkspaceMetadata};
 use tower_lsp_server::ls_types;
 
 use crate::{
-    engine::command::EngineCommand,
+    engine::command::{EngineCommand, EngineResponse},
     memory::{MemoryControl, MemoryReporter},
     project_stats::{ProjectStats, log_retained_memory},
     proto::{completion, hover, inlay_hint, navigation, position, symbols},
@@ -70,10 +70,9 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: goto_definition"
                     );
-                    let _ =
-                        respond_to.send(self.query_request("goto_definition", || {
-                            self.goto_definition(path, position)
-                        }));
+                    self.respond_to_query("goto_definition", respond_to, |worker| {
+                        worker.goto_definition(path, position)
+                    });
                 }
                 EngineCommand::GotoTypeDefinition {
                     path,
@@ -86,9 +85,9 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: goto_type_definition"
                     );
-                    let _ = respond_to.send(self.query_request("goto_type_definition", || {
-                        self.goto_type_definition(path, position)
-                    }));
+                    self.respond_to_query("goto_type_definition", respond_to, |worker| {
+                        worker.goto_type_definition(path, position)
+                    });
                 }
                 EngineCommand::Hover {
                     path,
@@ -101,8 +100,9 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: hover"
                     );
-                    let _ =
-                        respond_to.send(self.query_request("hover", || self.hover(path, position)));
+                    self.respond_to_query("hover", respond_to, |worker| {
+                        worker.hover(path, position)
+                    });
                 }
                 EngineCommand::Completion {
                     path,
@@ -115,16 +115,18 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: completion"
                     );
-                    let _ = respond_to
-                        .send(self.query_request("completion", || self.completion(path, position)));
+                    self.respond_to_query("completion", respond_to, |worker| {
+                        worker.completion(path, position)
+                    });
                 }
                 EngineCommand::DocumentSymbol { path, respond_to } => {
                     tracing::trace!(
                         path = %path.display(),
                         "engine command started: document_symbol"
                     );
-                    let _ = respond_to
-                        .send(self.query_request("document_symbol", || self.document_symbol(path)));
+                    self.respond_to_query("document_symbol", respond_to, |worker| {
+                        worker.document_symbol(path)
+                    });
                 }
                 EngineCommand::InlayHint {
                     path,
@@ -139,14 +141,15 @@ impl EngineWorker {
                         end_character = range.end.character,
                         "engine command started: inlay_hint"
                     );
-                    let _ = respond_to
-                        .send(self.query_request("inlay_hint", || self.inlay_hint(path, range)));
+                    self.respond_to_query("inlay_hint", respond_to, |worker| {
+                        worker.inlay_hint(path, range)
+                    });
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
                     tracing::trace!(query = %query, "engine command started: workspace_symbol");
-                    let _ = respond_to.send(
-                        self.query_request("workspace_symbol", || self.workspace_symbol(&query)),
-                    );
+                    self.respond_to_query("workspace_symbol", respond_to, |worker| {
+                        worker.workspace_symbol(&query)
+                    });
                 }
                 EngineCommand::Shutdown(respond_to) => {
                     tracing::info!("shutting down LSP engine worker");
@@ -276,15 +279,15 @@ impl EngineWorker {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
         let target_offsets = self.target_offsets(snapshot, &path, position)?;
-        let demand_targets = target_offsets
+        let analysis_targets = target_offsets
             .iter()
             .map(|(_, target, _)| *target)
             .collect::<Vec<_>>();
-        let analysis = snapshot.analysis_for_targets(&demand_targets)?;
+        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
         let mut completions = Vec::new();
 
         for (context, target, offset) in target_offsets {
-            for item in analysis.completions_at_dot(target, context.file, offset) {
+            for item in analysis.completions_at_dot(target, context.file, offset)? {
                 let item = completion::completion_item(item);
                 if !completions.contains(&item) {
                     completions.push(item);
@@ -312,14 +315,14 @@ impl EngineWorker {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
         let target_offsets = self.target_offsets(snapshot, &path, position)?;
-        let demand_targets = target_offsets
+        let analysis_targets = target_offsets
             .iter()
             .map(|(_, target, _)| *target)
             .collect::<Vec<_>>();
-        let analysis = snapshot.analysis_for_targets(&demand_targets)?;
+        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
 
         for (context, target, offset) in target_offsets {
-            let Some(info) = analysis.hover(target, context.file, offset) else {
+            let Some(info) = analysis.hover(target, context.file, offset)? else {
                 continue;
             };
             let Some(package) = snapshot.parse_db().package(context.package.0) else {
@@ -357,16 +360,16 @@ impl EngineWorker {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
         let contexts = self.file_contexts(snapshot, &path)?;
-        let demand_targets = contexts
+        let analysis_targets = contexts
             .iter()
             .flat_map(|context| context.targets.iter().copied())
             .collect::<Vec<_>>();
-        let analysis = snapshot.analysis_for_targets(&demand_targets)?;
+        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
         let mut lsp_symbols = Vec::new();
 
         for context in contexts {
             for target in context.targets {
-                let symbols = analysis.document_symbols(target, context.file);
+                let symbols = analysis.document_symbols(target, context.file)?;
                 for symbol in symbols {
                     let symbol =
                         symbols::document_symbol(snapshot.parse_db(), context.package.0, symbol)?;
@@ -395,11 +398,11 @@ impl EngineWorker {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
         let contexts = self.file_contexts(snapshot, &path)?;
-        let demand_targets = contexts
+        let analysis_targets = contexts
             .iter()
             .flat_map(|context| context.targets.iter().copied())
             .collect::<Vec<_>>();
-        let analysis = snapshot.analysis_for_targets(&demand_targets)?;
+        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
         let mut hints = Vec::<(rg_def_map::PackageSlot, TypeHint)>::new();
 
         for context in contexts {
@@ -408,7 +411,7 @@ impl EngineWorker {
             };
 
             for target in context.targets {
-                for hint in analysis.type_hints(target, context.file, Some(range)) {
+                for hint in analysis.type_hints(target, context.file, Some(range))? {
                     if !hints
                         .iter()
                         .any(|(_, existing_hint)| existing_hint == &hint)
@@ -443,7 +446,7 @@ impl EngineWorker {
         let analysis = snapshot.full_analysis()?;
         let mut lsp_symbols = Vec::new();
 
-        for symbol in analysis.workspace_symbols(query) {
+        for symbol in analysis.workspace_symbols(query)? {
             let Some(symbol) = symbols::workspace_symbol(snapshot.parse_db(), symbol)? else {
                 continue;
             };
@@ -471,20 +474,20 @@ impl EngineWorker {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
         let target_offsets = self.target_offsets(snapshot, &path, position)?;
-        let demand_targets = target_offsets
+        let analysis_targets = target_offsets
             .iter()
             .map(|(_, target, _)| *target)
             .collect::<Vec<_>>();
-        let analysis = snapshot.analysis_for_targets(&demand_targets)?;
+        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
         let mut locations = Vec::new();
 
         for (context, target, offset) in target_offsets {
             let targets = match query {
                 NavigationQuery::Definition => {
-                    analysis.goto_definition(target, context.file, offset)
+                    analysis.goto_definition(target, context.file, offset)?
                 }
                 NavigationQuery::TypeDefinition => {
-                    analysis.goto_type_definition(target, context.file, offset)
+                    analysis.goto_type_definition(target, context.file, offset)?
                 }
             };
 
@@ -641,14 +644,65 @@ impl EngineWorker {
             .context("LSP engine is not initialized")
     }
 
-    /// Runs a read-only request and cleans up memory that eager offloaded transactions may leave
-    /// behind after they are dropped.
-    fn query_request<T>(
-        &self,
+    /// Runs a read-only request, responds immediately, then heals disposable cache failures.
+    fn respond_to_query<T>(
+        &mut self,
         label: &'static str,
-        query: impl FnOnce() -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        MemoryReporter::report_op(self.memory_control.as_ref(), label, query)
+        respond_to: EngineResponse<T>,
+        query: impl FnOnce(&Self) -> anyhow::Result<T>,
+    ) where
+        T: Send + 'static,
+    {
+        let result = MemoryReporter::report_op(self.memory_control.as_ref(), label, || query(self));
+        let should_recover = result
+            .as_ref()
+            .err()
+            .is_some_and(Project::is_recoverable_cache_load_failure);
+
+        let _ = respond_to.send(result);
+
+        if should_recover {
+            self.recover_after_query_cache_failure(label);
+        }
+    }
+
+    fn recover_after_query_cache_failure(&mut self, label: &'static str) {
+        let Some(project) = self.project.as_mut() else {
+            tracing::warn!(
+                label,
+                "analysis query hit invalid package cache before project initialization"
+            );
+            return;
+        };
+
+        let started = Instant::now();
+        tracing::warn!(
+            label,
+            "analysis query hit invalid package cache; rebuilding cache before next command"
+        );
+
+        match project.recover_after_cache_load_failure() {
+            Ok(()) => {
+                let snapshot = project.snapshot();
+                Self::post_project_build(
+                    self.memory_control.as_ref(),
+                    snapshot,
+                    "after package cache recovery",
+                );
+                tracing::info!(
+                    label,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "package cache recovery finished"
+                );
+            }
+            Err(error) => {
+                tracing::error!(
+                    label,
+                    error = %error,
+                    "package cache recovery failed"
+                );
+            }
+        }
     }
 
     /// Hook for activities to be run after the project (re-)build.

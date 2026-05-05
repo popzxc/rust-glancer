@@ -17,7 +17,7 @@ pub(super) fn item_signature_candidates(
     target: TargetRef,
     file_id: FileId,
     offset: u32,
-) -> Vec<SymbolCandidate> {
+) -> anyhow::Result<Vec<SymbolCandidate>> {
     let mut candidates = Vec::new();
 
     CursorScanner {
@@ -27,9 +27,9 @@ pub(super) fn item_signature_candidates(
         offset,
         candidates: &mut candidates,
     }
-    .scan();
+    .scan()?;
 
-    candidates
+    Ok(candidates)
 }
 
 struct CursorScanner<'a, 'db> {
@@ -41,17 +41,18 @@ struct CursorScanner<'a, 'db> {
 }
 
 impl CursorScanner<'_, '_> {
-    fn scan(&mut self) {
+    fn scan(&mut self) -> anyhow::Result<()> {
         // Query both signature-level sources before `symbol_at` applies its smallest-span policy.
-        self.scan_def_map_items();
-        self.scan_semantic_items();
+        self.scan_def_map_items()?;
+        self.scan_semantic_items()?;
+        Ok(())
     }
 
-    fn scan_def_map_items(&mut self) {
+    fn scan_def_map_items(&mut self) -> anyhow::Result<()> {
         let candidates =
             self.analysis
                 .def_map
-                .cursor_candidates(self.target, self.file_id, self.offset);
+                .cursor_candidates(self.target, self.file_id, self.offset)?;
         for candidate in candidates {
             match candidate {
                 DefMapCursorCandidate::Def { def, span } => {
@@ -68,14 +69,16 @@ impl CursorScanner<'_, '_> {
                 }
             }
         }
+
+        Ok(())
     }
 
-    fn scan_semantic_items(&mut self) {
+    fn scan_semantic_items(&mut self) -> anyhow::Result<()> {
         let candidates = self.analysis.semantic_ir.signature_cursor_candidates(
             self.target,
             self.file_id,
             self.offset,
-        );
+        )?;
         for candidate in candidates {
             match candidate {
                 SemanticCursorCandidate::Field { field, span } => {
@@ -112,5 +115,7 @@ impl CursorScanner<'_, '_> {
                 }
             }
         }
+
+        Ok(())
     }
 }

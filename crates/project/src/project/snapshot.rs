@@ -7,8 +7,7 @@ use rg_def_map::{PackageSlot, TargetRef};
 use rg_parse::{FileId, ParseDb};
 
 use super::{
-    FileContext, demand::PackageDemand, inventory::ProjectInventory, state::ProjectState,
-    stats::ProjectStats,
+    FileContext, inventory::ProjectInventory, state::ProjectState, stats::ProjectStats, subset,
 };
 
 /// Immutable project view used to answer LSP-shaped queries.
@@ -26,21 +25,21 @@ impl<'a> ProjectSnapshot<'a> {
 
     /// Returns an analysis view scoped to the package dependency closure of target queries.
     pub fn analysis_for_targets(&self, targets: &[TargetRef]) -> anyhow::Result<Analysis<'a>> {
-        let demand = PackageDemand::targets(self.state.workspace(), targets);
-        let txn = self.state.read_txn_for_demand(&demand)?;
+        let subset = subset::targets_with_visible_dependencies(self.state.workspace(), targets);
+        let txn = self.state.read_txn_for_subset(&subset)?;
         Ok(self.state.analysis(&txn))
     }
 
     /// Returns an analysis view over exactly the listed packages, without dependency expansion.
     ///
     /// This is only suitable for package-local metadata queries such as target/file ownership.
-    /// Semantic queries should use a target-scoped analysis so dependencies are materialized too.
+    /// Semantic queries should use a target-scoped analysis so dependencies are visible too.
     pub(crate) fn shallow_analysis(
         &self,
         packages: &[PackageSlot],
     ) -> anyhow::Result<Analysis<'a>> {
-        let demand = PackageDemand::package_slots(self.state.workspace(), packages);
-        let txn = self.state.read_txn_for_demand(&demand)?;
+        let subset = subset::packages_only(self.state.workspace(), packages);
+        let txn = self.state.read_txn_for_subset(&subset)?;
         Ok(self.state.analysis(&txn))
     }
 
@@ -85,7 +84,7 @@ impl<'a> ProjectSnapshot<'a> {
         let mut contexts = Vec::new();
 
         for file in candidates {
-            let targets = analysis.targets_for_file(file.package, file.file);
+            let targets = analysis.targets_for_file(file.package, file.file)?;
             if targets.is_empty() {
                 continue;
             }
@@ -107,6 +106,6 @@ impl<'a> ProjectSnapshot<'a> {
         file: FileId,
     ) -> anyhow::Result<Vec<TargetRef>> {
         let analysis = self.shallow_analysis(&[package])?;
-        Ok(analysis.targets_for_file(package, file))
+        analysis.targets_for_file(package, file)
     }
 }

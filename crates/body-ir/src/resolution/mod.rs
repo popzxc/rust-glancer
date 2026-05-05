@@ -11,6 +11,7 @@ mod ty;
 mod type_path;
 
 use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
+use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
 use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TraitApplicability, TypePathContext};
 
@@ -36,15 +37,16 @@ use self::{
 
 pub(super) fn resolve_bodies(db: &mut BodyIrDb, def_map: &DefMapDb, semantic_ir: &SemanticIrDb) {
     let packages = (0..db.package_count()).map(PackageSlot).collect::<Vec<_>>();
-    resolve_bodies_for_packages(db, def_map, semantic_ir, &packages);
+    resolve_bodies_for_packages(db, def_map, semantic_ir, &packages)
+        .expect("resident body resolution should not fail");
 }
 
 pub(super) fn resolve_bodies_for_packages(
     db: &mut BodyIrDb,
-    def_map: &DefMapDb,
-    semantic_ir: &SemanticIrDb,
+    def_map: &impl DefMapQuery,
+    semantic_ir: &impl SemanticIrQuery,
     packages: &[PackageSlot],
-) {
+) -> Result<(), PackageStoreError> {
     // Resolution is a mutation pass over already-lowered bodies. Skipped targets intentionally
     // keep their body stores empty so dependency body internals stay cheap by default.
     for package_slot in packages {
@@ -72,10 +74,12 @@ pub(super) fn resolve_bodies_for_packages(
                     },
                     body,
                 )
-                .resolve();
+                .resolve()?;
             }
         }
     }
+
+    Ok(())
 }
 
 pub(super) fn resolve_type_path_in_scope(
@@ -85,9 +89,9 @@ pub(super) fn resolve_type_path_in_scope(
     body_ref: BodyRef,
     scope: ScopeId,
     path: &Path,
-) -> BodyTypePathResolution {
-    let Some(body) = db.body_data(body_ref) else {
-        return BodyTypePathResolution::Unknown;
+) -> Result<BodyTypePathResolution, PackageStoreError> {
+    let Some(body) = db.body_data(body_ref)? else {
+        return Ok(BodyTypePathResolution::Unknown);
     };
 
     BodyTypePathResolver::new(def_map, semantic_ir, body_ref, body).resolve_in_scope(scope, path)
@@ -100,9 +104,9 @@ pub(super) fn resolve_value_path_in_scope(
     body_ref: BodyRef,
     scope: ScopeId,
     path: &Path,
-) -> (BodyResolution, BodyTy) {
-    let Some(body) = db.body_data(body_ref) else {
-        return (BodyResolution::Unknown, BodyTy::Unknown);
+) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
+    let Some(body) = db.body_data(body_ref)? else {
+        return Ok((BodyResolution::Unknown, BodyTy::Unknown));
     };
 
     BodyValuePathResolver::new(def_map, semantic_ir, body_ref, body)
@@ -113,18 +117,20 @@ pub(super) fn ty_for_field(
     def_map: &impl DefMapQuery,
     semantic_ir: &impl SemanticIrQuery,
     field_ref: FieldRef,
-) -> Option<BodyTy> {
+) -> Result<Option<BodyTy>, PackageStoreError> {
     // Field declarations live in Semantic IR, but Analysis expects Body IR's small type
     // vocabulary. Use the owning module as the type-path context for the field signature.
-    let field_data = semantic_ir.field_data(field_ref)?;
-    Some(ty_from_type_ref_in_context(
+    let Some(field_data) = semantic_ir.field_data(field_ref)? else {
+        return Ok(None);
+    };
+    Ok(Some(ty_from_type_ref_in_context(
         def_map,
         semantic_ir,
         &field_data.field.ty,
         TypePathContext::module(field_data.owner_module),
         BodyTy::Unknown,
         &TypeSubst::new(),
-    ))
+    )?))
 }
 
 pub(super) fn semantic_function_applies_to_receiver(
@@ -132,7 +138,7 @@ pub(super) fn semantic_function_applies_to_receiver(
     semantic_ir: &impl SemanticIrQuery,
     function_ref: FunctionRef,
     receiver_ty: &BodyNominalTy,
-) -> bool {
+) -> Result<bool, PackageStoreError> {
     semantic_function_applies_to_receiver_impl(def_map, semantic_ir, function_ref, receiver_ty)
 }
 
@@ -140,7 +146,7 @@ pub(super) fn semantic_trait_function_candidates_for_receiver(
     def_map: &impl DefMapQuery,
     semantic_ir: &impl SemanticIrQuery,
     receiver_ty: &BodyNominalTy,
-) -> Vec<(FunctionRef, TraitApplicability)> {
+) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
     semantic_trait_function_candidates_for_receiver_impl(def_map, semantic_ir, receiver_ty)
 }
 
@@ -150,9 +156,9 @@ pub(super) fn local_function_applies_to_receiver(
     semantic_ir: &impl SemanticIrQuery,
     function_ref: BodyFunctionRef,
     receiver_ty: &BodyLocalNominalTy,
-) -> bool {
-    let Some(body) = db.body_data(function_ref.body) else {
-        return false;
+) -> Result<bool, PackageStoreError> {
+    let Some(body) = db.body_data(function_ref.body)? else {
+        return Ok(false);
     };
     local_function_applies_to_receiver_impl(
         def_map,

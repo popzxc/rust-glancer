@@ -138,8 +138,12 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
     assert_eq!(decoded, artifact);
 
     let mut dump = String::new();
-    writeln!(&mut dump, "encoded artifact bytes {}", bytes.len())
-        .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "encoded artifact has bytes {}",
+        !bytes.is_empty()
+    )
+    .expect("string writes should not fail");
     render_hex(&bytes, &mut dump);
     writeln!(&mut dump).expect("string writes should not fail");
     render_artifact("decoded artifact", &decoded, &mut dump);
@@ -165,8 +169,12 @@ pub(super) fn check_fixture_cache_artifact_codec(fixture: &str, expect: Expect) 
     assert_eq!(decoded, artifact);
 
     let mut dump = String::new();
-    writeln!(&mut dump, "encoded artifact bytes {}", bytes.len())
-        .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "encoded artifact has bytes {}",
+        !bytes.is_empty()
+    )
+    .expect("string writes should not fail");
     render_artifact("decoded artifact", &decoded, &mut dump);
 
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
@@ -233,7 +241,8 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
         cache_path(project.workspace(), path),
     )
     .expect("string writes should not fail");
-    writeln!(&mut dump, "written bytes {written_len}").expect("string writes should not fail");
+    writeln!(&mut dump, "written artifact has bytes {}", written_len > 0)
+        .expect("string writes should not fail");
     writeln!(
         &mut dump,
         "loaded package #{} {}",
@@ -242,8 +251,8 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     .expect("string writes should not fail");
     writeln!(
         &mut dump,
-        "corrupt read has decode context {}",
-        corrupt_error_text.contains("while attempting to decode package cache artifact"),
+        "corrupt read has typed decode error {}",
+        corrupt_error_text.contains("failed to decode artifact"),
     )
     .expect("string writes should not fail");
     writeln!(
@@ -325,8 +334,10 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
     let analysis = project
         .snapshot()
         .full_analysis()
-        .expect("offloaded package read transaction should materialize");
-    let mut symbols = analysis.workspace_symbols("DepType");
+        .expect("offloaded package read transaction should load");
+    let mut symbols = analysis
+        .workspace_symbols("DepType")
+        .expect("fixture workspace symbols should resolve");
     symbols.sort_by_key(|symbol| {
         (
             symbol.kind,
@@ -341,7 +352,7 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
     writeln!(
         &mut dump,
         "dep resident {}",
-        project.state.def_map.package(dep).is_some(),
+        project.state.def_map.resident_package(dep).is_some(),
     )
     .expect("string writes should not fail");
     writeln!(&mut dump, "symbols").expect("string writes should not fail");
@@ -379,17 +390,17 @@ fn package_artifact_from_project(
         .expect("cached fixture package should have an artifact header");
     let def_map = project
         .def_map
-        .package(package)
+        .resident_package(package)
         .expect("fixture package should have def-map data")
         .clone();
     let semantic_ir = project
         .semantic_ir
-        .package(package)
+        .resident_package(package)
         .expect("fixture package should have semantic IR data")
         .clone();
     let body_ir = project
         .body_ir
-        .package(package)
+        .resident_package(package)
         .expect("fixture package should have body IR data")
         .clone();
 

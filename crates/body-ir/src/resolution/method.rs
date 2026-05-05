@@ -4,6 +4,7 @@
 //! It is intentionally not a trait solver: it only compares explicit nominal self types and args.
 
 use rg_item_tree::{GenericParams, TypeRef};
+use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
     FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef, TypePathContext,
 };
@@ -29,24 +30,24 @@ pub(super) fn semantic_function_applies_to_receiver(
     semantic_ir: &impl SemanticIrQuery,
     function_ref: FunctionRef,
     receiver_ty: &BodyNominalTy,
-) -> bool {
+) -> Result<bool, PackageStoreError> {
     // Trait items are shared by all impl candidates in the current best-effort model. Inherent
     // impl items, however, must at least match the receiver's resolved self type.
-    let Some(function_data) = semantic_ir.function_data(function_ref) else {
-        return false;
+    let Some(function_data) = semantic_ir.function_data(function_ref)? else {
+        return Ok(false);
     };
     let ItemOwner::Impl(impl_id) = function_data.owner else {
-        return true;
+        return Ok(true);
     };
     let impl_ref = ImplRef {
         target: function_ref.target,
         id: impl_id,
     };
-    let Some(impl_data) = semantic_ir.impl_data(impl_ref) else {
-        return false;
+    let Some(impl_data) = semantic_ir.impl_data(impl_ref)? else {
+        return Ok(false);
     };
     if !impl_data.resolved_self_tys.contains(&receiver_ty.def) {
-        return false;
+        return Ok(false);
     }
 
     impl_self_args_match_receiver(def_map, semantic_ir, impl_ref, impl_data, receiver_ty)
@@ -59,13 +60,13 @@ pub(super) fn semantic_impl_self_subst(
 ) -> TypeSubst {
     // Convert the impl header into substitutions for method signatures. For
     // `impl<U> Wrapper<U>`, a `Wrapper<User>` receiver gives `U -> User`.
-    let Some(function_data) = semantic_ir.function_data(function_ref) else {
+    let Ok(Some(function_data)) = semantic_ir.function_data(function_ref) else {
         return TypeSubst::new();
     };
     let ItemOwner::Impl(impl_id) = function_data.owner else {
         return TypeSubst::new();
     };
-    let Some(impl_data) = semantic_ir.impl_data(ImplRef {
+    let Ok(Some(impl_data)) = semantic_ir.impl_data(ImplRef {
         target: function_ref.target,
         id: impl_id,
     }) else {
@@ -103,22 +104,22 @@ pub(super) fn semantic_trait_function_candidates_for_receiver(
     def_map: &impl DefMapQuery,
     semantic_ir: &impl SemanticIrQuery,
     receiver_ty: &BodyNominalTy,
-) -> Vec<(FunctionRef, TraitApplicability)> {
+) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
     let mut functions = Vec::new();
 
-    for trait_impl in semantic_ir.trait_impls_for_type(receiver_ty.def) {
+    for trait_impl in semantic_ir.trait_impls_for_type(receiver_ty.def)? {
         let applicability =
-            semantic_trait_impl_applicability(def_map, semantic_ir, trait_impl, receiver_ty);
+            semantic_trait_impl_applicability(def_map, semantic_ir, trait_impl, receiver_ty)?;
         if !applicability.is_applicable() {
             continue;
         }
 
-        for function in semantic_ir.trait_functions(trait_impl.trait_ref) {
+        for function in semantic_ir.trait_functions(trait_impl.trait_ref)? {
             push_function_candidate(&mut functions, function, applicability);
         }
     }
 
-    functions
+    Ok(functions)
 }
 
 pub(super) fn local_function_applies_to_receiver(
@@ -128,23 +129,23 @@ pub(super) fn local_function_applies_to_receiver(
     body: &BodyData,
     function_ref: BodyFunctionRef,
     receiver_ty: &BodyLocalNominalTy,
-) -> bool {
+) -> Result<bool, PackageStoreError> {
     // Body-local inherent impls are selected by exact local item identity, then refined by the
     // same shallow generic-argument compatibility rule used for module-level impls.
     if function_ref.body != receiver_ty.item.body {
-        return false;
+        return Ok(false);
     }
     let Some(function_data) = body.local_function(function_ref.function) else {
-        return false;
+        return Ok(false);
     };
     let BodyFunctionOwner::LocalImpl(impl_id) = function_data.owner;
     let Some(impl_data) = body.local_impl(impl_id) else {
-        return false;
+        return Ok(false);
     };
     if impl_data.self_item != Some(receiver_ty.item) || impl_data.trait_ref.is_some() {
         // Body-local trait impls are an explicit non-goal for now. They are rare enough that
         // modeling their lookup would add more complexity than useful LSP signal at this stage.
-        return false;
+        return Ok(false);
     }
 
     local_impl_self_args_match_receiver(
@@ -208,14 +209,14 @@ fn impl_self_args_match_receiver(
     impl_ref: ImplRef,
     impl_data: &rg_semantic_ir::ImplData,
     receiver_ty: &BodyNominalTy,
-) -> bool {
+) -> Result<bool, PackageStoreError> {
     // This is a shallow compatibility check. Impl type parameters behave as wildcards, while
     // concrete args such as `impl Wrapper<User>` must equal the receiver's known args.
     let TypeRef::Path(self_ty) = &impl_data.self_ty else {
-        return true;
+        return Ok(true);
     };
     let Some(segment) = self_ty.segments.last() else {
-        return true;
+        return Ok(true);
     };
 
     let impl_type_args = segment
@@ -224,7 +225,7 @@ fn impl_self_args_match_receiver(
         .filter_map(generic_arg_type_ref)
         .collect::<Vec<_>>();
     if impl_type_args.is_empty() {
-        return true;
+        return Ok(true);
     }
 
     let receiver_type_args = receiver_ty
@@ -233,7 +234,7 @@ fn impl_self_args_match_receiver(
         .filter_map(body_generic_arg_ty)
         .collect::<Vec<_>>();
     if impl_type_args.len() != receiver_type_args.len() {
-        return false;
+        return Ok(false);
     }
 
     let impl_type_params = impl_type_param_names(&impl_data.generics);
@@ -256,13 +257,13 @@ fn impl_self_args_match_receiver(
             context,
             BodyTy::Syntax(impl_arg.clone()),
             &TypeSubst::new(),
-        );
+        )?;
         if impl_arg_ty != receiver_arg {
-            return false;
+            return Ok(false);
         }
     }
 
-    true
+    Ok(true)
 }
 
 fn semantic_trait_impl_applicability(
@@ -270,16 +271,16 @@ fn semantic_trait_impl_applicability(
     semantic_ir: &impl SemanticIrQuery,
     trait_impl: TraitImplRef,
     receiver_ty: &BodyNominalTy,
-) -> TraitApplicability {
-    let Some(impl_data) = semantic_ir.impl_data(trait_impl.impl_ref) else {
-        return TraitApplicability::No;
+) -> Result<TraitApplicability, PackageStoreError> {
+    let Some(impl_data) = semantic_ir.impl_data(trait_impl.impl_ref)? else {
+        return Ok(TraitApplicability::No);
     };
     if !impl_data.resolved_self_tys.contains(&receiver_ty.def)
         || !impl_data
             .resolved_trait_refs
             .contains(&trait_impl.trait_ref)
     {
-        return TraitApplicability::No;
+        return Ok(TraitApplicability::No);
     }
 
     let header_applicability = if impl_header_is_definitely_direct(impl_data) {
@@ -287,13 +288,13 @@ fn semantic_trait_impl_applicability(
     } else {
         TraitApplicability::Maybe
     };
-    header_applicability.and(impl_self_args_applicability(
+    Ok(header_applicability.and(impl_self_args_applicability(
         def_map,
         semantic_ir,
         trait_impl.impl_ref,
         impl_data,
         receiver_ty,
-    ))
+    )?))
 }
 
 fn local_impl_self_args_match_receiver(
@@ -303,14 +304,14 @@ fn local_impl_self_args_match_receiver(
     body: &BodyData,
     impl_data: &BodyImplData,
     receiver_ty: &BodyLocalNominalTy,
-) -> bool {
+) -> Result<bool, PackageStoreError> {
     // Local impl matching is intentionally shallow. Impl type parameters behave as wildcards;
     // concrete args such as `impl Wrapper<User>` must equal the receiver's known args.
     let TypeRef::Path(self_ty) = &impl_data.self_ty else {
-        return true;
+        return Ok(true);
     };
     let Some(segment) = self_ty.segments.last() else {
-        return true;
+        return Ok(true);
     };
 
     let impl_type_args = segment
@@ -319,7 +320,7 @@ fn local_impl_self_args_match_receiver(
         .filter_map(generic_arg_type_ref)
         .collect::<Vec<_>>();
     if impl_type_args.is_empty() {
-        return true;
+        return Ok(true);
     }
 
     let receiver_type_args = receiver_ty
@@ -328,7 +329,7 @@ fn local_impl_self_args_match_receiver(
         .filter_map(body_generic_arg_ty)
         .collect::<Vec<_>>();
     if impl_type_args.len() != receiver_type_args.len() {
-        return false;
+        return Ok(false);
     }
 
     let impl_type_params = impl_type_param_names(&impl_data.generics);
@@ -345,13 +346,13 @@ fn local_impl_self_args_match_receiver(
             impl_arg,
             impl_data.scope,
             &TypeSubst::new(),
-        );
+        )?;
         if impl_arg_ty != receiver_arg {
-            return false;
+            return Ok(false);
         }
     }
 
-    true
+    Ok(true)
 }
 
 fn impl_self_args_applicability(
@@ -360,14 +361,14 @@ fn impl_self_args_applicability(
     impl_ref: ImplRef,
     impl_data: &rg_semantic_ir::ImplData,
     receiver_ty: &BodyNominalTy,
-) -> TraitApplicability {
+) -> Result<TraitApplicability, PackageStoreError> {
     // This mirrors inherent impl matching, but returns `Maybe` instead of rejecting patterns that
     // contain generic parameters or unsupported pieces we intentionally do not solve.
     let TypeRef::Path(self_ty) = &impl_data.self_ty else {
-        return TraitApplicability::Maybe;
+        return Ok(TraitApplicability::Maybe);
     };
     let Some(segment) = self_ty.segments.last() else {
-        return TraitApplicability::Maybe;
+        return Ok(TraitApplicability::Maybe);
     };
 
     let impl_type_args = segment
@@ -376,7 +377,7 @@ fn impl_self_args_applicability(
         .filter_map(generic_arg_type_ref)
         .collect::<Vec<_>>();
     if impl_type_args.is_empty() {
-        return TraitApplicability::Yes;
+        return Ok(TraitApplicability::Yes);
     }
 
     let receiver_type_args = receiver_ty
@@ -385,7 +386,7 @@ fn impl_self_args_applicability(
         .filter_map(body_generic_arg_ty)
         .collect::<Vec<_>>();
     if impl_type_args.len() != receiver_type_args.len() {
-        return TraitApplicability::Maybe;
+        return Ok(TraitApplicability::Maybe);
     }
 
     let impl_type_params = impl_type_param_names(&impl_data.generics);
@@ -408,7 +409,7 @@ fn impl_self_args_applicability(
             context,
             BodyTy::Syntax(impl_arg.clone()),
             &TypeSubst::new(),
-        );
+        )?;
         if type_arg_comparison_is_uncertain(&impl_arg_ty)
             || type_arg_comparison_is_uncertain(&receiver_arg)
         {
@@ -417,11 +418,11 @@ fn impl_self_args_applicability(
         }
 
         if impl_arg_ty != receiver_arg {
-            return TraitApplicability::No;
+            return Ok(TraitApplicability::No);
         }
     }
 
-    applicability
+    Ok(applicability)
 }
 
 fn impl_type_param_names(generics: &GenericParams) -> Vec<&str> {

@@ -139,7 +139,11 @@ struct TargetBodyIrSnapshot<'a> {
 impl TargetBodyIrSnapshot<'_> {
     fn render(&self) -> String {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
-        let Some(target_bodies) = self.project.body_ir_db().target_bodies(self.target_ref) else {
+        let Some(target_bodies) = self
+            .project
+            .body_ir_db()
+            .resident_target_bodies(self.target_ref)
+        else {
             return dump;
         };
 
@@ -715,7 +719,11 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_local_def(&self, local_def: LocalDefRef) -> String {
-        let Some(target_ir) = self.project.semantic_ir_db().target_ir(local_def.target) else {
+        let Some(target_ir) = self
+            .project
+            .semantic_ir_db()
+            .resident_target_ir(local_def.target)
+        else {
             return "<missing>".to_string();
         };
         let Some(item_id) = target_ir.item_for_local_def(local_def.local_def) else {
@@ -807,7 +815,7 @@ impl TargetBodyIrSnapshot<'_> {
         let target_ir = self
             .project
             .semantic_ir_db()
-            .target_ir(ty.target)
+            .resident_target_ir(ty.target)
             .expect("target semantic IR should exist while rendering body type");
 
         match ty.id {
@@ -994,7 +1002,7 @@ impl TargetBodyIrSnapshot<'_> {
         let module = self
             .project
             .def_map_db()
-            .def_map(module_ref.target)
+            .resident_def_map(module_ref.target)
             .expect("target def map should exist while rendering body IR module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering body IR module path");

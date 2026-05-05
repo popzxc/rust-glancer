@@ -168,7 +168,7 @@ fn targets_for_changed_files(
     let mut targets = Vec::new();
 
     for changed_file in changed_files {
-        for target_ref in analysis.targets_for_file(changed_file.package, changed_file.file) {
+        for target_ref in analysis.targets_for_file(changed_file.package, changed_file.file)? {
             if !targets.contains(&target_ref) {
                 targets.push(target_ref);
             }

@@ -7,7 +7,9 @@ use rg_body_ir::{
     BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyTy, BodyTypePathResolution, ScopeId,
 };
 use rg_def_map::{DefId, Path};
-use rg_semantic_ir::{FieldRef, SemanticTypePathResolution, TypeDefRef, TypePathContext};
+use rg_semantic_ir::{
+    FieldRef, ItemId, SemanticTypePathResolution, TypeDefId, TypeDefRef, TypePathContext,
+};
 
 use super::{Analysis, data::SymbolAt};
 
@@ -23,59 +25,66 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         target: rg_def_map::TargetRef,
         file_id: rg_parse::FileId,
         offset: u32,
-    ) -> Option<BodyTy> {
-        match self.0.symbol_at(target, file_id, offset)? {
+    ) -> anyhow::Result<Option<BodyTy>> {
+        let Some(symbol) = self.0.symbol_at_for_query(target, file_id, offset)? else {
+            return Ok(None);
+        };
+
+        let ty = match symbol {
             SymbolAt::Expr { body, expr } => self
                 .0
                 .body_ir
                 .body_data(body)?
-                .expr(expr)
+                .and_then(|body_data| body_data.expr(expr))
                 .map(|data| data.ty.clone()),
             SymbolAt::Binding { body, binding } => self
                 .0
                 .body_ir
                 .body_data(body)?
-                .binding(binding)
+                .and_then(|body_data| body_data.binding(binding))
                 .map(|data| data.ty.clone()),
             SymbolAt::BodyPath {
                 body, scope, path, ..
-            } => Some(self.ty_for_body_type_path(body, scope, &path)),
+            } => Some(self.ty_for_body_type_path(body, scope, &path)?),
             SymbolAt::BodyValuePath {
                 body, scope, path, ..
             } => {
                 // Value-path type queries should use the same Body IR resolver as the main body
                 // pass, so enum variants and associated functions agree between snapshots and
                 // cursor-driven editor queries.
-                Some(
-                    self.0
-                        .body_ir
-                        .resolve_value_path_in_scope(
-                            &self.0.def_map,
-                            &self.0.semantic_ir,
-                            body,
-                            scope,
-                            &path,
-                        )
-                        .1,
-                )
+                let (_, ty) = self.0.body_ir.resolve_value_path_in_scope(
+                    &self.0.def_map,
+                    &self.0.semantic_ir,
+                    body,
+                    scope,
+                    &path,
+                )?;
+                Some(ty)
             }
-            SymbolAt::Def { def, .. } => self.ty_for_def(def),
-            SymbolAt::Field { field, .. } => self.ty_for_field(field),
+            SymbolAt::Def { def, .. } => self.ty_for_def(def)?,
+            SymbolAt::Field { field, .. } => self.ty_for_field(field)?,
             SymbolAt::LocalItem { item, .. } => {
                 Some(BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)]))
             }
-            SymbolAt::TypePath { context, path, .. } => Some(self.ty_for_type_path(context, &path)),
-            SymbolAt::EnumVariant { variant, .. } => self.ty_for_enum_variant(variant),
+            SymbolAt::TypePath { context, path, .. } => {
+                Some(self.ty_for_type_path(context, &path)?)
+            }
+            SymbolAt::EnumVariant { variant, .. } => self.ty_for_enum_variant(variant)?,
             SymbolAt::UsePath { .. } | SymbolAt::Function { .. } => None,
             SymbolAt::Body { .. } => None,
-        }
+        };
+        Ok(ty)
     }
 
-    pub(super) fn ty_for_type_path(&self, context: TypePathContext, path: &Path) -> BodyTy {
-        semantic_type_path_resolution_to_ty(self.0.semantic_ir.resolve_type_path(
-            &self.0.def_map,
-            context,
-            path,
+    pub(super) fn ty_for_type_path(
+        &self,
+        context: TypePathContext,
+        path: &Path,
+    ) -> anyhow::Result<BodyTy> {
+        Ok(semantic_type_path_resolution_to_ty(
+            self.0
+                .semantic_ir
+                .resolve_type_path(&self.0.def_map, context, path)?,
         ))
     }
 
@@ -84,35 +93,62 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         path: &Path,
-    ) -> BodyTy {
-        body_type_path_resolution_to_ty(self.0.body_ir.resolve_type_path_in_scope(
-            &self.0.def_map,
-            &self.0.semantic_ir,
-            body_ref,
-            scope,
-            path,
+    ) -> anyhow::Result<BodyTy> {
+        Ok(body_type_path_resolution_to_ty(
+            self.0.body_ir.resolve_type_path_in_scope(
+                &self.0.def_map,
+                &self.0.semantic_ir,
+                body_ref,
+                scope,
+                path,
+            )?,
         ))
     }
 
-    fn ty_for_def(&self, def: DefId) -> Option<BodyTy> {
+    fn ty_for_def(&self, def: DefId) -> anyhow::Result<Option<BodyTy>> {
         let DefId::Local(local_def) = def else {
-            return None;
+            return Ok(None);
         };
-        self.0
-            .semantic_ir
-            .type_def_for_local_def(local_def)
-            .map(|ty| BodyTy::Nominal(vec![BodyNominalTy::bare(ty)]))
+        let Some(target_ir) = self.0.semantic_ir.target_ir(local_def.target)? else {
+            return Ok(None);
+        };
+        let Some(item) = target_ir.item_for_local_def(local_def.local_def) else {
+            return Ok(None);
+        };
+        let id = match item {
+            ItemId::Struct(id) => TypeDefId::Struct(id),
+            ItemId::Enum(id) => TypeDefId::Enum(id),
+            ItemId::Union(id) => TypeDefId::Union(id),
+            ItemId::Trait(_)
+            | ItemId::Function(_)
+            | ItemId::TypeAlias(_)
+            | ItemId::Const(_)
+            | ItemId::Static(_) => return Ok(None),
+        };
+
+        Ok(Some(BodyTy::Nominal(vec![BodyNominalTy::bare(
+            TypeDefRef {
+                target: local_def.target,
+                id,
+            },
+        )])))
     }
 
-    fn ty_for_field(&self, field: FieldRef) -> Option<BodyTy> {
-        self.0
+    fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<BodyTy>> {
+        Ok(self
+            .0
             .body_ir
-            .ty_for_field(&self.0.def_map, &self.0.semantic_ir, field)
+            .ty_for_field(&self.0.def_map, &self.0.semantic_ir, field)?)
     }
 
-    fn ty_for_enum_variant(&self, variant: rg_semantic_ir::EnumVariantRef) -> Option<BodyTy> {
-        let data = self.0.semantic_ir.enum_variant_data(variant)?;
-        Some(BodyTy::Nominal(vec![BodyNominalTy::bare(data.owner)]))
+    fn ty_for_enum_variant(
+        &self,
+        variant: rg_semantic_ir::EnumVariantRef,
+    ) -> anyhow::Result<Option<BodyTy>> {
+        let Some(data) = self.0.semantic_ir.enum_variant_data(variant)? else {
+            return Ok(None);
+        };
+        Ok(Some(BodyTy::Nominal(vec![BodyNominalTy::bare(data.owner)])))
     }
 }
 

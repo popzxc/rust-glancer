@@ -6,6 +6,8 @@
 
 use rg_parse::{FileId, Span};
 
+use rg_package_store::PackageStoreError;
+
 use crate::{DefId, DefMapReadTxn, ModuleOrigin, ModuleRef, Path, TargetRef};
 
 /// One def-map source node that can participate in cursor queries.
@@ -29,7 +31,7 @@ impl DefMapReadTxn<'_> {
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Vec<DefMapCursorCandidate> {
+    ) -> Result<Vec<DefMapCursorCandidate>, PackageStoreError> {
         NamespaceCursorScanner {
             def_map: self,
             target,
@@ -49,16 +51,19 @@ struct NamespaceCursorScanner<'txn, 'db> {
 }
 
 impl NamespaceCursorScanner<'_, '_> {
-    fn scan(&self) -> Vec<DefMapCursorCandidate> {
+    fn scan(&self) -> Result<Vec<DefMapCursorCandidate>, PackageStoreError> {
         let mut candidates = Vec::new();
-        self.push_module_candidates(&mut candidates);
-        self.push_local_def_candidates(&mut candidates);
-        self.push_import_candidates(&mut candidates);
-        candidates
+        self.push_module_candidates(&mut candidates)?;
+        self.push_local_def_candidates(&mut candidates)?;
+        self.push_import_candidates(&mut candidates)?;
+        Ok(candidates)
     }
 
-    fn push_module_candidates(&self, candidates: &mut Vec<DefMapCursorCandidate>) {
-        for (module_ref, module) in self.def_map.modules(self.target) {
+    fn push_module_candidates(
+        &self,
+        candidates: &mut Vec<DefMapCursorCandidate>,
+    ) -> Result<(), PackageStoreError> {
+        for (module_ref, module) in self.def_map.modules(self.target)? {
             let declaration_file = match module.origin {
                 ModuleOrigin::Root { .. } => continue,
                 ModuleOrigin::Inline {
@@ -82,10 +87,15 @@ impl NamespaceCursorScanner<'_, '_> {
                 });
             }
         }
+
+        Ok(())
     }
 
-    fn push_local_def_candidates(&self, candidates: &mut Vec<DefMapCursorCandidate>) {
-        for (local_def_ref, local_def) in self.def_map.local_defs(self.target) {
+    fn push_local_def_candidates(
+        &self,
+        candidates: &mut Vec<DefMapCursorCandidate>,
+    ) -> Result<(), PackageStoreError> {
+        for (local_def_ref, local_def) in self.def_map.local_defs(self.target)? {
             if local_def.file_id != self.file_id {
                 continue;
             }
@@ -98,10 +108,15 @@ impl NamespaceCursorScanner<'_, '_> {
                 });
             }
         }
+
+        Ok(())
     }
 
-    fn push_import_candidates(&self, candidates: &mut Vec<DefMapCursorCandidate>) {
-        for (_, import) in self.def_map.imports(self.target) {
+    fn push_import_candidates(
+        &self,
+        candidates: &mut Vec<DefMapCursorCandidate>,
+    ) -> Result<(), PackageStoreError> {
+        for (_, import) in self.def_map.imports(self.target)? {
             if import.source.file_id != self.file_id {
                 continue;
             }
@@ -130,5 +145,7 @@ impl NamespaceCursorScanner<'_, '_> {
                 });
             }
         }
+
+        Ok(())
     }
 }

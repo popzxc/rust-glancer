@@ -8,6 +8,7 @@ use rg_def_map::{Path, TargetRef};
 use rg_item_tree::{
     FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypeRef, WherePredicate,
 };
+use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
 use crate::{
@@ -55,7 +56,7 @@ impl SemanticIrReadTxn<'_> {
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Vec<SemanticCursorCandidate> {
+    ) -> Result<Vec<SemanticCursorCandidate>, PackageStoreError> {
         let mut candidates = Vec::new();
         SignatureCursorScanner {
             semantic_ir: self,
@@ -64,9 +65,9 @@ impl SemanticIrReadTxn<'_> {
             offset,
             candidates: &mut candidates,
         }
-        .scan();
+        .scan()?;
 
-        candidates
+        Ok(candidates)
     }
 }
 
@@ -80,20 +81,21 @@ struct SignatureCursorScanner<'txn, 'db> {
 }
 
 impl SignatureCursorScanner<'_, '_> {
-    fn scan(&mut self) {
-        self.scan_structs();
-        self.scan_unions();
-        self.scan_enums();
-        self.scan_traits();
-        self.scan_impls();
-        self.scan_functions();
-        self.scan_type_aliases();
-        self.scan_consts();
-        self.scan_statics();
+    fn scan(&mut self) -> Result<(), PackageStoreError> {
+        self.scan_structs()?;
+        self.scan_unions()?;
+        self.scan_enums()?;
+        self.scan_traits()?;
+        self.scan_impls()?;
+        self.scan_functions()?;
+        self.scan_type_aliases()?;
+        self.scan_consts()?;
+        self.scan_statics()?;
+        Ok(())
     }
 
-    fn scan_structs(&mut self) {
-        for (ty, data) in self.semantic_ir.structs(self.target) {
+    fn scan_structs(&mut self) -> Result<(), PackageStoreError> {
+        for (ty, data) in self.semantic_ir.structs(self.target)? {
             if data.source.file_id != self.file_id {
                 continue;
             }
@@ -101,10 +103,12 @@ impl SignatureCursorScanner<'_, '_> {
             self.scan_generic_params(context, &data.generics);
             self.scan_field_list(ty, context, &data.fields);
         }
+
+        Ok(())
     }
 
-    fn scan_unions(&mut self) {
-        for (ty, data) in self.semantic_ir.unions(self.target) {
+    fn scan_unions(&mut self) -> Result<(), PackageStoreError> {
+        for (ty, data) in self.semantic_ir.unions(self.target)? {
             if data.source.file_id != self.file_id {
                 continue;
             }
@@ -121,10 +125,12 @@ impl SignatureCursorScanner<'_, '_> {
                 self.push_type_ref(context, &field.ty);
             }
         }
+
+        Ok(())
     }
 
-    fn scan_enums(&mut self) {
-        for (ty, data) in self.semantic_ir.enums(self.target) {
+    fn scan_enums(&mut self) -> Result<(), PackageStoreError> {
+        for (ty, data) in self.semantic_ir.enums(self.target)? {
             if data.source.file_id != self.file_id {
                 continue;
             }
@@ -145,10 +151,12 @@ impl SignatureCursorScanner<'_, '_> {
                 self.scan_field_list_for_owner(context, &variant.fields);
             }
         }
+
+        Ok(())
     }
 
-    fn scan_traits(&mut self) {
-        for (_, data) in self.semantic_ir.traits(self.target) {
+    fn scan_traits(&mut self) -> Result<(), PackageStoreError> {
+        for (_, data) in self.semantic_ir.traits(self.target)? {
             if data.source.file_id != self.file_id {
                 continue;
             }
@@ -156,14 +164,16 @@ impl SignatureCursorScanner<'_, '_> {
             self.scan_generic_params(context, &data.generics);
             self.scan_type_bounds(context, &data.super_traits);
         }
+
+        Ok(())
     }
 
-    fn scan_impls(&mut self) {
-        for (impl_ref, data) in self.semantic_ir.impls(self.target) {
+    fn scan_impls(&mut self) -> Result<(), PackageStoreError> {
+        for (impl_ref, data) in self.semantic_ir.impls(self.target)? {
             if data.source.file_id != self.file_id {
                 continue;
             }
-            let Some(context) = self.owner_context(ItemOwner::Impl(impl_ref.id)) else {
+            let Some(context) = self.owner_context(ItemOwner::Impl(impl_ref.id))? else {
                 continue;
             };
             self.scan_generic_params(context, &data.generics);
@@ -172,10 +182,12 @@ impl SignatureCursorScanner<'_, '_> {
             }
             self.push_type_ref(context, &data.self_ty);
         }
+
+        Ok(())
     }
 
-    fn scan_functions(&mut self) {
-        for (function_ref, data) in self.semantic_ir.functions(self.target) {
+    fn scan_functions(&mut self) -> Result<(), PackageStoreError> {
+        for (function_ref, data) in self.semantic_ir.functions(self.target)? {
             if data.source.file_id != self.file_id {
                 continue;
             }
@@ -183,7 +195,7 @@ impl SignatureCursorScanner<'_, '_> {
                 let span = data.name_span.unwrap_or(data.span);
                 self.push_function(function_ref, span);
             }
-            let Some(context) = self.owner_context(data.owner) else {
+            let Some(context) = self.owner_context(data.owner)? else {
                 continue;
             };
             if let Some(generics) = data.signature.generics() {
@@ -198,14 +210,16 @@ impl SignatureCursorScanner<'_, '_> {
                 self.push_type_ref(context, ret_ty);
             }
         }
+
+        Ok(())
     }
 
-    fn scan_type_aliases(&mut self) {
-        for (_, data) in self.semantic_ir.type_aliases(self.target) {
+    fn scan_type_aliases(&mut self) -> Result<(), PackageStoreError> {
+        for (_, data) in self.semantic_ir.type_aliases(self.target)? {
             if data.source.file_id != self.file_id {
                 continue;
             }
-            let Some(context) = self.owner_context(data.owner) else {
+            let Some(context) = self.owner_context(data.owner)? else {
                 continue;
             };
             if let Some(generics) = data.signature.generics() {
@@ -216,24 +230,28 @@ impl SignatureCursorScanner<'_, '_> {
                 self.push_type_ref(context, ty);
             }
         }
+
+        Ok(())
     }
 
-    fn scan_consts(&mut self) {
-        for (_, data) in self.semantic_ir.consts(self.target) {
+    fn scan_consts(&mut self) -> Result<(), PackageStoreError> {
+        for (_, data) in self.semantic_ir.consts(self.target)? {
             if data.source.file_id != self.file_id {
                 continue;
             }
-            let Some(context) = self.owner_context(data.owner) else {
+            let Some(context) = self.owner_context(data.owner)? else {
                 continue;
             };
             if let Some(ty) = data.signature.ty() {
                 self.push_type_ref(context, ty);
             }
         }
+
+        Ok(())
     }
 
-    fn scan_statics(&mut self) {
-        for (_, data) in self.semantic_ir.statics(self.target) {
+    fn scan_statics(&mut self) -> Result<(), PackageStoreError> {
+        for (_, data) in self.semantic_ir.statics(self.target)? {
             if data.source.file_id != self.file_id {
                 continue;
             }
@@ -241,6 +259,8 @@ impl SignatureCursorScanner<'_, '_> {
                 self.push_type_ref(TypePathContext::module(data.owner), ty);
             }
         }
+
+        Ok(())
     }
 
     fn scan_field_list(&mut self, owner: TypeDefRef, context: TypePathContext, fields: &FieldList) {
@@ -358,7 +378,10 @@ impl SignatureCursorScanner<'_, '_> {
         }
     }
 
-    fn owner_context(&self, owner: ItemOwner) -> Option<TypePathContext> {
+    fn owner_context(
+        &self,
+        owner: ItemOwner,
+    ) -> Result<Option<TypePathContext>, PackageStoreError> {
         self.semantic_ir
             .type_path_context_for_owner(self.target, owner)
     }

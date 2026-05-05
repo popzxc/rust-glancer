@@ -1,41 +1,162 @@
 //! Package-slot-indexed storage for retained analysis package data.
 //!
 //! Package payloads are retained behind `Arc` while resident, and selected slots can be marked as
-//! offloaded after a durable package artifact is written by the project cache layer. The store does
-//! not know where offloaded data lives; callers must materialize those packages into a read
-//! transaction before running queries over them.
+//! offloaded after a durable package artifact is written by the project cache layer. Read
+//! transactions can receive a loader for offloaded slots, so callers still work with logical
+//! package slots instead of treating residency as project topology.
 
 mod txn;
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_workspace::PackageSlot;
 
-pub use self::txn::{PackageRead, PackageStoreReadTxn};
+pub use self::txn::{LoadPackage, PackageLoader, PackageRead, PackageStoreReadTxn};
 
-/// Package slot proven to come from a resident package-store entry.
-///
-/// This is intentionally distinct from `PackageSlot`: resident iterators describe storage state,
-/// not the full project graph. Callers that really need to promote it back to a graph slot must do
-/// so explicitly at the boundary where that choice is still visible in code review.
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ResidentPackageSlot(PackageSlot);
+/// Failure to read one logical package from package storage.
+#[derive(Debug, thiserror::Error)]
+pub enum PackageStoreError {
+    #[error("package slot {slot:?} is missing from the store")]
+    MissingSlot { slot: PackageSlot },
+    #[error("package slot {slot:?} is outside this read transaction's package subset")]
+    ExcludedSlot { slot: PackageSlot },
+    #[error("offloaded package slot {slot:?} {source}")]
+    Load {
+        slot: PackageSlot,
+        #[source]
+        source: PackageLoadError,
+    },
+}
 
-impl ResidentPackageSlot {
-    fn new(package: PackageSlot) -> Self {
-        Self(package)
+impl PackageStoreError {
+    pub fn missing_package(slot: PackageSlot) -> Self {
+        Self::Load {
+            slot,
+            source: PackageLoadError::MissingPackage,
+        }
     }
 
-    pub fn expose_package_slot(self) -> PackageSlot {
-        self.0
+    pub fn io(slot: PackageSlot, path: PathBuf, source: std::io::Error) -> Self {
+        Self::Load {
+            slot,
+            source: PackageLoadError::Io { path, source },
+        }
+    }
+
+    pub fn malformed_cache(slot: PackageSlot, source: MalformedCacheError) -> Self {
+        Self::Load {
+            slot,
+            source: PackageLoadError::MalformedCache { source },
+        }
+    }
+
+    pub fn stale_package(slot: PackageSlot, reason: impl Into<String>) -> Self {
+        Self::Load {
+            slot,
+            source: PackageLoadError::StalePackage {
+                reason: reason.into(),
+            },
+        }
+    }
+}
+
+/// Failure reported by the backing package loader for an offloaded slot.
+#[derive(Debug, thiserror::Error)]
+pub enum PackageLoadError {
+    #[error("is missing from backing storage")]
+    MissingPackage,
+    #[error("could not be read from backing storage at {}", path.display())]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("has malformed cache data: {source}")]
+    MalformedCache {
+        #[source]
+        source: MalformedCacheError,
+    },
+    #[error("is stale: {reason}")]
+    StalePackage { reason: String },
+}
+
+/// Cache artifact contents that were readable but cannot be trusted as a package payload.
+#[derive(Debug, thiserror::Error)]
+pub enum MalformedCacheError {
+    #[error("failed to decode artifact {}: {reason}", path.display())]
+    Decode { path: PathBuf, reason: String },
+    #[error(
+        "artifact {} belongs to package #{} `{}`, expected package #{} `{}`",
+        path.display(),
+        actual_slot,
+        actual_name,
+        expected_slot,
+        expected_name,
+    )]
+    HeaderMismatch {
+        path: PathBuf,
+        actual_slot: u64,
+        actual_name: String,
+        expected_slot: u64,
+        expected_name: String,
+    },
+    #[error("invalid artifact payload: {reason}")]
+    InvalidPayload { reason: String },
+}
+
+/// Package slots visible inside one read transaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageSubset {
+    packages: Vec<bool>,
+}
+
+impl PackageSubset {
+    /// Includes every slot in a package-store snapshot.
+    pub fn all(package_count: usize) -> Self {
+        Self {
+            packages: vec![true; package_count],
+        }
+    }
+
+    /// Starts with every slot excluded so callers can add the logical view they need.
+    pub fn empty(package_count: usize) -> Self {
+        Self {
+            packages: vec![false; package_count],
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.packages.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.packages.is_empty()
+    }
+
+    pub fn contains(&self, package: PackageSlot) -> bool {
+        self.packages.get(package.0).copied().unwrap_or(false)
+    }
+
+    pub fn insert(&mut self, package: PackageSlot) -> bool {
+        let Some(slot) = self.packages.get_mut(package.0) else {
+            return false;
+        };
+        let was_absent = !*slot;
+        *slot = true;
+        was_absent
     }
 }
 
 /// Retained storage state for one package slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum PackageEntry<T> {
+pub struct PackageEntry<T> {
+    state: PackageEntryState<T>,
+}
+
+/// Internal representation for one package-store entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PackageEntryState<T> {
     Resident(Arc<T>),
     Offloaded,
 }
@@ -50,10 +171,7 @@ impl<T> PackageStore<T> {
     /// Freezes freshly built package payloads into the retained store.
     pub fn from_vec(packages: Vec<T>) -> Self {
         Self {
-            packages: packages
-                .into_iter()
-                .map(|package| PackageEntry::Resident(Arc::new(package)))
-                .collect(),
+            packages: packages.into_iter().map(PackageEntry::resident).collect(),
         }
     }
 
@@ -65,56 +183,90 @@ impl<T> PackageStore<T> {
         self.packages.shrink_to_fit();
     }
 
-    /// Iterates over resident package payloads, skipping offloaded slots.
-    pub fn resident_packages(&self) -> impl Iterator<Item = &T> + '_ {
-        self.packages.iter().filter_map(PackageEntry::as_ref)
+    /// Returns one raw package storage entry by package slot.
+    pub fn raw_entry(&self, package: PackageSlot) -> Option<&PackageEntry<T>> {
+        self.packages.get(package.0)
     }
 
-    /// Iterates over resident package payloads together with their original package slots.
-    pub fn resident_packages_with_slots(
-        &self,
-    ) -> impl Iterator<Item = (ResidentPackageSlot, &T)> + '_ {
+    /// Returns one mutable raw package storage entry by package slot.
+    pub fn raw_entry_mut(&mut self, package: PackageSlot) -> Option<&mut PackageEntry<T>> {
+        self.packages.get_mut(package.0)
+    }
+
+    /// Iterates over all raw package storage entries, including offloaded slots.
+    pub fn raw_entries(&self) -> impl Iterator<Item = &PackageEntry<T>> + '_ {
+        self.packages.iter()
+    }
+
+    /// Iterates over all raw package storage entries together with their original package slots.
+    pub fn raw_entries_with_slots(&self) -> impl Iterator<Item = (PackageSlot, &PackageEntry<T>)> {
         self.packages
             .iter()
             .enumerate()
-            .filter_map(|(package_idx, package)| {
-                package
-                    .as_ref()
-                    .map(|package| (ResidentPackageSlot::new(PackageSlot(package_idx)), package))
-            })
+            .map(|(package_idx, entry)| (PackageSlot(package_idx), entry))
     }
 
-    pub fn get(&self, package: PackageSlot) -> Option<&T> {
-        self.packages.get(package.0)?.as_ref()
+    /// Iterates over all mutable raw package storage entries, including offloaded slots.
+    pub fn raw_entries_mut(&mut self) -> impl Iterator<Item = &mut PackageEntry<T>> + '_ {
+        self.packages.iter_mut()
     }
 
-    pub fn get_arc(&self, package: PackageSlot) -> Option<Arc<T>> {
-        self.packages.get(package.0)?.resident_arc()
+    /// Builds a logical read transaction over every package slot.
+    ///
+    /// Resident packages are available immediately. Offloaded packages are represented by lazy
+    /// entries and loaded through the injected loader only if a query touches that slot.
+    pub fn read_txn<'db>(&'db self, loader: PackageLoader<'db, T>) -> PackageStoreReadTxn<'db, T> {
+        PackageStoreReadTxn::from_store_entries(
+            self.packages.iter().map(PackageEntry::resident_arc_for_txn),
+            loader,
+        )
+    }
+
+    /// Builds a logical read transaction over selected package slots.
+    ///
+    /// Excluded packages remain present as logical slots, but direct reads fail with an explicit
+    /// subset error while broad materialization helpers skip them.
+    pub fn read_txn_for_subset<'db>(
+        &'db self,
+        loader: PackageLoader<'db, T>,
+        subset: &PackageSubset,
+    ) -> PackageStoreReadTxn<'db, T> {
+        debug_assert_eq!(
+            subset.len(),
+            self.packages.len(),
+            "package subset should belong to the same package-store snapshot",
+        );
+
+        PackageStoreReadTxn::from_subset_store_entries(
+            self.packages
+                .iter()
+                .enumerate()
+                .map(|(package_idx, entry)| {
+                    let package = PackageSlot(package_idx);
+                    let resident_package = entry.resident_arc_for_txn();
+                    (subset.contains(package), resident_package)
+                }),
+            loader,
+        )
     }
 
     /// Replaces one package payload while preserving all other cloned snapshot entries.
     pub fn replace(&mut self, package: PackageSlot, value: T) -> Option<()> {
         let slot = self.packages.get_mut(package.0)?;
-        *slot = PackageEntry::Resident(Arc::new(value));
+        *slot = PackageEntry::resident(value);
         Some(())
     }
 
     /// Drops one resident payload after a durable package artifact has been written.
     pub fn offload(&mut self, package: PackageSlot) -> Option<()> {
         let slot = self.packages.get_mut(package.0)?;
-        *slot = PackageEntry::Offloaded;
+        *slot = PackageEntry::offloaded();
         Some(())
-    }
-
-    pub fn is_resident(&self, package: PackageSlot) -> bool {
-        self.packages
-            .get(package.0)
-            .is_some_and(PackageEntry::is_resident)
     }
 
     /// Returns mutable access only when this snapshot uniquely owns the package payload.
     pub fn get_unique_mut(&mut self, package: PackageSlot) -> Option<&mut T> {
-        self.packages.get_mut(package.0)?.unique_mut()
+        self.packages.get_mut(package.0)?.as_resident_unique_mut()
     }
 
     /// Returns mutable access, cloning the package payload if another snapshot still shares it.
@@ -124,38 +276,46 @@ impl<T> PackageStore<T> {
     {
         self.packages.get_mut(package.0)?.make_mut()
     }
-
-    /// Iterates over package payloads that this snapshot uniquely owns.
-    pub fn resident_packages_unique_mut(&mut self) -> impl Iterator<Item = &mut T> + '_ {
-        self.packages
-            .iter_mut()
-            .filter_map(PackageEntry::unique_mut)
-    }
 }
 
 impl<T> PackageEntry<T> {
-    fn as_ref(&self) -> Option<&T> {
-        match self {
-            Self::Resident(package) => Some(package.as_ref()),
-            Self::Offloaded => None,
+    fn resident(package: T) -> Self {
+        Self {
+            state: PackageEntryState::Resident(Arc::new(package)),
         }
     }
 
-    fn resident_arc(&self) -> Option<Arc<T>> {
-        match self {
-            Self::Resident(package) => Some(Arc::clone(package)),
-            Self::Offloaded => None,
+    fn offloaded() -> Self {
+        Self {
+            state: PackageEntryState::Offloaded,
         }
     }
 
-    fn is_resident(&self) -> bool {
-        matches!(self, Self::Resident(_))
+    /// Returns the resident package payload, if this slot is currently in memory.
+    pub fn as_resident(&self) -> Option<&T> {
+        match &self.state {
+            PackageEntryState::Resident(package) => Some(package.as_ref()),
+            PackageEntryState::Offloaded => None,
+        }
     }
 
-    fn unique_mut(&mut self) -> Option<&mut T> {
-        match self {
-            Self::Resident(package) => Arc::get_mut(package),
-            Self::Offloaded => None,
+    /// Returns whether this slot has been intentionally dropped from resident memory.
+    pub fn is_offloaded(&self) -> bool {
+        matches!(self.state, PackageEntryState::Offloaded)
+    }
+
+    /// Returns unique mutable access to the resident payload, if no cloned snapshot shares it.
+    pub fn as_resident_unique_mut(&mut self) -> Option<&mut T> {
+        match &mut self.state {
+            PackageEntryState::Resident(package) => Arc::get_mut(package),
+            PackageEntryState::Offloaded => None,
+        }
+    }
+
+    fn resident_arc_for_txn(&self) -> Option<Arc<T>> {
+        match &self.state {
+            PackageEntryState::Resident(package) => Some(Arc::clone(package)),
+            PackageEntryState::Offloaded => None,
         }
     }
 
@@ -163,9 +323,9 @@ impl<T> PackageEntry<T> {
     where
         T: Clone,
     {
-        match self {
-            Self::Resident(package) => Some(Arc::make_mut(package)),
-            Self::Offloaded => None,
+        match &mut self.state {
+            PackageEntryState::Resident(package) => Some(Arc::make_mut(package)),
+            PackageEntryState::Offloaded => None,
         }
     }
 }
@@ -175,8 +335,8 @@ where
     T: MemorySize,
 {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        for package in &self.packages {
-            if let PackageEntry::Resident(package) = package {
+        for entry in &self.packages {
+            if let Some(package) = entry.as_resident() {
                 package.record_memory_children(recorder);
             }
         }
@@ -185,11 +345,30 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use rg_workspace::PackageSlot;
 
-    use crate::{PackageStore, PackageStoreReadTxn};
+    use crate::{LoadPackage, PackageLoader, PackageStore, PackageStoreError, PackageSubset};
+
+    #[derive(Debug)]
+    struct TestLoader {
+        loads: AtomicUsize,
+        packages: Vec<&'static str>,
+    }
+
+    impl LoadPackage<&'static str> for TestLoader {
+        fn load(&self, slot: PackageSlot) -> Result<Arc<&'static str>, PackageStoreError> {
+            self.loads.fetch_add(1, Ordering::Relaxed);
+            let Some(package) = self.packages.get(slot.0) else {
+                return Err(PackageStoreError::MissingSlot { slot });
+            };
+            Ok(Arc::new(*package))
+        }
+    }
 
     #[test]
     fn cloned_stores_replace_packages_independently() {
@@ -200,36 +379,64 @@ mod tests {
             .replace(PackageSlot(1), "rebuilt")
             .expect("package slot should exist");
 
-        assert_eq!(original.get(PackageSlot(0)), Some(&"workspace"));
-        assert_eq!(original.get(PackageSlot(1)), Some(&"dependency"));
-        assert_eq!(changed.get(PackageSlot(0)), Some(&"workspace"));
-        assert_eq!(changed.get(PackageSlot(1)), Some(&"rebuilt"));
+        let original_residents = original
+            .raw_entries_with_slots()
+            .filter_map(|(slot, entry)| entry.as_resident().map(|package| (slot.0, *package)))
+            .collect::<Vec<_>>();
+        let changed_residents = changed
+            .raw_entries_with_slots()
+            .filter_map(|(slot, entry)| entry.as_resident().map(|package| (slot.0, *package)))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            original_residents,
+            vec![(0, "workspace"), (1, "dependency")]
+        );
+        assert_eq!(changed_residents, vec![(0, "workspace"), (1, "rebuilt")]);
     }
 
     #[test]
     fn read_transactions_return_package_handles() {
-        let txn = PackageStoreReadTxn::from_sparse_arcs(vec![Some(Arc::new("workspace"))]);
+        let store = PackageStore::from_vec(vec!["workspace"]);
+        let loader = Arc::new(TestLoader {
+            loads: AtomicUsize::new(0),
+            packages: vec!["workspace"],
+        });
+        let txn = store.read_txn(PackageLoader::from_arc(loader));
 
-        let package = txn.read(PackageSlot(0)).expect("package slot should exist");
+        let package = txn
+            .read(PackageSlot(0))
+            .expect("package should be materialized");
 
         assert_eq!(*package, "workspace");
         assert_eq!(package.into_ref(), &"workspace");
     }
 
     #[test]
-    fn sparse_read_transactions_preserve_original_package_slots() {
-        let txn = PackageStoreReadTxn::from_sparse_arcs(vec![
-            Some(Arc::new("workspace")),
-            None,
-            Some(Arc::new("dependency")),
-        ]);
+    fn subset_read_transactions_preserve_original_package_slots() {
+        let store = PackageStore::from_vec(vec!["workspace", "hidden", "dependency"]);
+        let loader = Arc::new(TestLoader {
+            loads: AtomicUsize::new(0),
+            packages: vec!["workspace", "hidden", "dependency"],
+        });
+        let mut subset = PackageSubset::empty(store.len());
+        subset.insert(PackageSlot(0));
+        subset.insert(PackageSlot(2));
+        let txn = store.read_txn_for_subset(PackageLoader::from_arc(loader), &subset);
 
         let packages_with_slots = txn
-            .packages_with_slots()
+            .materialize_included_packages_with_slots()
+            .expect("materialized packages should iterate")
+            .into_iter()
             .map(|(slot, package)| (slot.0, *package))
             .collect::<Vec<_>>();
 
-        assert!(txn.read(PackageSlot(1)).is_none());
+        assert!(matches!(
+            txn.read(PackageSlot(1)),
+            Err(PackageStoreError::ExcludedSlot {
+                slot: PackageSlot(1)
+            }),
+        ));
         assert_eq!(
             packages_with_slots,
             vec![(0, "workspace"), (2, "dependency")]
@@ -244,29 +451,109 @@ mod tests {
             .offload(PackageSlot(1))
             .expect("package slot should exist");
 
-        assert_eq!(store.get(PackageSlot(0)), Some(&"workspace"));
-        assert_eq!(store.get(PackageSlot(1)), None);
-        assert!(!store.is_resident(PackageSlot(1)));
+        let residents = store
+            .raw_entries_with_slots()
+            .filter_map(|(slot, entry)| entry.as_resident().map(|package| (slot.0, *package)))
+            .collect::<Vec<_>>();
+
+        assert_eq!(residents, vec![(0, "workspace")]);
+        assert!(
+            store
+                .raw_entry(PackageSlot(1))
+                .expect("offloaded package slot should exist")
+                .is_offloaded()
+        );
     }
 
     #[test]
-    fn resident_iterators_preserve_original_package_slots() {
+    fn read_transactions_load_offloaded_packages_lazily() {
+        let mut store = PackageStore::from_vec(vec!["workspace", "dependency"]);
+        store
+            .offload(PackageSlot(1))
+            .expect("package slot should exist");
+
+        let loader = Arc::new(TestLoader {
+            loads: AtomicUsize::new(0),
+            packages: vec!["workspace", "dependency"],
+        });
+        let txn = store.read_txn(PackageLoader::from_arc(loader.clone()));
+
+        assert_eq!(loader.loads.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            *txn.read(PackageSlot(0))
+                .expect("resident package should be readable"),
+            "workspace",
+        );
+        assert_eq!(loader.loads.load(Ordering::Relaxed), 0);
+
+        assert_eq!(
+            *txn.read(PackageSlot(1))
+                .expect("offloaded package should be loaded"),
+            "dependency",
+        );
+        assert_eq!(
+            *txn.read(PackageSlot(1))
+                .expect("offloaded package should stay cached"),
+            "dependency",
+        );
+        assert_eq!(loader.loads.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn subset_read_transactions_exclude_out_of_subset_packages() {
+        let mut store = PackageStore::from_vec(vec!["workspace", "dependency", "unrelated"]);
+        store
+            .offload(PackageSlot(1))
+            .expect("package slot should exist");
+
+        let loader = Arc::new(TestLoader {
+            loads: AtomicUsize::new(0),
+            packages: vec!["workspace", "dependency", "unrelated"],
+        });
+        let mut subset = PackageSubset::empty(store.len());
+        subset.insert(PackageSlot(0));
+        subset.insert(PackageSlot(1));
+        let txn = store.read_txn_for_subset(PackageLoader::from_arc(loader.clone()), &subset);
+
+        assert_eq!(
+            *txn.read(PackageSlot(1))
+                .expect("included offloaded package should be loaded"),
+            "dependency",
+        );
+        assert!(matches!(
+            txn.read(PackageSlot(2)),
+            Err(PackageStoreError::ExcludedSlot {
+                slot: PackageSlot(2)
+            }),
+        ));
+        assert_eq!(loader.loads.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn raw_entries_preserve_original_package_slots() {
         let mut store = PackageStore::from_vec(vec!["workspace", "offloaded", "dependency"]);
 
         store
             .offload(PackageSlot(1))
             .expect("package slot should exist");
 
-        let residents = store.resident_packages().copied().collect::<Vec<_>>();
-        let residents_with_slots = store
-            .resident_packages_with_slots()
-            .map(|(slot, package)| (slot.expose_package_slot().0, *package))
+        let resident_entries = store
+            .raw_entries()
+            .filter_map(|entry| entry.as_resident().copied())
+            .collect::<Vec<_>>();
+        let raw_entries_with_slots = store
+            .raw_entries_with_slots()
+            .map(|(slot, entry)| (slot.0, entry.as_resident().copied(), entry.is_offloaded()))
             .collect::<Vec<_>>();
 
-        assert_eq!(residents, vec!["workspace", "dependency"]);
+        assert_eq!(resident_entries, vec!["workspace", "dependency"]);
         assert_eq!(
-            residents_with_slots,
-            vec![(0, "workspace"), (2, "dependency")]
+            raw_entries_with_slots,
+            vec![
+                (0, Some("workspace"), false),
+                (1, None, true),
+                (2, Some("dependency"), false),
+            ]
         );
     }
 }

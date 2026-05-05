@@ -1,22 +1,21 @@
 //! Resident semantic IR database and item-query helpers.
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 
 use rg_def_map::{
-    DefMapDb, LocalDefRef, ModuleRef, PackageSlot, Path, ResidentTargetRef, TargetRef,
+    DefMapDb, LocalDefRef, ModuleRef, Package as DefMapPackage, PackageSlot, Path,
+    ResidentTargetRef, TargetRef,
 };
 use rg_item_tree::FieldKey;
-use rg_package_store::PackageStore;
+use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_parse::TargetId;
 
 use crate::{
     AssocItemId, ConstData, ConstRef, EnumData, EnumVariantData, EnumVariantRef, FieldData,
     FieldRef, FunctionData, FunctionRef, ImplData, ImplRef, ItemId, ItemOwner, PackageIr,
-    SemanticIrStats, SemanticTypePathResolution, StaticData, StaticRef, StructData, TargetIr,
-    TraitData, TraitImplRef, TraitRef, TypeAliasData, TypeAliasRef, TypeDefId, TypeDefRef,
-    TypePathContext, UnionData, lower, push_unique, resolution,
+    SemanticIrReadTxn, SemanticIrStats, SemanticTypePathResolution, StaticData, StaticRef,
+    StructData, TargetIr, TraitData, TraitImplRef, TraitRef, TypeAliasData, TypeAliasRef,
+    TypeDefId, TypeDefRef, TypePathContext, UnionData, lower, push_unique, resolution,
 };
 
 /// Semantic item graph for all analyzed packages and targets.
@@ -41,12 +40,15 @@ impl SemanticIrDb {
         Ok(db)
     }
 
-    /// Returns a new semantic-IR snapshot with selected packages rebuilt.
-    pub fn rebuild_packages(
-        &self,
+    /// Returns a new semantic-IR snapshot with selected packages rebuilt against lazy read views.
+    pub fn rebuild_packages_with_loaders<'db>(
+        &'db self,
         item_tree: &rg_item_tree::ItemTreeDb,
-        def_map: &rg_def_map::DefMapDb,
+        def_map: &'db rg_def_map::DefMapDb,
         packages: &[PackageSlot],
+        def_map_loader: PackageLoader<'db, DefMapPackage>,
+        semantic_ir_loader: PackageLoader<'db, PackageIr>,
+        subset: &PackageSubset,
     ) -> anyhow::Result<Self> {
         let mut next = self.clone();
         let packages = normalized_package_slots(packages);
@@ -61,7 +63,17 @@ impl SemanticIrDb {
             })?;
         }
 
-        resolution::resolve_impl_headers_for_packages(&mut next, def_map, &packages);
+        let def_map_txn = def_map.read_txn_for_subset(def_map_loader, subset);
+        let semantic_ir_txn = next.read_txn_for_subset(semantic_ir_loader, subset);
+        let impl_resolutions = resolution::impl_header_resolutions_for_packages(
+            &semantic_ir_txn,
+            &def_map_txn,
+            &packages,
+        )
+        .context("while attempting to resolve rebuilt semantic IR impl headers")?;
+        drop(semantic_ir_txn);
+        resolution::apply_impl_header_resolutions(&mut next, impl_resolutions);
+
         next.shrink_packages(&packages);
         Ok(next)
     }
@@ -74,8 +86,10 @@ impl SemanticIrDb {
 
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
-        for package in self.packages.resident_packages_unique_mut() {
-            package.shrink_to_fit();
+        for entry in self.packages.raw_entries_mut() {
+            if let Some(package) = entry.as_resident_unique_mut() {
+                package.shrink_to_fit();
+            }
         }
     }
 
@@ -91,7 +105,10 @@ impl SemanticIrDb {
     pub fn stats(&self) -> SemanticIrStats {
         let mut stats = SemanticIrStats::default();
 
-        for package in self.packages.resident_packages() {
+        for entry in self.packages.raw_entries() {
+            let Some(package) = entry.as_resident() else {
+                continue;
+            };
             for target in package.targets() {
                 let items = target.items();
                 stats.target_count += 1;
@@ -115,13 +132,26 @@ impl SemanticIrDb {
         self.packages.len()
     }
 
-    /// Returns one package by package slot.
-    pub fn package(&self, package: PackageSlot) -> Option<&PackageIr> {
-        self.packages.get(package)
+    /// Returns one resident package by package slot.
+    pub fn resident_package(&self, package: PackageSlot) -> Option<&PackageIr> {
+        self.packages
+            .raw_entry(package)
+            .and_then(|entry| entry.as_resident())
     }
 
-    pub fn package_arc(&self, package: PackageSlot) -> Option<Arc<PackageIr>> {
-        self.packages.get_arc(package)
+    pub fn read_txn<'db>(
+        &'db self,
+        loader: PackageLoader<'db, PackageIr>,
+    ) -> SemanticIrReadTxn<'db> {
+        SemanticIrReadTxn::from_package_store(self.packages.read_txn(loader))
+    }
+
+    pub fn read_txn_for_subset<'db>(
+        &'db self,
+        loader: PackageLoader<'db, PackageIr>,
+        subset: &PackageSubset,
+    ) -> SemanticIrReadTxn<'db> {
+        SemanticIrReadTxn::from_package_store(self.packages.read_txn_for_subset(loader, subset))
     }
 
     pub fn replace_package(&mut self, package: PackageSlot, package_ir: PackageIr) -> Option<()> {
@@ -132,15 +162,18 @@ impl SemanticIrDb {
         self.packages.offload(package)
     }
 
-    /// Returns one target semantic IR by project-wide target reference.
-    pub fn target_ir(&self, target: TargetRef) -> Option<&TargetIr> {
-        self.package(target.package)?.target(target.target)
+    /// Returns one resident target semantic IR by project-wide target reference.
+    pub fn resident_target_ir(&self, target: TargetRef) -> Option<&TargetIr> {
+        self.resident_package(target.package)?.target(target.target)
     }
 
     /// Iterates over every resident target IR together with a resident-only target reference.
     pub fn resident_target_irs(&self) -> impl Iterator<Item = (ResidentTargetRef, &TargetIr)> {
         self.packages
-            .resident_packages_with_slots()
+            .raw_entries_with_slots()
+            .filter_map(|(package_slot, entry)| {
+                entry.as_resident().map(|package| (package_slot, package))
+            })
             .flat_map(|(package_slot, package)| {
                 package
                     .targets()
@@ -163,7 +196,7 @@ impl SemanticIrDb {
         &self,
         target: TargetRef,
     ) -> impl Iterator<Item = (TypeDefRef, &StructData)> + '_ {
-        self.target_ir(target)
+        self.resident_target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -184,7 +217,7 @@ impl SemanticIrDb {
 
     /// Iterates over one target's unions together with stable project-wide references.
     pub fn unions(&self, target: TargetRef) -> impl Iterator<Item = (TypeDefRef, &UnionData)> + '_ {
-        self.target_ir(target)
+        self.resident_target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -205,7 +238,7 @@ impl SemanticIrDb {
 
     /// Iterates over one target's enums together with stable project-wide references.
     pub fn enums(&self, target: TargetRef) -> impl Iterator<Item = (TypeDefRef, &EnumData)> + '_ {
-        self.target_ir(target)
+        self.resident_target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -226,7 +259,7 @@ impl SemanticIrDb {
 
     /// Iterates over one target's traits together with stable project-wide references.
     pub fn traits(&self, target: TargetRef) -> impl Iterator<Item = (TraitRef, &TraitData)> + '_ {
-        self.target_ir(target)
+        self.resident_target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -239,7 +272,7 @@ impl SemanticIrDb {
 
     /// Iterates over one target's impls together with stable project-wide references.
     pub fn impls(&self, target: TargetRef) -> impl Iterator<Item = (ImplRef, &ImplData)> + '_ {
-        self.target_ir(target)
+        self.resident_target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -255,7 +288,7 @@ impl SemanticIrDb {
         &self,
         target: TargetRef,
     ) -> impl Iterator<Item = (FunctionRef, &FunctionData)> + '_ {
-        self.target_ir(target)
+        self.resident_target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -276,7 +309,7 @@ impl SemanticIrDb {
         &self,
         target: TargetRef,
     ) -> impl Iterator<Item = (TypeAliasRef, &TypeAliasData)> + '_ {
-        self.target_ir(target)
+        self.resident_target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -289,7 +322,7 @@ impl SemanticIrDb {
 
     /// Iterates over one target's consts together with stable project-wide references.
     pub fn consts(&self, target: TargetRef) -> impl Iterator<Item = (ConstRef, &ConstData)> + '_ {
-        self.target_ir(target)
+        self.resident_target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -305,7 +338,7 @@ impl SemanticIrDb {
         &self,
         target: TargetRef,
     ) -> impl Iterator<Item = (StaticRef, &StaticData)> + '_ {
-        self.target_ir(target)
+        self.resident_target_ir(target)
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -368,7 +401,7 @@ impl SemanticIrDb {
 
     pub fn type_def_for_local_def(&self, def: LocalDefRef) -> Option<TypeDefRef> {
         let item = self
-            .target_ir(def.target)?
+            .resident_target_ir(def.target)?
             .item_for_local_def(def.local_def)?;
         let id = match item {
             ItemId::Struct(id) => TypeDefId::Struct(id),
@@ -389,7 +422,7 @@ impl SemanticIrDb {
 
     pub fn trait_for_local_def(&self, def: LocalDefRef) -> Option<TraitRef> {
         let item = self
-            .target_ir(def.target)?
+            .resident_target_ir(def.target)?
             .item_for_local_def(def.local_def)?;
         let ItemId::Trait(id) = item else {
             return None;
@@ -403,7 +436,7 @@ impl SemanticIrDb {
 
     pub fn function_for_local_def(&self, def: LocalDefRef) -> Option<FunctionRef> {
         let item = self
-            .target_ir(def.target)?
+            .resident_target_ir(def.target)?
             .item_for_local_def(def.local_def)?;
         let ItemId::Function(id) = item else {
             return None;
@@ -416,7 +449,7 @@ impl SemanticIrDb {
     }
 
     pub fn local_def_for_type_def(&self, ty: TypeDefRef) -> Option<LocalDefRef> {
-        let target_ir = self.target_ir(ty.target)?;
+        let target_ir = self.resident_target_ir(ty.target)?;
         match ty.id {
             TypeDefId::Struct(id) => Some(target_ir.items().struct_data(id)?.local_def),
             TypeDefId::Enum(id) => Some(target_ir.items().enum_data(id)?.local_def),
@@ -428,7 +461,7 @@ impl SemanticIrDb {
         &self,
         ty: TypeDefRef,
     ) -> Option<&rg_item_tree::GenericParams> {
-        let target_ir = self.target_ir(ty.target)?;
+        let target_ir = self.resident_target_ir(ty.target)?;
         match ty.id {
             TypeDefId::Struct(id) => Some(&target_ir.items().struct_data(id)?.generics),
             TypeDefId::Enum(id) => Some(&target_ir.items().enum_data(id)?.generics),
@@ -437,7 +470,7 @@ impl SemanticIrDb {
     }
 
     pub fn type_def_name(&self, ty: TypeDefRef) -> Option<&str> {
-        let target_ir = self.target_ir(ty.target)?;
+        let target_ir = self.resident_target_ir(ty.target)?;
         match ty.id {
             TypeDefId::Struct(id) => Some(target_ir.items().struct_data(id)?.name.as_str()),
             TypeDefId::Enum(id) => Some(target_ir.items().enum_data(id)?.name.as_str()),
@@ -446,7 +479,7 @@ impl SemanticIrDb {
     }
 
     pub fn enum_data_for_type_def(&self, ty: TypeDefRef) -> Option<&EnumData> {
-        let target_ir = self.target_ir(ty.target)?;
+        let target_ir = self.resident_target_ir(ty.target)?;
         let TypeDefId::Enum(id) = ty.id else {
             return None;
         };
@@ -484,7 +517,7 @@ impl SemanticIrDb {
     }
 
     pub fn enum_variant_data(&self, variant_ref: EnumVariantRef) -> Option<EnumVariantData<'_>> {
-        let target_ir = self.target_ir(variant_ref.target)?;
+        let target_ir = self.resident_target_ir(variant_ref.target)?;
         let data = target_ir.items().enum_data(variant_ref.enum_id)?;
         let variant = data.variants.get(variant_ref.index)?;
         Some(EnumVariantData {
@@ -499,37 +532,37 @@ impl SemanticIrDb {
     }
 
     pub fn impl_data(&self, impl_ref: ImplRef) -> Option<&ImplData> {
-        self.target_ir(impl_ref.target)?
+        self.resident_target_ir(impl_ref.target)?
             .items()
             .impl_data(impl_ref.id)
     }
 
     pub fn trait_data(&self, trait_ref: TraitRef) -> Option<&TraitData> {
-        self.target_ir(trait_ref.target)?
+        self.resident_target_ir(trait_ref.target)?
             .items()
             .trait_data(trait_ref.id)
     }
 
     pub fn function_data(&self, function_ref: FunctionRef) -> Option<&FunctionData> {
-        self.target_ir(function_ref.target)?
+        self.resident_target_ir(function_ref.target)?
             .items()
             .function_data(function_ref.id)
     }
 
     pub fn type_alias_data(&self, type_alias_ref: TypeAliasRef) -> Option<&TypeAliasData> {
-        self.target_ir(type_alias_ref.target)?
+        self.resident_target_ir(type_alias_ref.target)?
             .items()
             .type_alias_data(type_alias_ref.id)
     }
 
     pub fn const_data(&self, const_ref: ConstRef) -> Option<&ConstData> {
-        self.target_ir(const_ref.target)?
+        self.resident_target_ir(const_ref.target)?
             .items()
             .const_data(const_ref.id)
     }
 
     pub fn static_data(&self, static_ref: StaticRef) -> Option<&StaticData> {
-        self.target_ir(static_ref.target)?
+        self.resident_target_ir(static_ref.target)?
             .items()
             .static_data(static_ref.id)
     }
@@ -563,7 +596,7 @@ impl SemanticIrDb {
     }
 
     pub fn field_data(&self, field_ref: FieldRef) -> Option<FieldData<'_>> {
-        let target_ir = self.target_ir(field_ref.owner.target)?;
+        let target_ir = self.resident_target_ir(field_ref.owner.target)?;
         match field_ref.owner.id {
             TypeDefId::Struct(id) => {
                 let data = target_ir.items().struct_data(id)?;
@@ -721,7 +754,7 @@ impl SemanticIrDb {
     }
 
     fn field_count_for_type(&self, ty: TypeDefRef) -> Option<usize> {
-        let target_ir = self.target_ir(ty.target)?;
+        let target_ir = self.resident_target_ir(ty.target)?;
         match ty.id {
             TypeDefId::Struct(id) => Some(target_ir.items().struct_data(id)?.fields.fields().len()),
             TypeDefId::Union(id) => Some(target_ir.items().union_data(id)?.fields.len()),
@@ -775,7 +808,7 @@ mod tests {
 
         let target_packages = db
             .resident_target_irs()
-            .map(|(target, _)| target.package.expose_package_slot())
+            .map(|(target, _)| target.package)
             .collect::<Vec<_>>();
 
         assert_eq!(target_packages, vec![PackageSlot(0), PackageSlot(2)]);

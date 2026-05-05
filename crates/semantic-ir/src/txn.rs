@@ -1,10 +1,8 @@
 //! Read transactions over frozen Semantic IR package data.
 
-use std::sync::Arc;
-
 use rg_def_map::{DefMapReadTxn, LocalDefRef, ModuleRef, PackageSlot, Path, TargetRef};
 use rg_item_tree::FieldKey;
-use rg_package_store::{PackageRead, PackageStoreReadTxn};
+use rg_package_store::{PackageRead, PackageStoreError, PackageStoreReadTxn};
 use rg_parse::TargetId;
 
 use crate::{
@@ -22,25 +20,29 @@ pub struct SemanticIrReadTxn<'db> {
 }
 
 impl<'db> SemanticIrReadTxn<'db> {
-    pub fn from_sparse_package_arcs(packages: Vec<Option<Arc<PackageIr>>>) -> Self {
-        Self {
-            packages: PackageStoreReadTxn::from_sparse_arcs(packages),
-        }
+    pub(crate) fn from_package_store(packages: PackageStoreReadTxn<'db, PackageIr>) -> Self {
+        Self { packages }
     }
 
-    pub fn package(&self, package: PackageSlot) -> Option<PackageRead<'_, PackageIr>> {
+    pub fn package(
+        &self,
+        package: PackageSlot,
+    ) -> Result<PackageRead<'_, PackageIr>, PackageStoreError> {
         self.packages.read(package)
     }
 
-    pub fn target_ir(&self, target: TargetRef) -> Option<&TargetIr> {
-        self.package(target.package)?
-            .into_ref()
-            .target(target.target)
+    pub fn target_ir(&self, target: TargetRef) -> Result<Option<&TargetIr>, PackageStoreError> {
+        let package = self.package(target.package)?;
+        Ok(package.into_ref().target(target.target))
     }
 
-    pub fn target_irs(&self) -> impl Iterator<Item = (TargetRef, &TargetIr)> + '_ {
-        self.packages
-            .packages_with_slots()
+    pub fn materialize_included_target_irs(
+        &self,
+    ) -> Result<Vec<(TargetRef, &TargetIr)>, PackageStoreError> {
+        let target_irs = self
+            .packages
+            .materialize_included_packages_with_slots()?
+            .into_iter()
             .flat_map(|(package_slot, package)| {
                 let package = package.into_ref();
                 package
@@ -57,13 +59,17 @@ impl<'db> SemanticIrReadTxn<'db> {
                         )
                     })
             })
+            .collect::<Vec<_>>();
+
+        Ok(target_irs)
     }
 
     pub fn structs(
         &self,
         target: TargetRef,
-    ) -> impl Iterator<Item = (TypeDefRef, &StructData)> + '_ {
-        self.target_ir(target)
+    ) -> Result<Vec<(TypeDefRef, &StructData)>, PackageStoreError> {
+        let structs = self
+            .target_ir(target)?
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -80,10 +86,17 @@ impl<'db> SemanticIrReadTxn<'db> {
                         )
                     })
             })
+            .collect::<Vec<_>>();
+
+        Ok(structs)
     }
 
-    pub fn unions(&self, target: TargetRef) -> impl Iterator<Item = (TypeDefRef, &UnionData)> + '_ {
-        self.target_ir(target)
+    pub fn unions(
+        &self,
+        target: TargetRef,
+    ) -> Result<Vec<(TypeDefRef, &UnionData)>, PackageStoreError> {
+        let unions = self
+            .target_ir(target)?
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -100,10 +113,17 @@ impl<'db> SemanticIrReadTxn<'db> {
                         )
                     })
             })
+            .collect::<Vec<_>>();
+
+        Ok(unions)
     }
 
-    pub fn enums(&self, target: TargetRef) -> impl Iterator<Item = (TypeDefRef, &EnumData)> + '_ {
-        self.target_ir(target)
+    pub fn enums(
+        &self,
+        target: TargetRef,
+    ) -> Result<Vec<(TypeDefRef, &EnumData)>, PackageStoreError> {
+        let enums = self
+            .target_ir(target)?
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -120,10 +140,17 @@ impl<'db> SemanticIrReadTxn<'db> {
                         )
                     })
             })
+            .collect::<Vec<_>>();
+
+        Ok(enums)
     }
 
-    pub fn traits(&self, target: TargetRef) -> impl Iterator<Item = (TraitRef, &TraitData)> + '_ {
-        self.target_ir(target)
+    pub fn traits(
+        &self,
+        target: TargetRef,
+    ) -> Result<Vec<(TraitRef, &TraitData)>, PackageStoreError> {
+        let traits = self
+            .target_ir(target)?
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -132,10 +159,14 @@ impl<'db> SemanticIrReadTxn<'db> {
                     .iter_with_ids()
                     .map(move |(id, data)| (TraitRef { target, id }, data))
             })
+            .collect::<Vec<_>>();
+
+        Ok(traits)
     }
 
-    pub fn impls(&self, target: TargetRef) -> impl Iterator<Item = (ImplRef, &ImplData)> + '_ {
-        self.target_ir(target)
+    pub fn impls(&self, target: TargetRef) -> Result<Vec<(ImplRef, &ImplData)>, PackageStoreError> {
+        let impls = self
+            .target_ir(target)?
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -144,13 +175,17 @@ impl<'db> SemanticIrReadTxn<'db> {
                     .iter_with_ids()
                     .map(move |(id, data)| (ImplRef { target, id }, data))
             })
+            .collect::<Vec<_>>();
+
+        Ok(impls)
     }
 
     pub fn functions(
         &self,
         target: TargetRef,
-    ) -> impl Iterator<Item = (FunctionRef, &FunctionData)> + '_ {
-        self.target_ir(target)
+    ) -> Result<Vec<(FunctionRef, &FunctionData)>, PackageStoreError> {
+        let functions = self
+            .target_ir(target)?
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -159,13 +194,17 @@ impl<'db> SemanticIrReadTxn<'db> {
                     .iter_with_ids()
                     .map(move |(id, data)| (FunctionRef { target, id }, data))
             })
+            .collect::<Vec<_>>();
+
+        Ok(functions)
     }
 
     pub fn type_aliases(
         &self,
         target: TargetRef,
-    ) -> impl Iterator<Item = (TypeAliasRef, &TypeAliasData)> + '_ {
-        self.target_ir(target)
+    ) -> Result<Vec<(TypeAliasRef, &TypeAliasData)>, PackageStoreError> {
+        let aliases = self
+            .target_ir(target)?
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -174,10 +213,17 @@ impl<'db> SemanticIrReadTxn<'db> {
                     .iter_with_ids()
                     .map(move |(id, data)| (TypeAliasRef { target, id }, data))
             })
+            .collect::<Vec<_>>();
+
+        Ok(aliases)
     }
 
-    pub fn consts(&self, target: TargetRef) -> impl Iterator<Item = (ConstRef, &ConstData)> + '_ {
-        self.target_ir(target)
+    pub fn consts(
+        &self,
+        target: TargetRef,
+    ) -> Result<Vec<(ConstRef, &ConstData)>, PackageStoreError> {
+        let consts = self
+            .target_ir(target)?
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -186,13 +232,17 @@ impl<'db> SemanticIrReadTxn<'db> {
                     .iter_with_ids()
                     .map(move |(id, data)| (ConstRef { target, id }, data))
             })
+            .collect::<Vec<_>>();
+
+        Ok(consts)
     }
 
     pub fn statics(
         &self,
         target: TargetRef,
-    ) -> impl Iterator<Item = (StaticRef, &StaticData)> + '_ {
-        self.target_ir(target)
+    ) -> Result<Vec<(StaticRef, &StaticData)>, PackageStoreError> {
+        let statics = self
+            .target_ir(target)?
             .into_iter()
             .flat_map(move |target_ir| {
                 target_ir
@@ -201,6 +251,9 @@ impl<'db> SemanticIrReadTxn<'db> {
                     .iter_with_ids()
                     .map(move |(id, data)| (StaticRef { target, id }, data))
             })
+            .collect::<Vec<_>>();
+
+        Ok(statics)
     }
 
     pub fn resolve_type_path(
@@ -208,32 +261,32 @@ impl<'db> SemanticIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         context: TypePathContext,
         path: &Path,
-    ) -> SemanticTypePathResolution {
+    ) -> Result<SemanticTypePathResolution, PackageStoreError> {
         if path.is_self_type() {
             let Some(impl_ref) = context.impl_ref else {
-                return SemanticTypePathResolution::Unknown;
+                return Ok(SemanticTypePathResolution::Unknown);
             };
             let types = self
-                .impl_data(impl_ref)
+                .impl_data(impl_ref)?
                 .map(|data| data.resolved_self_tys.clone())
                 .unwrap_or_default();
-            return if types.is_empty() {
+            return Ok(if types.is_empty() {
                 SemanticTypePathResolution::Unknown
             } else {
                 SemanticTypePathResolution::SelfType(types)
-            };
+            });
         }
 
-        let type_defs = self.type_defs_for_path(def_map, context.module, path);
+        let type_defs = self.type_defs_for_path(def_map, context.module, path)?;
         if type_defs.is_empty() {
-            let traits = self.traits_for_path(def_map, context.module, path);
-            if traits.is_empty() {
+            let traits = self.traits_for_path(def_map, context.module, path)?;
+            Ok(if traits.is_empty() {
                 SemanticTypePathResolution::Unknown
             } else {
                 SemanticTypePathResolution::Traits(traits)
-            }
+            })
         } else {
-            SemanticTypePathResolution::TypeDefs(type_defs)
+            Ok(SemanticTypePathResolution::TypeDefs(type_defs))
         }
     }
 
@@ -242,10 +295,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         from: ModuleRef,
         path: &Path,
-    ) -> Vec<TypeDefRef> {
+    ) -> Result<Vec<TypeDefRef>, PackageStoreError> {
         self.resolve_path(def_map, from, path, |db, def| {
             let rg_def_map::DefId::Local(local_def) = def else {
-                return None;
+                return Ok(None);
             };
 
             db.type_def_for_local_def(local_def)
@@ -257,10 +310,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         from: ModuleRef,
         path: &Path,
-    ) -> Vec<TraitRef> {
+    ) -> Result<Vec<TraitRef>, PackageStoreError> {
         self.resolve_path(def_map, from, path, |db, def| {
             let rg_def_map::DefId::Local(local_def) = def else {
-                return None;
+                return Ok(None);
             };
 
             db.trait_for_local_def(local_def)
@@ -272,24 +325,27 @@ impl<'db> SemanticIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         owner: ModuleRef,
         path: &Path,
-        map_def: impl Fn(&Self, rg_def_map::DefId) -> Option<T>,
-    ) -> Vec<T> {
+        map_def: impl Fn(&Self, rg_def_map::DefId) -> Result<Option<T>, PackageStoreError>,
+    ) -> Result<Vec<T>, PackageStoreError> {
         let mut resolved_items = Vec::new();
-        for def in def_map.resolve_path_in_type_namespace(owner, path).resolved {
-            let Some(item) = map_def(self, def) else {
+        let result = def_map.resolve_path_in_type_namespace(owner, path)?;
+        for def in result.resolved {
+            let Some(item) = map_def(self, def)? else {
                 continue;
             };
             push_unique(&mut resolved_items, item);
         }
 
-        resolved_items
+        Ok(resolved_items)
     }
 
     pub fn type_path_context_for_function(
         &self,
         function_ref: FunctionRef,
-    ) -> Option<TypePathContext> {
-        let function_data = self.function_data(function_ref)?;
+    ) -> Result<Option<TypePathContext>, PackageStoreError> {
+        let Some(function_data) = self.function_data(function_ref)? else {
+            return Ok(None);
+        };
         self.type_path_context_for_owner(function_ref.target, function_data.owner)
     }
 
@@ -297,26 +353,32 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         target: TargetRef,
         owner: ItemOwner,
-    ) -> Option<TypePathContext> {
+    ) -> Result<Option<TypePathContext>, PackageStoreError> {
         match owner {
-            ItemOwner::Module(module_ref) => Some(TypePathContext::module(module_ref)),
-            ItemOwner::Trait(id) => self
-                .trait_data(TraitRef { target, id })
-                .map(|data| TypePathContext::module(data.owner)),
+            ItemOwner::Module(module_ref) => Ok(Some(TypePathContext::module(module_ref))),
+            ItemOwner::Trait(id) => Ok(self
+                .trait_data(TraitRef { target, id })?
+                .map(|data| TypePathContext::module(data.owner))),
             ItemOwner::Impl(id) => {
                 let impl_ref = ImplRef { target, id };
-                self.impl_data(impl_ref).map(|data| TypePathContext {
+                Ok(self.impl_data(impl_ref)?.map(|data| TypePathContext {
                     module: data.owner,
                     impl_ref: Some(impl_ref),
-                })
+                }))
             }
         }
     }
 
-    pub fn type_def_for_local_def(&self, def: LocalDefRef) -> Option<TypeDefRef> {
-        let item = self
-            .target_ir(def.target)?
-            .item_for_local_def(def.local_def)?;
+    pub fn type_def_for_local_def(
+        &self,
+        def: LocalDefRef,
+    ) -> Result<Option<TypeDefRef>, PackageStoreError> {
+        let Some(target_ir) = self.target_ir(def.target)? else {
+            return Ok(None);
+        };
+        let Some(item) = target_ir.item_for_local_def(def.local_def) else {
+            return Ok(None);
+        };
         let id = match item {
             ItemId::Struct(id) => TypeDefId::Struct(id),
             ItemId::Enum(id) => TypeDefId::Enum(id),
@@ -325,114 +387,166 @@ impl<'db> SemanticIrReadTxn<'db> {
             | ItemId::Function(_)
             | ItemId::TypeAlias(_)
             | ItemId::Const(_)
-            | ItemId::Static(_) => return None,
+            | ItemId::Static(_) => return Ok(None),
         };
 
-        Some(TypeDefRef {
+        Ok(Some(TypeDefRef {
             target: def.target,
             id,
-        })
+        }))
     }
 
-    pub fn trait_for_local_def(&self, def: LocalDefRef) -> Option<TraitRef> {
-        let item = self
-            .target_ir(def.target)?
-            .item_for_local_def(def.local_def)?;
+    pub fn trait_for_local_def(
+        &self,
+        def: LocalDefRef,
+    ) -> Result<Option<TraitRef>, PackageStoreError> {
+        let Some(target_ir) = self.target_ir(def.target)? else {
+            return Ok(None);
+        };
+        let Some(item) = target_ir.item_for_local_def(def.local_def) else {
+            return Ok(None);
+        };
         let ItemId::Trait(id) = item else {
-            return None;
+            return Ok(None);
         };
 
-        Some(TraitRef {
+        Ok(Some(TraitRef {
             target: def.target,
             id,
-        })
+        }))
     }
 
-    pub fn function_for_local_def(&self, def: LocalDefRef) -> Option<FunctionRef> {
-        let item = self
-            .target_ir(def.target)?
-            .item_for_local_def(def.local_def)?;
+    pub fn function_for_local_def(
+        &self,
+        def: LocalDefRef,
+    ) -> Result<Option<FunctionRef>, PackageStoreError> {
+        let Some(target_ir) = self.target_ir(def.target)? else {
+            return Ok(None);
+        };
+        let Some(item) = target_ir.item_for_local_def(def.local_def) else {
+            return Ok(None);
+        };
         let ItemId::Function(id) = item else {
-            return None;
+            return Ok(None);
         };
 
-        Some(FunctionRef {
+        Ok(Some(FunctionRef {
             target: def.target,
             id,
-        })
+        }))
     }
 
-    pub fn local_def_for_type_def(&self, ty: TypeDefRef) -> Option<LocalDefRef> {
-        let target_ir = self.target_ir(ty.target)?;
-        match ty.id {
-            TypeDefId::Struct(id) => Some(target_ir.items().struct_data(id)?.local_def),
-            TypeDefId::Enum(id) => Some(target_ir.items().enum_data(id)?.local_def),
-            TypeDefId::Union(id) => Some(target_ir.items().union_data(id)?.local_def),
-        }
+    pub fn local_def_for_type_def(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<Option<LocalDefRef>, PackageStoreError> {
+        let Some(target_ir) = self.target_ir(ty.target)? else {
+            return Ok(None);
+        };
+        let local_def = match ty.id {
+            TypeDefId::Struct(id) => target_ir.items().struct_data(id).map(|data| data.local_def),
+            TypeDefId::Enum(id) => target_ir.items().enum_data(id).map(|data| data.local_def),
+            TypeDefId::Union(id) => target_ir.items().union_data(id).map(|data| data.local_def),
+        };
+        Ok(local_def)
     }
 
     pub fn generic_params_for_type_def(
         &self,
         ty: TypeDefRef,
-    ) -> Option<&rg_item_tree::GenericParams> {
-        let target_ir = self.target_ir(ty.target)?;
-        match ty.id {
-            TypeDefId::Struct(id) => Some(&target_ir.items().struct_data(id)?.generics),
-            TypeDefId::Enum(id) => Some(&target_ir.items().enum_data(id)?.generics),
-            TypeDefId::Union(id) => Some(&target_ir.items().union_data(id)?.generics),
-        }
-    }
-
-    pub fn type_def_name(&self, ty: TypeDefRef) -> Option<&str> {
-        let target_ir = self.target_ir(ty.target)?;
-        match ty.id {
-            TypeDefId::Struct(id) => Some(target_ir.items().struct_data(id)?.name.as_str()),
-            TypeDefId::Enum(id) => Some(target_ir.items().enum_data(id)?.name.as_str()),
-            TypeDefId::Union(id) => Some(target_ir.items().union_data(id)?.name.as_str()),
-        }
-    }
-
-    pub fn enum_data_for_type_def(&self, ty: TypeDefRef) -> Option<&EnumData> {
-        let target_ir = self.target_ir(ty.target)?;
-        let TypeDefId::Enum(id) = ty.id else {
-            return None;
+    ) -> Result<Option<&rg_item_tree::GenericParams>, PackageStoreError> {
+        let Some(target_ir) = self.target_ir(ty.target)? else {
+            return Ok(None);
         };
-        target_ir.items().enum_data(id)
+        let generics = match ty.id {
+            TypeDefId::Struct(id) => target_ir.items().struct_data(id).map(|data| &data.generics),
+            TypeDefId::Enum(id) => target_ir.items().enum_data(id).map(|data| &data.generics),
+            TypeDefId::Union(id) => target_ir.items().union_data(id).map(|data| &data.generics),
+        };
+        Ok(generics)
+    }
+
+    pub fn type_def_name(&self, ty: TypeDefRef) -> Result<Option<&str>, PackageStoreError> {
+        let Some(target_ir) = self.target_ir(ty.target)? else {
+            return Ok(None);
+        };
+        let name = match ty.id {
+            TypeDefId::Struct(id) => target_ir
+                .items()
+                .struct_data(id)
+                .map(|data| data.name.as_str()),
+            TypeDefId::Enum(id) => target_ir
+                .items()
+                .enum_data(id)
+                .map(|data| data.name.as_str()),
+            TypeDefId::Union(id) => target_ir
+                .items()
+                .union_data(id)
+                .map(|data| data.name.as_str()),
+        };
+        Ok(name)
+    }
+
+    pub fn enum_data_for_type_def(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<Option<&EnumData>, PackageStoreError> {
+        let TypeDefId::Enum(id) = ty.id else {
+            return Ok(None);
+        };
+        Ok(self
+            .target_ir(ty.target)?
+            .and_then(|target_ir| target_ir.items().enum_data(id)))
     }
 
     pub fn enum_variant_for_type_def(
         &self,
         ty: TypeDefRef,
         variant_name: &str,
-    ) -> Option<(usize, &rg_item_tree::EnumVariantItem)> {
-        let data = self.enum_data_for_type_def(ty)?;
-        data.variants
+    ) -> Result<Option<(usize, &rg_item_tree::EnumVariantItem)>, PackageStoreError> {
+        let Some(data) = self.enum_data_for_type_def(ty)? else {
+            return Ok(None);
+        };
+        Ok(data
+            .variants
             .iter()
             .enumerate()
-            .find(|(_, variant)| variant.name == variant_name)
+            .find(|(_, variant)| variant.name == variant_name))
     }
 
     pub fn enum_variant_ref_for_type_def(
         &self,
         ty: TypeDefRef,
         variant_name: &str,
-    ) -> Option<EnumVariantRef> {
+    ) -> Result<Option<EnumVariantRef>, PackageStoreError> {
         let TypeDefId::Enum(enum_id) = ty.id else {
-            return None;
+            return Ok(None);
         };
-        let (index, _) = self.enum_variant_for_type_def(ty, variant_name)?;
-        Some(EnumVariantRef {
+        let Some((index, _)) = self.enum_variant_for_type_def(ty, variant_name)? else {
+            return Ok(None);
+        };
+        Ok(Some(EnumVariantRef {
             target: ty.target,
             enum_id,
             index,
-        })
+        }))
     }
 
-    pub fn enum_variant_data(&self, variant_ref: EnumVariantRef) -> Option<EnumVariantData<'_>> {
-        let target_ir = self.target_ir(variant_ref.target)?;
-        let data = target_ir.items().enum_data(variant_ref.enum_id)?;
-        let variant = data.variants.get(variant_ref.index)?;
-        Some(EnumVariantData {
+    pub fn enum_variant_data(
+        &self,
+        variant_ref: EnumVariantRef,
+    ) -> Result<Option<EnumVariantData<'_>>, PackageStoreError> {
+        let Some(target_ir) = self.target_ir(variant_ref.target)? else {
+            return Ok(None);
+        };
+        let Some(data) = target_ir.items().enum_data(variant_ref.enum_id) else {
+            return Ok(None);
+        };
+        let Some(variant) = data.variants.get(variant_ref.index) else {
+            return Ok(None);
+        };
+
+        Ok(Some(EnumVariantData {
             owner: TypeDefRef {
                 target: variant_ref.target,
                 id: TypeDefId::Enum(variant_ref.enum_id),
@@ -440,123 +554,176 @@ impl<'db> SemanticIrReadTxn<'db> {
             owner_module: data.owner,
             file_id: data.source.file_id,
             variant,
-        })
+        }))
     }
 
-    pub fn impl_data(&self, impl_ref: ImplRef) -> Option<&ImplData> {
-        self.target_ir(impl_ref.target)?
-            .items()
-            .impl_data(impl_ref.id)
+    pub fn impl_data(&self, impl_ref: ImplRef) -> Result<Option<&ImplData>, PackageStoreError> {
+        Ok(self
+            .target_ir(impl_ref.target)?
+            .and_then(|target_ir| target_ir.items().impl_data(impl_ref.id)))
     }
 
-    pub fn trait_data(&self, trait_ref: TraitRef) -> Option<&TraitData> {
-        self.target_ir(trait_ref.target)?
-            .items()
-            .trait_data(trait_ref.id)
+    pub fn trait_data(&self, trait_ref: TraitRef) -> Result<Option<&TraitData>, PackageStoreError> {
+        Ok(self
+            .target_ir(trait_ref.target)?
+            .and_then(|target_ir| target_ir.items().trait_data(trait_ref.id)))
     }
 
-    pub fn function_data(&self, function_ref: FunctionRef) -> Option<&FunctionData> {
-        self.target_ir(function_ref.target)?
-            .items()
-            .function_data(function_ref.id)
+    pub fn function_data(
+        &self,
+        function_ref: FunctionRef,
+    ) -> Result<Option<&FunctionData>, PackageStoreError> {
+        Ok(self
+            .target_ir(function_ref.target)?
+            .and_then(|target_ir| target_ir.items().function_data(function_ref.id)))
     }
 
-    pub fn type_alias_data(&self, type_alias_ref: TypeAliasRef) -> Option<&TypeAliasData> {
-        self.target_ir(type_alias_ref.target)?
-            .items()
-            .type_alias_data(type_alias_ref.id)
+    pub fn type_alias_data(
+        &self,
+        type_alias_ref: TypeAliasRef,
+    ) -> Result<Option<&TypeAliasData>, PackageStoreError> {
+        Ok(self
+            .target_ir(type_alias_ref.target)?
+            .and_then(|target_ir| target_ir.items().type_alias_data(type_alias_ref.id)))
     }
 
-    pub fn const_data(&self, const_ref: ConstRef) -> Option<&ConstData> {
-        self.target_ir(const_ref.target)?
-            .items()
-            .const_data(const_ref.id)
+    pub fn const_data(&self, const_ref: ConstRef) -> Result<Option<&ConstData>, PackageStoreError> {
+        Ok(self
+            .target_ir(const_ref.target)?
+            .and_then(|target_ir| target_ir.items().const_data(const_ref.id)))
     }
 
-    pub fn static_data(&self, static_ref: StaticRef) -> Option<&StaticData> {
-        self.target_ir(static_ref.target)?
-            .items()
-            .static_data(static_ref.id)
+    pub fn static_data(
+        &self,
+        static_ref: StaticRef,
+    ) -> Result<Option<&StaticData>, PackageStoreError> {
+        Ok(self
+            .target_ir(static_ref.target)?
+            .and_then(|target_ir| target_ir.items().static_data(static_ref.id)))
     }
 
-    pub fn fields_for_type(&self, ty: TypeDefRef) -> Vec<FieldRef> {
-        let Some(field_count) = self.field_count_for_type(ty) else {
-            return Vec::new();
+    pub fn fields_for_type(&self, ty: TypeDefRef) -> Result<Vec<FieldRef>, PackageStoreError> {
+        let Some(field_count) = self.field_count_for_type(ty)? else {
+            return Ok(Vec::new());
         };
 
-        (0..field_count)
+        let fields = (0..field_count)
             .map(|index| FieldRef { owner: ty, index })
-            .collect()
+            .collect();
+        Ok(fields)
     }
 
-    pub fn field_for_type(&self, ty: TypeDefRef, key: &FieldKey) -> Option<FieldRef> {
+    pub fn field_for_type(
+        &self,
+        ty: TypeDefRef,
+        key: &FieldKey,
+    ) -> Result<Option<FieldRef>, PackageStoreError> {
         match key {
-            FieldKey::Named(_) => self.fields_for_type(ty).into_iter().find(|field_ref| {
-                self.field_data(*field_ref)
-                    .is_some_and(|data| data.field.key.as_ref() == Some(key))
-            }),
+            FieldKey::Named(_) => {
+                for field_ref in self.fields_for_type(ty)? {
+                    if self
+                        .field_data(field_ref)?
+                        .is_some_and(|data| data.field.key.as_ref() == Some(key))
+                    {
+                        return Ok(Some(field_ref));
+                    }
+                }
+                Ok(None)
+            }
             FieldKey::Tuple(index) => {
                 let field_ref = FieldRef {
                     owner: ty,
                     index: *index,
                 };
-                self.field_data(field_ref)
+                Ok(self
+                    .field_data(field_ref)?
                     .is_some_and(|data| data.field.key.as_ref() == Some(key))
-                    .then_some(field_ref)
+                    .then_some(field_ref))
             }
         }
     }
 
-    pub fn field_data(&self, field_ref: FieldRef) -> Option<FieldData<'_>> {
-        let target_ir = self.target_ir(field_ref.owner.target)?;
-        match field_ref.owner.id {
+    pub fn field_data(
+        &self,
+        field_ref: FieldRef,
+    ) -> Result<Option<FieldData<'_>>, PackageStoreError> {
+        let Some(target_ir) = self.target_ir(field_ref.owner.target)? else {
+            return Ok(None);
+        };
+        let field = match field_ref.owner.id {
             TypeDefId::Struct(id) => {
-                let data = target_ir.items().struct_data(id)?;
-                let field = data.fields.fields().get(field_ref.index)?;
-                Some(FieldData {
+                let Some(data) = target_ir.items().struct_data(id) else {
+                    return Ok(None);
+                };
+                let Some(field) = data.fields.fields().get(field_ref.index) else {
+                    return Ok(None);
+                };
+                FieldData {
                     owner_module: data.owner,
                     file_id: data.source.file_id,
                     field,
-                })
+                }
             }
             TypeDefId::Union(id) => {
-                let data = target_ir.items().union_data(id)?;
-                let field = data.fields.get(field_ref.index)?;
-                Some(FieldData {
+                let Some(data) = target_ir.items().union_data(id) else {
+                    return Ok(None);
+                };
+                let Some(field) = data.fields.get(field_ref.index) else {
+                    return Ok(None);
+                };
+                FieldData {
                     owner_module: data.owner,
                     file_id: data.source.file_id,
                     field,
-                })
+                }
             }
-            TypeDefId::Enum(_) => None,
+            TypeDefId::Enum(_) => return Ok(None),
+        };
+
+        Ok(Some(field))
+    }
+
+    pub fn impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<ImplRef>, PackageStoreError> {
+        let mut impls = Vec::new();
+
+        for impl_ref in self.impl_refs()? {
+            let Some(data) = self.impl_data(impl_ref)? else {
+                continue;
+            };
+            if data.resolved_self_tys.contains(&ty) {
+                impls.push(impl_ref);
+            }
         }
+
+        Ok(impls)
     }
 
-    pub fn impls_for_type(&self, ty: TypeDefRef) -> Vec<ImplRef> {
-        self.impl_refs()
-            .into_iter()
-            .filter(|impl_ref| {
-                self.impl_data(*impl_ref)
-                    .is_some_and(|data| data.resolved_self_tys.contains(&ty))
-            })
-            .collect()
+    pub fn inherent_impls_for_type(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<Vec<ImplRef>, PackageStoreError> {
+        let mut impls = Vec::new();
+
+        for impl_ref in self.impls_for_type(ty)? {
+            let Some(data) = self.impl_data(impl_ref)? else {
+                continue;
+            };
+            if data.trait_ref.is_none() {
+                impls.push(impl_ref);
+            }
+        }
+
+        Ok(impls)
     }
 
-    pub fn inherent_impls_for_type(&self, ty: TypeDefRef) -> Vec<ImplRef> {
-        self.impls_for_type(ty)
-            .into_iter()
-            .filter(|impl_ref| {
-                self.impl_data(*impl_ref)
-                    .is_some_and(|data| data.trait_ref.is_none())
-            })
-            .collect()
-    }
-
-    pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> Vec<TraitImplRef> {
+    pub fn trait_impls_for_type(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<Vec<TraitImplRef>, PackageStoreError> {
         let mut trait_impls = Vec::new();
 
-        for impl_ref in self.impls_for_type(ty) {
-            let Some(data) = self.impl_data(impl_ref) else {
+        for impl_ref in self.impls_for_type(ty)? {
+            let Some(data) = self.impl_data(impl_ref)? else {
                 continue;
             };
 
@@ -571,23 +738,26 @@ impl<'db> SemanticIrReadTxn<'db> {
             }
         }
 
-        trait_impls
+        Ok(trait_impls)
     }
 
-    pub fn traits_for_type(&self, ty: TypeDefRef) -> Vec<TraitRef> {
+    pub fn traits_for_type(&self, ty: TypeDefRef) -> Result<Vec<TraitRef>, PackageStoreError> {
         let mut traits = Vec::new();
 
-        for trait_impl in self.trait_impls_for_type(ty) {
+        for trait_impl in self.trait_impls_for_type(ty)? {
             push_unique(&mut traits, trait_impl.trait_ref);
         }
 
-        traits
+        Ok(traits)
     }
 
-    pub fn trait_functions(&self, trait_ref: TraitRef) -> Vec<FunctionRef> {
+    pub fn trait_functions(
+        &self,
+        trait_ref: TraitRef,
+    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
-        let Some(data) = self.trait_data(trait_ref) else {
-            return functions;
+        let Some(data) = self.trait_data(trait_ref)? else {
+            return Ok(functions);
         };
 
         for item in &data.items {
@@ -602,14 +772,17 @@ impl<'db> SemanticIrReadTxn<'db> {
             }
         }
 
-        functions
+        Ok(functions)
     }
 
-    pub fn inherent_functions_for_type(&self, ty: TypeDefRef) -> Vec<FunctionRef> {
+    pub fn inherent_functions_for_type(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
 
-        for impl_ref in self.inherent_impls_for_type(ty) {
-            let Some(data) = self.impl_data(impl_ref) else {
+        for impl_ref in self.inherent_impls_for_type(ty)? {
+            let Some(data) = self.impl_data(impl_ref)? else {
                 continue;
             };
 
@@ -626,26 +799,32 @@ impl<'db> SemanticIrReadTxn<'db> {
             }
         }
 
-        functions
+        Ok(functions)
     }
 
-    pub fn trait_functions_for_type(&self, ty: TypeDefRef) -> Vec<FunctionRef> {
+    pub fn trait_functions_for_type(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
 
-        for trait_ref in self.traits_for_type(ty) {
-            for function in self.trait_functions(trait_ref) {
+        for trait_ref in self.traits_for_type(ty)? {
+            for function in self.trait_functions(trait_ref)? {
                 push_unique(&mut functions, function);
             }
         }
 
-        functions
+        Ok(functions)
     }
 
-    pub fn trait_impl_functions_for_type(&self, ty: TypeDefRef) -> Vec<FunctionRef> {
+    pub fn trait_impl_functions_for_type(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
 
-        for trait_impl in self.trait_impls_for_type(ty) {
-            let Some(data) = self.impl_data(trait_impl.impl_ref) else {
+        for trait_impl in self.trait_impls_for_type(ty)? {
+            let Some(data) = self.impl_data(trait_impl.impl_ref)? else {
                 continue;
             };
 
@@ -662,21 +841,36 @@ impl<'db> SemanticIrReadTxn<'db> {
             }
         }
 
-        functions
+        Ok(functions)
     }
 
-    fn field_count_for_type(&self, ty: TypeDefRef) -> Option<usize> {
-        let target_ir = self.target_ir(ty.target)?;
-        match ty.id {
-            TypeDefId::Struct(id) => Some(target_ir.items().struct_data(id)?.fields.fields().len()),
-            TypeDefId::Union(id) => Some(target_ir.items().union_data(id)?.fields.len()),
+    fn field_count_for_type(&self, ty: TypeDefRef) -> Result<Option<usize>, PackageStoreError> {
+        let Some(target_ir) = self.target_ir(ty.target)? else {
+            return Ok(None);
+        };
+        let field_count = match ty.id {
+            TypeDefId::Struct(id) => target_ir
+                .items()
+                .struct_data(id)
+                .map(|data| data.fields.fields().len()),
+            TypeDefId::Union(id) => target_ir
+                .items()
+                .union_data(id)
+                .map(|data| data.fields.len()),
             TypeDefId::Enum(_) => None,
-        }
+        };
+        Ok(field_count)
     }
 
-    fn impl_refs(&self) -> Vec<ImplRef> {
-        self.target_irs()
-            .flat_map(|(target, _)| self.impls(target).map(|(impl_ref, _)| impl_ref))
-            .collect()
+    fn impl_refs(&self) -> Result<Vec<ImplRef>, PackageStoreError> {
+        let mut impl_refs = Vec::new();
+
+        for (target, _) in self.materialize_included_target_irs()? {
+            for (impl_ref, _) in self.impls(target)? {
+                impl_refs.push(impl_ref);
+            }
+        }
+
+        Ok(impl_refs)
     }
 }

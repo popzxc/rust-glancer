@@ -4,6 +4,7 @@ use rg_analysis::Analysis;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
 use rg_def_map::{DefMapDb, PackageSlot};
 use rg_item_tree::ItemTreeDb;
+use rg_package_store::{PackageStoreError, PackageSubset};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
 use rg_text::NameInterner;
@@ -15,9 +16,7 @@ use crate::{
     profile::BuildProfiler,
 };
 
-use super::{
-    demand::PackageDemand, inventory::ProjectInventory, stats::ProjectStats, txn::ProjectReadTxn,
-};
+use super::{inventory::ProjectInventory, stats::ProjectStats, subset, txn::ProjectReadTxn};
 
 /// Configuration that affects how a project snapshot is built and retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,12 +86,28 @@ impl ProjectState {
             return Ok(());
         }
 
+        match self.try_rebuild_packages(packages) {
+            Ok(()) => Ok(()),
+            Err(error) if Self::is_recoverable_cache_load_failure(&error) => {
+                integration::recover_residency_after_cache_load_failure(self).with_context(|| {
+                    format!(
+                        "while attempting to recover analysis project after package cache load failed during package rebuild: {error}",
+                    )
+                })
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn try_rebuild_packages(&mut self, packages: &[PackageSlot]) -> anyhow::Result<()> {
         // Rebuilding one package can resolve names through its dependencies, but unrelated
         // packages should stay offloaded so save handling does not recreate full-project spikes.
-        let materialized_packages =
-            PackageDemand::packages_with_dependencies(&self.workspace, packages);
-        integration::materialize_packages(self, &materialized_packages)
-            .context("while attempting to materialize package cache before package rebuild")?;
+        let rebuild_subset =
+            subset::rebuild_packages_with_visible_dependencies(&self.workspace, packages);
+        let loaders = integration::package_read_loaders(self);
+        let old_def_map_txn = self
+            .def_map
+            .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
 
         let package_indices = packages.iter().map(|package| package.0).collect::<Vec<_>>();
         let item_tree = ItemTreeDb::build_packages_with_interner(
@@ -103,7 +118,8 @@ impl ProjectState {
         .context("while attempting to rebuild affected item-tree packages")?;
         let def_map = self
             .def_map
-            .rebuild_packages_with_interner(
+            .rebuild_packages_with_interner_and_read_txn(
+                &old_def_map_txn,
                 &self.workspace,
                 &self.parse,
                 &item_tree,
@@ -111,19 +127,30 @@ impl ProjectState {
                 &mut self.names,
             )
             .context("while attempting to rebuild affected def-map packages")?;
+        drop(old_def_map_txn);
         let semantic_ir = self
             .semantic_ir
-            .rebuild_packages(&item_tree, &def_map, packages)
+            .rebuild_packages_with_loaders(
+                &item_tree,
+                &def_map,
+                packages,
+                loaders.def_map.clone(),
+                loaders.semantic_ir.clone(),
+                &rebuild_subset,
+            )
             .context("while attempting to rebuild affected semantic IR packages")?;
         let body_ir = self
             .body_ir
-            .rebuild_packages_with_interner(
+            .rebuild_packages_with_interner_and_loaders(
                 &self.parse,
                 &def_map,
                 &semantic_ir,
                 self.build_options.body_ir_policy,
                 packages,
                 &mut self.names,
+                loaders.def_map,
+                loaders.semantic_ir,
+                &rebuild_subset,
             )
             .context("while attempting to rebuild affected body IR packages")?;
 
@@ -162,18 +189,6 @@ impl ProjectState {
         *self = rebuilt;
 
         Ok(())
-    }
-
-    /// Builds all analysis phases without applying the package residency policy.
-    ///
-    /// Cache recovery needs a fully resident project first, because writing replacement artifacts
-    /// requires the retained phase payloads to be available in memory.
-    pub(crate) fn build_resident_with_options(
-        workspace: WorkspaceMetadata,
-        build_options: ProjectBuildOptions,
-    ) -> anyhow::Result<Self> {
-        let mut profiler = BuildProfiler::disabled();
-        Self::build_resident_with_profiler(workspace, build_options, &mut profiler)
     }
 
     fn build_resident_with_profiler(
@@ -344,21 +359,30 @@ impl ProjectState {
         &mut self.parse
     }
 
-    /// Starts a read transaction over resident packages and materialized cache artifacts.
+    /// Starts a read transaction over resident and lazy-loadable offloaded packages.
     pub(crate) fn read_txn(&self) -> anyhow::Result<ProjectReadTxn<'_>> {
         ProjectReadTxn::new(self)
     }
 
-    pub(crate) fn read_txn_for_demand(
+    pub(crate) fn read_txn_for_subset(
         &self,
-        demand: &PackageDemand,
+        subset: &PackageSubset,
     ) -> anyhow::Result<ProjectReadTxn<'_>> {
-        ProjectReadTxn::for_demand(self, demand)
+        ProjectReadTxn::for_subset(self, subset)
     }
 
     /// Returns the high-level query API for this frozen project analysis.
     #[allow(dead_code)]
     pub(crate) fn analysis<'a>(&self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
         Analysis::new(txn.analysis())
+    }
+
+    pub(crate) fn is_recoverable_cache_load_failure(error: &anyhow::Error) -> bool {
+        error.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<PackageStoreError>(),
+                Some(PackageStoreError::Load { .. })
+            )
+        })
     }
 }

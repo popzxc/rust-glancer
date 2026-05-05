@@ -4,11 +4,13 @@
 //! item store, this pass resolves those headers through def-map path resolution and stores the
 //! resolved semantic ids for query consumers.
 
-use rg_def_map::{DefId, DefMapDb, ModuleRef, PackageSlot, Path};
+use rg_def_map::{DefId, DefMapDb, DefMapReadTxn, ModuleRef, PackageSlot, Path, TargetRef};
 use rg_item_tree::TypeRef;
+use rg_package_store::PackageStoreError;
+use rg_parse::TargetId;
 
 use super::{
-    SemanticIrDb,
+    SemanticIrDb, SemanticIrReadTxn,
     ids::{ImplRef, TraitRef, TypeDefRef},
 };
 
@@ -40,17 +42,64 @@ pub(super) fn resolve_impl_headers(db: &mut SemanticIrDb, def_map: &DefMapDb) {
     resolve_impl_refs(db, def_map, impl_refs);
 }
 
-pub(super) fn resolve_impl_headers_for_packages(
-    db: &mut SemanticIrDb,
-    def_map: &DefMapDb,
+pub(super) struct ImplHeaderResolution {
+    impl_ref: ImplRef,
+    resolved_self_tys: Vec<TypeDefRef>,
+    resolved_trait_refs: Vec<TraitRef>,
+}
+
+pub(super) fn impl_header_resolutions_for_packages(
+    semantic_ir: &SemanticIrReadTxn<'_>,
+    def_map: &DefMapReadTxn<'_>,
     packages: &[PackageSlot],
+) -> Result<Vec<ImplHeaderResolution>, PackageStoreError> {
+    let mut resolutions = Vec::new();
+
+    for package in packages {
+        let package_ir = semantic_ir.package(*package)?;
+
+        for (target_idx, _) in package_ir.into_ref().targets().iter().enumerate() {
+            let target = TargetRef {
+                package: *package,
+                target: TargetId(target_idx),
+            };
+            for (impl_ref, _) in semantic_ir.impls(target)? {
+                let Some(data) = semantic_ir.impl_data(impl_ref)? else {
+                    continue;
+                };
+
+                let resolved_self_tys =
+                    resolve_type_defs_from_ref(semantic_ir, def_map, data.owner, &data.self_ty)?;
+                let resolved_trait_refs = data
+                    .trait_ref
+                    .as_ref()
+                    .map(|ty| resolve_traits_from_ref(semantic_ir, def_map, data.owner, ty))
+                    .transpose()?
+                    .unwrap_or_default();
+
+                resolutions.push(ImplHeaderResolution {
+                    impl_ref,
+                    resolved_self_tys,
+                    resolved_trait_refs,
+                });
+            }
+        }
+    }
+
+    Ok(resolutions)
+}
+
+pub(super) fn apply_impl_header_resolutions(
+    db: &mut SemanticIrDb,
+    resolutions: Vec<ImplHeaderResolution>,
 ) {
-    let impl_refs = db
-        .impl_refs()
-        .into_iter()
-        .filter(|impl_ref| packages.contains(&impl_ref.target.package))
-        .collect::<Vec<_>>();
-    resolve_impl_refs(db, def_map, impl_refs);
+    for resolution in resolutions {
+        let Some(data) = db.impl_data_mut(resolution.impl_ref) else {
+            continue;
+        };
+        data.resolved_self_tys = resolution.resolved_self_tys;
+        data.resolved_trait_refs = resolution.resolved_trait_refs;
+    }
 }
 
 fn resolve_impl_refs(db: &mut SemanticIrDb, def_map: &DefMapDb, impl_refs: Vec<ImplRef>) {
@@ -168,6 +217,32 @@ fn resolve_traits(
 
         db.trait_for_local_def(local_def)
     })
+}
+
+fn resolve_type_defs_from_ref(
+    db: &SemanticIrReadTxn<'_>,
+    def_map: &DefMapReadTxn<'_>,
+    owner: ModuleRef,
+    ty: &TypeRef,
+) -> Result<Vec<TypeDefRef>, PackageStoreError> {
+    let Some(path) = Path::from_type_ref(ty) else {
+        return Ok(Vec::new());
+    };
+
+    db.type_defs_for_path(def_map, owner, &path)
+}
+
+fn resolve_traits_from_ref(
+    db: &SemanticIrReadTxn<'_>,
+    def_map: &DefMapReadTxn<'_>,
+    owner: ModuleRef,
+    ty: &TypeRef,
+) -> Result<Vec<TraitRef>, PackageStoreError> {
+    let Some(path) = Path::from_type_ref(ty) else {
+        return Ok(Vec::new());
+    };
+
+    db.traits_for_path(def_map, owner, &path)
 }
 
 fn resolve_type_ref<T: PartialEq>(

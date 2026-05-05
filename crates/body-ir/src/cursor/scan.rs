@@ -2,6 +2,7 @@
 
 use rg_def_map::{Path, TargetRef};
 use rg_item_tree::{GenericArg, TypeBound, TypePath, TypeRef};
+use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
 use crate::{
@@ -34,12 +35,12 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
     }
 
-    pub(super) fn scan(&self) -> Vec<BodyCursorCandidate> {
-        let Some(source_node) = self.source_node_at() else {
-            return Vec::new();
+    pub(super) fn scan(&self) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
+        let Some(source_node) = self.source_node_at()? else {
+            return Ok(Vec::new());
         };
-        let Some(body) = self.body_ir.body_data(source_node.body) else {
-            return Vec::new();
+        let Some(body) = self.body_ir.body_data(source_node.body)? else {
+            return Ok(Vec::new());
         };
 
         let mut candidates = Vec::new();
@@ -61,11 +62,13 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
         .scan();
 
-        candidates
+        Ok(candidates)
     }
 
-    fn source_node_at(&self) -> Option<SourceNodeAt> {
-        let target_bodies = self.body_ir.target_bodies(self.target)?;
+    fn source_node_at(&self) -> Result<Option<SourceNodeAt>, PackageStoreError> {
+        let Some(target_bodies) = self.body_ir.target_bodies(self.target)? else {
+            return Ok(None);
+        };
         let mut best = None;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
@@ -85,7 +88,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             });
         }
 
-        best
+        Ok(best)
     }
 
     fn smallest_expr_at(body: &BodyData, file_id: FileId, offset: u32) -> Option<ExprId> {
@@ -196,13 +199,17 @@ impl<'txn, 'db> DotReceiverScanner<'txn, 'db> {
         }
     }
 
-    pub(super) fn receiver_at_dot(&self) -> Option<DotReceiver> {
-        let (body, receiver) = self.receiver_expr_at_dot()?;
-        Some(DotReceiver { body, receiver })
+    pub(super) fn receiver_at_dot(&self) -> Result<Option<DotReceiver>, PackageStoreError> {
+        let Some((body, receiver)) = self.receiver_expr_at_dot()? else {
+            return Ok(None);
+        };
+        Ok(Some(DotReceiver { body, receiver }))
     }
 
-    fn receiver_expr_at_dot(&self) -> Option<(BodyRef, ExprId)> {
-        let target_bodies = self.body_ir.target_bodies(self.target)?;
+    fn receiver_expr_at_dot(&self) -> Result<Option<(BodyRef, ExprId)>, PackageStoreError> {
+        let Some(target_bodies) = self.body_ir.target_bodies(self.target)? else {
+            return Ok(None);
+        };
         let mut best = None::<(BodyRef, ExprId, u32)>;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
@@ -231,7 +238,7 @@ impl<'txn, 'db> DotReceiverScanner<'txn, 'db> {
             }
         }
 
-        best.map(|(body, receiver, _)| (body, receiver))
+        Ok(best.map(|(body, receiver, _)| (body, receiver)))
     }
 
     fn offset_in_dot_expr(expr: &ExprData, body: &BodyData, offset: u32) -> bool {

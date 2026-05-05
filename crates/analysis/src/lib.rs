@@ -50,12 +50,26 @@ impl<'a> Analysis<'a> {
     }
 
     /// Returns the smallest known symbol under a source offset.
-    pub fn symbol_at(&self, target: TargetRef, file_id: FileId, offset: u32) -> Option<SymbolAt> {
+    pub fn symbol_at(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<SymbolAt>> {
+        self.symbol_at_for_query(target, file_id, offset)
+    }
+
+    pub(crate) fn symbol_at_for_query(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<SymbolAt>> {
         symbol::SymbolFinder::new(self).symbol_at(target, file_id, offset)
     }
 
     /// Resolves a previously found symbol to navigation targets.
-    pub fn resolve_symbol(&self, symbol: SymbolAt) -> Vec<NavigationTarget> {
+    pub fn resolve_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<NavigationTarget>> {
         navigation::SymbolResolver::new(self).resolve_symbol(symbol)
     }
 
@@ -65,7 +79,7 @@ impl<'a> Analysis<'a> {
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Vec<NavigationTarget> {
+    ) -> anyhow::Result<Vec<NavigationTarget>> {
         navigation::GotoResolver::new(self).goto_definition(target, file_id, offset)
     }
 
@@ -75,12 +89,17 @@ impl<'a> Analysis<'a> {
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Vec<NavigationTarget> {
+    ) -> anyhow::Result<Vec<NavigationTarget>> {
         navigation::TypeDefinitionResolver::new(self).goto_type_definition(target, file_id, offset)
     }
 
     /// Returns the best-effort Body IR type under a source offset.
-    pub fn type_at(&self, target: TargetRef, file_id: FileId, offset: u32) -> Option<BodyTy> {
+    pub fn type_at(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<BodyTy>> {
         ty::TypeResolver::new(self).type_at(target, file_id, offset)
     }
 
@@ -90,12 +109,17 @@ impl<'a> Analysis<'a> {
         target: TargetRef,
         file_id: FileId,
         range: Option<rg_parse::TextSpan>,
-    ) -> Vec<TypeHint> {
+    ) -> anyhow::Result<Vec<TypeHint>> {
         hints::TypeHintCollector::new(self).type_hints(target, file_id, range)
     }
 
     /// Returns best-effort hover information for the symbol under a source offset.
-    pub fn hover(&self, target: TargetRef, file_id: FileId, offset: u32) -> Option<HoverInfo> {
+    pub fn hover(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<HoverInfo>> {
         hover::HoverResolver::new(self).hover(target, file_id, offset)
     }
 
@@ -105,29 +129,38 @@ impl<'a> Analysis<'a> {
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Vec<CompletionItem> {
+    ) -> anyhow::Result<Vec<CompletionItem>> {
         completion::CompletionResolver::new(self).completions_at_dot(target, file_id, offset)
     }
 
     /// Returns a hierarchical outline for one file under the selected target context.
-    pub fn document_symbols(&self, target: TargetRef, file_id: FileId) -> Vec<DocumentSymbol> {
+    pub fn document_symbols(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+    ) -> anyhow::Result<Vec<DocumentSymbol>> {
         symbols::SymbolCollector::new(self).document_symbols(target, file_id)
     }
 
     /// Returns flat, best-effort symbols matching a case-insensitive workspace query.
-    pub fn workspace_symbols(&self, query: &str) -> Vec<WorkspaceSymbol> {
+    pub fn workspace_symbols(&self, query: &str) -> anyhow::Result<Vec<WorkspaceSymbol>> {
         symbols::SymbolCollector::new(self).workspace_symbols(query)
     }
 
     /// Returns target contexts whose module tree contains a package-local file.
-    pub fn targets_for_file(&self, package: PackageSlot, file: FileId) -> Vec<TargetRef> {
+    pub fn targets_for_file(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+    ) -> anyhow::Result<Vec<TargetRef>> {
         let mut targets = Vec::new();
+        let def_map_package = self.def_map.package(package)?;
 
-        for (target_ref, def_map) in self.def_map.target_maps() {
-            if target_ref.package != package {
-                continue;
-            }
-
+        for (target_idx, def_map) in def_map_package.into_ref().targets().iter().enumerate() {
+            let target_ref = TargetRef {
+                package,
+                target: rg_parse::TargetId(target_idx),
+            };
             let owns_file = def_map
                 .modules()
                 .iter()
@@ -137,6 +170,6 @@ impl<'a> Analysis<'a> {
             }
         }
 
-        targets
+        Ok(targets)
     }
 }

@@ -18,9 +18,9 @@ impl<'a, 'db> TypeHintCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         range: Option<TextSpan>,
-    ) -> Vec<TypeHint> {
-        let Some(target_bodies) = self.0.body_ir.target_bodies(target) else {
-            return Vec::new();
+    ) -> anyhow::Result<Vec<TypeHint>> {
+        let Some(target_bodies) = self.0.body_ir.target_bodies(target)? else {
+            return Ok(Vec::new());
         };
 
         let renderer = TypeRenderer::new(self.0);
@@ -44,7 +44,7 @@ impl<'a, 'db> TypeHintCollector<'a, 'db> {
                     continue;
                 }
 
-                let Some(ty) = renderer.render(&binding.ty) else {
+                let Some(ty) = renderer.render(&binding.ty)? else {
                     continue;
                 };
 
@@ -60,6 +60,6 @@ impl<'a, 'db> TypeHintCollector<'a, 'db> {
         }
 
         hints.sort_by_key(|hint| (hint.span.text.start, hint.label.clone()));
-        hints
+        Ok(hints)
     }
 }

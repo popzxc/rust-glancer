@@ -5,6 +5,7 @@
 
 use rg_def_map::{ModuleRef, Path};
 use rg_item_tree::{GenericArg, TypeRef};
+use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{FunctionRef, SemanticTypePathResolution, TypeDefRef, TypePathContext};
 
 use crate::{
@@ -49,29 +50,41 @@ where
         }
     }
 
-    pub(super) fn resolve_in_scope(&self, scope: ScopeId, path: &Path) -> BodyTypePathResolution {
+    pub(super) fn resolve_in_scope(
+        &self,
+        scope: ScopeId,
+        path: &Path,
+    ) -> Result<BodyTypePathResolution, PackageStoreError> {
         // Body-local type names shadow module items inside their lexical scope. Qualified paths
         // skip this branch because local items cannot be named through module paths.
         if let Some(name) = path.single_name() {
             if let Some(item) = self.resolve_local_type_item(scope, name) {
-                return BodyTypePathResolution::BodyLocal(BodyItemRef {
+                return Ok(BodyTypePathResolution::BodyLocal(BodyItemRef {
                     body: self.body_ref,
                     item,
-                });
+                }));
             }
         }
 
         self.resolve_in_context(
-            self.context_for_function(self.body.owner, self.body.owner_module),
+            self.context_for_function(self.body.owner, self.body.owner_module)?,
             path,
         )
     }
 
-    fn resolve_in_context(&self, context: TypePathContext, path: &Path) -> BodyTypePathResolution {
+    fn resolve_in_context(
+        &self,
+        context: TypePathContext,
+        path: &Path,
+    ) -> Result<BodyTypePathResolution, PackageStoreError> {
         resolve_type_path_in_context(self.def_map, self.semantic_ir, context, path)
     }
 
-    pub(super) fn ty_from_type_ref_in_scope(&self, ty: &TypeRef, scope: ScopeId) -> BodyTy {
+    pub(super) fn ty_from_type_ref_in_scope(
+        &self,
+        ty: &TypeRef,
+        scope: ScopeId,
+    ) -> Result<BodyTy, PackageStoreError> {
         self.ty_from_type_ref_in_scope_with_subst(ty, scope, &TypeSubst::new())
     }
 
@@ -80,26 +93,26 @@ where
         ty: &TypeRef,
         scope: ScopeId,
         subst: &TypeSubst,
-    ) -> BodyTy {
+    ) -> Result<BodyTy, PackageStoreError> {
         // Path types are the only type syntax we resolve structurally today. Other forms stay as
         // syntax unless they have a cheap built-in representation such as `()` or `!`.
         match ty {
             TypeRef::Path(type_path) => {
                 let path = Path::from_type_path(type_path);
                 if let Some(ty) = substitute_type_param(&path, subst) {
-                    return ty;
+                    return Ok(ty);
                 }
 
-                let args = self.generic_args_from_type_path_in_scope(type_path, scope, subst);
-                ty_from_body_resolution(
-                    self.resolve_in_scope(scope, &path),
+                let args = self.generic_args_from_type_path_in_scope(type_path, scope, subst)?;
+                Ok(ty_from_body_resolution(
+                    self.resolve_in_scope(scope, &path)?,
                     BodyTy::Syntax(ty.clone()),
                     args,
-                )
+                ))
             }
             _ => self.ty_from_type_ref_in_context(
                 ty,
-                self.context_for_function(self.body.owner, self.body.owner_module),
+                self.context_for_function(self.body.owner, self.body.owner_module)?,
                 subst,
             ),
         }
@@ -109,17 +122,17 @@ where
         &self,
         ty: &TypeRef,
         scope: ScopeId,
-    ) -> Option<BodyItemRef> {
+    ) -> Result<Option<BodyItemRef>, PackageStoreError> {
         let TypeRef::Path(type_path) = ty else {
-            return None;
+            return Ok(None);
         };
         let path = Path::from_type_path(type_path);
-        match self.resolve_in_scope(scope, &path) {
-            BodyTypePathResolution::BodyLocal(item) => Some(item),
+        match self.resolve_in_scope(scope, &path)? {
+            BodyTypePathResolution::BodyLocal(item) => Ok(Some(item)),
             BodyTypePathResolution::SelfType(_)
             | BodyTypePathResolution::TypeDefs(_)
             | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => None,
+            | BodyTypePathResolution::Unknown => Ok(None),
         }
     }
 
@@ -128,10 +141,10 @@ where
         ty: &TypeRef,
         function: FunctionRef,
         subst: &TypeSubst,
-    ) -> BodyTy {
+    ) -> Result<BodyTy, PackageStoreError> {
         self.ty_from_type_ref_in_context_with_subst(
             ty,
-            self.context_for_function(function, self.body.owner_module),
+            self.context_for_function(function, self.body.owner_module)?,
             subst,
         )
     }
@@ -141,7 +154,7 @@ where
         ty: &TypeRef,
         context: TypePathContext,
         subst: &TypeSubst,
-    ) -> BodyTy {
+    ) -> Result<BodyTy, PackageStoreError> {
         self.ty_from_type_ref_in_context_with_subst(ty, context, subst)
     }
 
@@ -150,7 +163,7 @@ where
         ty: &TypeRef,
         context: TypePathContext,
         subst: &TypeSubst,
-    ) -> BodyTy {
+    ) -> Result<BodyTy, PackageStoreError> {
         ty_from_type_ref_in_context(
             self.def_map,
             self.semantic_ir,
@@ -161,30 +174,35 @@ where
         )
     }
 
-    pub(super) fn self_tys_for_function(&self, function: FunctionRef) -> Vec<TypeDefRef> {
+    pub(super) fn self_tys_for_function(
+        &self,
+        function: FunctionRef,
+    ) -> Result<Vec<TypeDefRef>, PackageStoreError> {
         // `self` parameters and explicit `Self` annotations need the enclosing impl owner, not
         // just the owner module. Semantic IR owns that function-to-owner mapping.
         let Some(impl_ref) = self
-            .context_for_function(function, self.body.owner_module)
+            .context_for_function(function, self.body.owner_module)?
             .impl_ref
         else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
 
-        self.semantic_ir
-            .impl_data(impl_ref)
+        Ok(self
+            .semantic_ir
+            .impl_data(impl_ref)?
             .map(|impl_data| impl_data.resolved_self_tys.clone())
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
     fn context_for_function(
         &self,
         function: FunctionRef,
         fallback_module: ModuleRef,
-    ) -> TypePathContext {
-        self.semantic_ir
-            .type_path_context_for_function(function)
-            .unwrap_or_else(|| TypePathContext::module(fallback_module))
+    ) -> Result<TypePathContext, PackageStoreError> {
+        Ok(self
+            .semantic_ir
+            .type_path_context_for_function(function)?
+            .unwrap_or_else(|| TypePathContext::module(fallback_module)))
     }
 
     fn resolve_local_type_item(&self, mut scope: ScopeId, name: &str) -> Option<BodyItemId> {
@@ -208,14 +226,11 @@ where
         type_path: &rg_item_tree::TypePath,
         scope: ScopeId,
         subst: &TypeSubst,
-    ) -> Vec<BodyGenericArg> {
-        type_path
-            .segments
-            .last()
-            .map(|segment| {
-                self.generic_args_from_item_tree_args_in_scope(&segment.args, scope, subst)
-            })
-            .unwrap_or_default()
+    ) -> Result<Vec<BodyGenericArg>, PackageStoreError> {
+        let Some(segment) = type_path.segments.last() else {
+            return Ok(Vec::new());
+        };
+        self.generic_args_from_item_tree_args_in_scope(&segment.args, scope, subst)
     }
 
     fn generic_args_from_item_tree_args_in_scope(
@@ -223,10 +238,12 @@ where
         args: &[GenericArg],
         scope: ScopeId,
         subst: &TypeSubst,
-    ) -> Vec<BodyGenericArg> {
-        args.iter()
-            .map(|arg| self.generic_arg_from_item_tree_arg_in_scope(arg, scope, subst))
-            .collect()
+    ) -> Result<Vec<BodyGenericArg>, PackageStoreError> {
+        let mut generic_args = Vec::new();
+        for arg in args {
+            generic_args.push(self.generic_arg_from_item_tree_arg_in_scope(arg, scope, subst)?);
+        }
+        Ok(generic_args)
     }
 
     fn generic_arg_from_item_tree_arg_in_scope(
@@ -234,20 +251,23 @@ where
         arg: &GenericArg,
         scope: ScopeId,
         subst: &TypeSubst,
-    ) -> BodyGenericArg {
+    ) -> Result<BodyGenericArg, PackageStoreError> {
         match arg {
-            GenericArg::Type(ty) => BodyGenericArg::Type(Box::new(
-                self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst),
-            )),
-            GenericArg::Lifetime(lifetime) => BodyGenericArg::Lifetime(lifetime.clone()),
-            GenericArg::Const(value) => BodyGenericArg::Const(value.clone()),
-            GenericArg::AssocType { name, ty } => BodyGenericArg::AssocType {
+            GenericArg::Type(ty) => Ok(BodyGenericArg::Type(Box::new(
+                self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst)?,
+            ))),
+            GenericArg::Lifetime(lifetime) => Ok(BodyGenericArg::Lifetime(lifetime.clone())),
+            GenericArg::Const(value) => Ok(BodyGenericArg::Const(value.clone())),
+            GenericArg::AssocType { name, ty } => Ok(BodyGenericArg::AssocType {
                 name: name.clone(),
-                ty: ty.as_ref().map(|ty| {
-                    Box::new(self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst))
-                }),
-            },
-            GenericArg::Unsupported(text) => BodyGenericArg::Unsupported(text.clone()),
+                ty: match ty {
+                    Some(ty) => Some(Box::new(
+                        self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst)?,
+                    )),
+                    None => None,
+                },
+            }),
+            GenericArg::Unsupported(text) => Ok(BodyGenericArg::Unsupported(text.clone())),
         }
     }
 }
@@ -257,11 +277,13 @@ pub(super) fn resolve_type_path_in_context(
     semantic_ir: &impl SemanticIrQuery,
     context: TypePathContext,
     path: &Path,
-) -> BodyTypePathResolution {
-    match semantic_ir.resolve_type_path(def_map, context, path) {
-        SemanticTypePathResolution::SelfType(types) => BodyTypePathResolution::SelfType(types),
-        SemanticTypePathResolution::TypeDefs(types) => BodyTypePathResolution::TypeDefs(types),
-        SemanticTypePathResolution::Traits(traits) => BodyTypePathResolution::Traits(traits),
-        SemanticTypePathResolution::Unknown => BodyTypePathResolution::Unknown,
-    }
+) -> Result<BodyTypePathResolution, PackageStoreError> {
+    Ok(
+        match semantic_ir.resolve_type_path(def_map, context, path)? {
+            SemanticTypePathResolution::SelfType(types) => BodyTypePathResolution::SelfType(types),
+            SemanticTypePathResolution::TypeDefs(types) => BodyTypePathResolution::TypeDefs(types),
+            SemanticTypePathResolution::Traits(traits) => BodyTypePathResolution::Traits(traits),
+            SemanticTypePathResolution::Unknown => BodyTypePathResolution::Unknown,
+        },
+    )
 }

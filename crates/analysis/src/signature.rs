@@ -158,17 +158,17 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         field_signature(data.field)
     }
 
-    pub(super) fn binding_signature(&self, data: &BindingData) -> String {
+    pub(super) fn binding_signature(&self, data: &BindingData) -> anyhow::Result<String> {
         let name = data.name.as_deref().unwrap_or("<unsupported>");
         let ty = TypeRenderer::new(self.0)
-            .render(&data.ty)
+            .render(&data.ty)?
             .or_else(|| data.annotation.as_ref().map(ToString::to_string))
             .unwrap_or_else(|| "_".to_string());
 
-        format!("let {name}: {ty}")
+        Ok(format!("let {name}: {ty}"))
     }
 
-    pub(super) fn ty_signature(&self, ty: &BodyTy) -> Option<String> {
+    pub(super) fn ty_signature(&self, ty: &BodyTy) -> anyhow::Result<Option<String>> {
         TypeRenderer::new(self.0).render(ty)
     }
 }

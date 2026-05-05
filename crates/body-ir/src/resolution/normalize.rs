@@ -48,7 +48,7 @@ where
         let mut outputs = Vec::new();
 
         for nominal in ty.nominal_tys() {
-            let Some(name) = self.semantic_ir.type_def_name(nominal.def) else {
+            let Ok(Some(name)) = self.semantic_ir.type_def_name(nominal.def) else {
                 continue;
             };
             if matches!(name, "Result" | "Option") {

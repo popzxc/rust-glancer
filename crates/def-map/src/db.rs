@@ -1,17 +1,15 @@
-//! Resident def-map database and package-level rebuild entrypoints.
-
-use std::sync::Arc;
+//! Resident def-map database and package-level query helpers.
 
 use rg_item_tree::ItemTreeDb;
-use rg_package_store::PackageStore;
+use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_parse::{self, TargetId};
 use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    DefMap, ImportData, ImportId, ImportRef, LocalDefData, LocalDefId, LocalDefRef, LocalImplData,
-    LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleRef, Package, PackageSlot, Path,
-    ResidentTargetRef, ResolvePathResult, TargetRef, path_resolution, resolve,
+    DefMap, DefMapReadTxn, ImportData, ImportId, ImportRef, LocalDefData, LocalDefId, LocalDefRef,
+    LocalImplData, LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleRef, Package,
+    PackageSlot, Path, ResidentTargetRef, ResolvePathResult, TargetRef, path_resolution, resolve,
 };
 
 /// Frozen def maps for all parsed packages and targets.
@@ -43,29 +41,19 @@ impl DefMapDb {
         Ok(db)
     }
 
-    /// Returns a new def-map snapshot with selected packages rebuilt.
-    pub fn rebuild_packages(
+    /// Returns a new def-map snapshot with selected packages rebuilt against a logical old view.
+    pub fn rebuild_packages_with_interner_and_read_txn(
         &self,
-        workspace: &WorkspaceMetadata,
-        parse: &rg_parse::ParseDb,
-        item_tree: &ItemTreeDb,
-        packages: &[PackageSlot],
-    ) -> anyhow::Result<Self> {
-        let mut interner = NameInterner::new();
-        self.rebuild_packages_with_interner(workspace, parse, item_tree, packages, &mut interner)
-    }
-
-    /// Returns a new def-map snapshot with selected packages rebuilt using retained names.
-    pub fn rebuild_packages_with_interner(
-        &self,
+        old_read: &DefMapReadTxn<'_>,
         workspace: &WorkspaceMetadata,
         parse: &rg_parse::ParseDb,
         item_tree: &ItemTreeDb,
         packages: &[PackageSlot],
         interner: &mut NameInterner,
     ) -> anyhow::Result<Self> {
-        let mut db =
-            resolve::rebuild_packages(self, workspace, parse, item_tree, packages, interner)?;
+        let mut db = resolve::rebuild_packages(
+            self, old_read, workspace, parse, item_tree, packages, interner,
+        )?;
         db.shrink_packages(packages);
         Ok(db)
     }
@@ -77,7 +65,10 @@ impl DefMapDb {
     /// Iterates over every resident target def map together with a resident-only target reference.
     pub fn resident_target_maps(&self) -> impl Iterator<Item = (ResidentTargetRef, &DefMap)> {
         self.packages
-            .resident_packages_with_slots()
+            .raw_entries_with_slots()
+            .filter_map(|(package_slot, entry)| {
+                entry.as_resident().map(|package| (package_slot, package))
+            })
             .flat_map(move |(package_slot, package)| {
                 package
                     .targets()
@@ -113,13 +104,23 @@ impl DefMapDb {
         stats
     }
 
-    /// Returns one package def-map set by package slot.
-    pub fn package(&self, package_slot: PackageSlot) -> Option<&Package> {
-        self.packages.get(package_slot)
+    /// Returns one resident package def-map set by package slot.
+    pub fn resident_package(&self, package_slot: PackageSlot) -> Option<&Package> {
+        self.packages
+            .raw_entry(package_slot)
+            .and_then(|entry| entry.as_resident())
     }
 
-    pub fn package_arc(&self, package_slot: PackageSlot) -> Option<Arc<Package>> {
-        self.packages.get_arc(package_slot)
+    pub fn read_txn<'db>(&'db self, loader: PackageLoader<'db, Package>) -> DefMapReadTxn<'db> {
+        DefMapReadTxn::from_package_store(self.packages.read_txn(loader))
+    }
+
+    pub fn read_txn_for_subset<'db>(
+        &'db self,
+        loader: PackageLoader<'db, Package>,
+        subset: &PackageSubset,
+    ) -> DefMapReadTxn<'db> {
+        DefMapReadTxn::from_package_store(self.packages.read_txn_for_subset(loader, subset))
     }
 
     pub fn replace_package(&mut self, package_slot: PackageSlot, package: Package) -> Option<()> {
@@ -130,9 +131,9 @@ impl DefMapDb {
         self.packages.offload(package_slot)
     }
 
-    /// Returns one target def map by project-wide target reference.
-    pub fn def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.package(target.package)?.target(target.target)
+    /// Returns one resident target def map by project-wide target reference.
+    pub fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
+        self.resident_package(target.package)?.target(target.target)
     }
 
     /// Iterates over one target's modules together with stable project-wide references.
@@ -141,26 +142,28 @@ impl DefMapDb {
         &self,
         target: TargetRef,
     ) -> impl Iterator<Item = (ModuleRef, &ModuleData)> + '_ {
-        self.def_map(target).into_iter().flat_map(move |def_map| {
-            def_map
-                .modules()
-                .iter()
-                .enumerate()
-                .map(move |(module_idx, module)| {
-                    (
-                        ModuleRef {
-                            target,
-                            module: ModuleId(module_idx),
-                        },
-                        module,
-                    )
-                })
-        })
+        self.resident_def_map(target)
+            .into_iter()
+            .flat_map(move |def_map| {
+                def_map
+                    .modules()
+                    .iter()
+                    .enumerate()
+                    .map(move |(module_idx, module)| {
+                        (
+                            ModuleRef {
+                                target,
+                                module: ModuleId(module_idx),
+                            },
+                            module,
+                        )
+                    })
+            })
     }
 
     /// Returns one module by stable project-wide reference.
     pub fn module(&self, module: ModuleRef) -> Option<&ModuleData> {
-        self.def_map(module.target)?.module(module.module)
+        self.resident_def_map(module.target)?.module(module.module)
     }
 
     /// Iterates over one target's local definitions together with stable project-wide references.
@@ -168,26 +171,28 @@ impl DefMapDb {
         &self,
         target: TargetRef,
     ) -> impl Iterator<Item = (LocalDefRef, &LocalDefData)> + '_ {
-        self.def_map(target).into_iter().flat_map(move |def_map| {
-            def_map
-                .local_defs()
-                .iter()
-                .enumerate()
-                .map(move |(local_def_idx, local_def)| {
-                    (
-                        LocalDefRef {
-                            target,
-                            local_def: LocalDefId(local_def_idx),
-                        },
-                        local_def,
-                    )
-                })
-        })
+        self.resident_def_map(target)
+            .into_iter()
+            .flat_map(move |def_map| {
+                def_map
+                    .local_defs()
+                    .iter()
+                    .enumerate()
+                    .map(move |(local_def_idx, local_def)| {
+                        (
+                            LocalDefRef {
+                                target,
+                                local_def: LocalDefId(local_def_idx),
+                            },
+                            local_def,
+                        )
+                    })
+            })
     }
 
     /// Returns one local definition by stable project-wide reference.
     pub fn local_def(&self, local_def: LocalDefRef) -> Option<&LocalDefData> {
-        self.def_map(local_def.target)?
+        self.resident_def_map(local_def.target)?
             .local_def(local_def.local_def)
     }
 
@@ -196,27 +201,29 @@ impl DefMapDb {
         &self,
         target: TargetRef,
     ) -> impl Iterator<Item = (LocalImplRef, &LocalImplData)> + '_ {
-        self.def_map(target).into_iter().flat_map(move |def_map| {
-            def_map
-                .local_impls()
-                .iter()
-                .enumerate()
-                .map(move |(local_impl_idx, local_impl)| {
-                    (
-                        LocalImplRef {
-                            target,
-                            local_impl: LocalImplId(local_impl_idx),
-                        },
-                        local_impl,
-                    )
-                })
-        })
+        self.resident_def_map(target)
+            .into_iter()
+            .flat_map(move |def_map| {
+                def_map
+                    .local_impls()
+                    .iter()
+                    .enumerate()
+                    .map(move |(local_impl_idx, local_impl)| {
+                        (
+                            LocalImplRef {
+                                target,
+                                local_impl: LocalImplId(local_impl_idx),
+                            },
+                            local_impl,
+                        )
+                    })
+            })
     }
 
     /// Returns one impl block by stable project-wide reference.
     #[allow(dead_code)]
     pub fn local_impl(&self, local_impl: LocalImplRef) -> Option<&LocalImplData> {
-        self.def_map(local_impl.target)?
+        self.resident_def_map(local_impl.target)?
             .local_impl(local_impl.local_impl)
     }
 
@@ -225,27 +232,29 @@ impl DefMapDb {
         &self,
         target: TargetRef,
     ) -> impl Iterator<Item = (ImportRef, &ImportData)> + '_ {
-        self.def_map(target).into_iter().flat_map(move |def_map| {
-            def_map
-                .imports()
-                .iter()
-                .enumerate()
-                .map(move |(import_idx, import)| {
-                    (
-                        ImportRef {
-                            target,
-                            import: ImportId(import_idx),
-                        },
-                        import,
-                    )
-                })
-        })
+        self.resident_def_map(target)
+            .into_iter()
+            .flat_map(move |def_map| {
+                def_map
+                    .imports()
+                    .iter()
+                    .enumerate()
+                    .map(move |(import_idx, import)| {
+                        (
+                            ImportRef {
+                                target,
+                                import: ImportId(import_idx),
+                            },
+                            import,
+                        )
+                    })
+            })
     }
 
     /// Returns one import by stable project-wide reference.
     #[allow(dead_code)]
     pub fn import(&self, import: ImportRef) -> Option<&ImportData> {
-        self.def_map(import.target)?.import(import.import)
+        self.resident_def_map(import.target)?.import(import.import)
     }
 
     /// Resolves a path from a module against the frozen def-map graph.
@@ -265,8 +274,10 @@ impl DefMapDb {
 
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
-        for package in self.packages.resident_packages_unique_mut() {
-            package.shrink_to_fit();
+        for entry in self.packages.raw_entries_mut() {
+            if let Some(package) = entry.as_resident_unique_mut() {
+                package.shrink_to_fit();
+            }
         }
     }
 
@@ -311,7 +322,7 @@ mod tests {
 
         let target_packages = db
             .resident_target_maps()
-            .map(|(target, _)| target.package.expose_package_slot())
+            .map(|(target, _)| target.package)
             .collect::<Vec<_>>();
 
         assert_eq!(target_packages, vec![PackageSlot(0), PackageSlot(2)]);

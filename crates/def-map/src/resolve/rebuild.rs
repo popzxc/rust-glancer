@@ -15,11 +15,12 @@ use super::{
     implicit_roots::build_implicit_roots,
     scope::{FinalizeTargetStates, finalize_target_states, freeze_package_states},
 };
-use crate::{DefMapDb, PackageSlot, collect::collect_package_target_states};
+use crate::{DefMapDb, DefMapReadTxn, PackageSlot, collect::collect_package_target_states};
 
 /// Rebuilds selected package def maps against the previous frozen graph.
 pub(crate) fn rebuild_packages(
     old: &DefMapDb,
+    old_read: &DefMapReadTxn<'_>,
     workspace: &WorkspaceMetadata,
     parse: &rg_parse::ParseDb,
     item_tree: &ItemTreeDb,
@@ -77,7 +78,7 @@ pub(crate) fn rebuild_packages(
     }
 
     finalize_target_states(
-        Some(old),
+        Some(old_read),
         workspace,
         parse.packages(),
         &mut target_states,

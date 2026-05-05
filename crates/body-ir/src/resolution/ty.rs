@@ -5,6 +5,7 @@
 
 use rg_def_map::Path;
 use rg_item_tree::{GenericArg, GenericParams, TypeRef};
+use rg_package_store::PackageStoreError;
 use rg_semantic_ir::TypePathContext;
 use rg_text::Name;
 
@@ -30,14 +31,14 @@ pub(super) fn ty_from_type_ref_in_context(
     context: TypePathContext,
     unresolved_path_fallback: BodyTy,
     subst: &TypeSubst,
-) -> BodyTy {
+) -> Result<BodyTy, PackageStoreError> {
     match ty {
-        TypeRef::Unit => BodyTy::Unit,
-        TypeRef::Never => BodyTy::Never,
+        TypeRef::Unit => Ok(BodyTy::Unit),
+        TypeRef::Never => Ok(BodyTy::Never),
         TypeRef::Path(type_path) => {
             let path = Path::from_type_path(type_path);
             if let Some(ty) = substitute_type_param(&path, subst) {
-                return ty;
+                return Ok(ty);
             }
 
             let args = generic_args_from_type_path_in_context(
@@ -46,24 +47,24 @@ pub(super) fn ty_from_type_ref_in_context(
                 type_path,
                 context,
                 subst,
-            );
-            ty_from_body_resolution(
-                resolve_type_path_in_context(def_map, semantic_ir, context, &path),
+            )?;
+            Ok(ty_from_body_resolution(
+                resolve_type_path_in_context(def_map, semantic_ir, context, &path)?,
                 unresolved_path_fallback,
                 args,
-            )
+            ))
         }
-        TypeRef::Reference { inner, .. } => BodyTy::reference(ty_from_type_ref_in_context(
+        TypeRef::Reference { inner, .. } => Ok(BodyTy::reference(ty_from_type_ref_in_context(
             def_map,
             semantic_ir,
             inner,
             context,
             BodyTy::Syntax((**inner).clone()),
             subst,
-        )),
-        TypeRef::Unknown(_) | TypeRef::Infer => BodyTy::Unknown,
-        TypeRef::Tuple(types) if types.is_empty() => BodyTy::Unit,
-        _ => BodyTy::Syntax(ty.clone()),
+        )?)),
+        TypeRef::Unknown(_) | TypeRef::Infer => Ok(BodyTy::Unknown),
+        TypeRef::Tuple(types) if types.is_empty() => Ok(BodyTy::Unit),
+        _ => Ok(BodyTy::Syntax(ty.clone())),
     }
 }
 
@@ -169,22 +170,14 @@ fn generic_args_from_type_path_in_context(
     type_path: &rg_item_tree::TypePath,
     context: TypePathContext,
     subst: &TypeSubst,
-) -> Vec<BodyGenericArg> {
+) -> Result<Vec<BodyGenericArg>, PackageStoreError> {
     // Rust generic args belong to the final path segment for the cases we model here, e.g.
     // `crate::Wrapper<User>` stores `User` on `Wrapper`.
-    type_path
-        .segments
-        .last()
-        .map(|segment| {
-            generic_args_from_item_tree_args_in_context(
-                def_map,
-                semantic_ir,
-                &segment.args,
-                context,
-                subst,
-            )
-        })
-        .unwrap_or_default()
+    let Some(segment) = type_path.segments.last() else {
+        return Ok(Vec::new());
+    };
+
+    generic_args_from_item_tree_args_in_context(def_map, semantic_ir, &segment.args, context, subst)
 }
 
 fn generic_args_from_item_tree_args_in_context(
@@ -193,12 +186,18 @@ fn generic_args_from_item_tree_args_in_context(
     args: &[GenericArg],
     context: TypePathContext,
     subst: &TypeSubst,
-) -> Vec<BodyGenericArg> {
-    args.iter()
-        .map(|arg| {
-            generic_arg_from_item_tree_arg_in_context(def_map, semantic_ir, arg, context, subst)
-        })
-        .collect()
+) -> Result<Vec<BodyGenericArg>, PackageStoreError> {
+    let mut generic_args = Vec::new();
+    for arg in args {
+        generic_args.push(generic_arg_from_item_tree_arg_in_context(
+            def_map,
+            semantic_ir,
+            arg,
+            context,
+            subst,
+        )?);
+    }
+    Ok(generic_args)
 }
 
 fn generic_arg_from_item_tree_arg_in_context(
@@ -207,31 +206,32 @@ fn generic_arg_from_item_tree_arg_in_context(
     arg: &GenericArg,
     context: TypePathContext,
     subst: &TypeSubst,
-) -> BodyGenericArg {
+) -> Result<BodyGenericArg, PackageStoreError> {
     match arg {
-        GenericArg::Type(ty) => BodyGenericArg::Type(Box::new(ty_from_type_ref_in_context(
+        GenericArg::Type(ty) => Ok(BodyGenericArg::Type(Box::new(ty_from_type_ref_in_context(
             def_map,
             semantic_ir,
             ty,
             context,
             BodyTy::Syntax(ty.clone()),
             subst,
-        ))),
-        GenericArg::Lifetime(lifetime) => BodyGenericArg::Lifetime(lifetime.clone()),
-        GenericArg::Const(value) => BodyGenericArg::Const(value.clone()),
-        GenericArg::AssocType { name, ty } => BodyGenericArg::AssocType {
+        )?))),
+        GenericArg::Lifetime(lifetime) => Ok(BodyGenericArg::Lifetime(lifetime.clone())),
+        GenericArg::Const(value) => Ok(BodyGenericArg::Const(value.clone())),
+        GenericArg::AssocType { name, ty } => Ok(BodyGenericArg::AssocType {
             name: name.clone(),
-            ty: ty.as_ref().map(|ty| {
-                Box::new(ty_from_type_ref_in_context(
+            ty: match ty {
+                Some(ty) => Some(Box::new(ty_from_type_ref_in_context(
                     def_map,
                     semantic_ir,
                     ty,
                     context,
                     BodyTy::Syntax(ty.clone()),
                     subst,
-                ))
-            }),
-        },
-        GenericArg::Unsupported(text) => BodyGenericArg::Unsupported(text.clone()),
+                )?)),
+                None => None,
+            },
+        }),
+        GenericArg::Unsupported(text) => Ok(BodyGenericArg::Unsupported(text.clone())),
     }
 }

@@ -1,9 +1,13 @@
+use std::sync::Arc;
+
 use rg_item_tree::ItemTreeDb;
+use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::ParseDb;
+use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
-use crate::{DefMapDb, PackageSlot, TargetRef};
+use crate::{DefMapDb, Package, PackageSlot, TargetRef};
 
 #[test]
 fn rebuild_resolves_dirty_imports_through_clean_packages() {
@@ -65,8 +69,17 @@ pub use dep::api::Api as Renamed;
     }
     let app_slot = app_slot.expect("fixture app package should exist");
 
+    let old_read = old.read_txn(PackageLoader::new(UnexpectedPackageLoader));
+    let mut interner = NameInterner::new();
     let rebuilt = old
-        .rebuild_packages(&workspace, &parse, &item_tree, &[app_slot])
+        .rebuild_packages_with_interner_and_read_txn(
+            &old_read,
+            &workspace,
+            &parse,
+            &item_tree,
+            &[app_slot],
+            &mut interner,
+        )
         .expect("fixture def-map package rebuild should succeed");
 
     let app_package = parse
@@ -82,7 +95,7 @@ pub use dep::api::Api as Renamed;
         target: app_lib.id,
     };
     let app_def_map = rebuilt
-        .def_map(app_target)
+        .resident_def_map(app_target)
         .expect("rebuilt app def-map should exist");
     let root_module = app_def_map
         .root_module()
@@ -103,4 +116,16 @@ pub use dep::api::Api as Renamed;
         root.unresolved_imports.is_empty(),
         "dirty app import through the clean dependency should not be recorded as unresolved"
     );
+}
+
+#[derive(Debug)]
+struct UnexpectedPackageLoader;
+
+impl LoadPackage<Package> for UnexpectedPackageLoader {
+    fn load(&self, package: PackageSlot) -> Result<Arc<Package>, PackageStoreError> {
+        panic!(
+            "resident def-map rebuild fixture should not load offloaded package {}",
+            package.0,
+        )
+    }
 }

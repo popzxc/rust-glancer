@@ -13,3 +13,4 @@ description.workspace = true
 [dependencies]
 rg_memsize.workspace = true
 rg_workspace.workspace = true
+thiserror.workspace = true

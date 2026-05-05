@@ -1,4 +1,4 @@
-use std::fmt::Write as _;
+use std::{fmt, fmt::Write as _, marker::PhantomData, sync::Arc};
 
 use expect_test::Expect;
 
@@ -7,15 +7,14 @@ use crate::{
     NavigationTarget, SymbolAt, TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{
-    BodyGenericArg, BodyIrDb, BodyIrReadTxn, BodyItemRef, BodyLocalNominalTy, BodyNominalTy,
-    BodyTy, ExprData, ExprKind,
+    BodyGenericArg, BodyIrDb, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyTy, ExprData,
+    ExprKind,
 };
-use rg_def_map::{DefMapDb, DefMapReadTxn, ModuleRef, PackageSlot, TargetRef};
+use rg_def_map::{DefMapDb, ModuleRef, PackageSlot, TargetRef};
 use rg_item_tree::ItemTreeDb;
+use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb, Span};
-use rg_semantic_ir::{
-    FunctionRef, ItemOwner, SemanticIrDb, SemanticIrReadTxn, TraitRef, TypeDefId, TypeDefRef,
-};
+use rg_semantic_ir::{FunctionRef, ItemOwner, SemanticIrDb, TraitRef, TypeDefId, TypeDefRef};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::{FixtureMarkers, fixture_crate, fixture_crate_with_markers};
 
@@ -261,19 +260,10 @@ impl AnalysisFixtureDb {
     }
 
     fn analysis(&self) -> Analysis<'_> {
-        let def_map_packages = all_package_arcs(self.parse.packages().len(), |package| {
-            self.def_map.package_arc(package)
-        });
-        let semantic_ir_packages = all_package_arcs(self.parse.packages().len(), |package| {
-            self.semantic_ir.package_arc(package)
-        });
-        let body_ir_packages = all_package_arcs(self.parse.packages().len(), |package| {
-            self.body_ir.package_arc(package)
-        });
         let txn = AnalysisReadTxn::from_phase_txns(
-            DefMapReadTxn::from_sparse_package_arcs(def_map_packages),
-            SemanticIrReadTxn::from_sparse_package_arcs(semantic_ir_packages),
-            BodyIrReadTxn::from_sparse_package_arcs(body_ir_packages),
+            self.def_map.read_txn(unexpected_package_loader()),
+            self.semantic_ir.read_txn(unexpected_package_loader()),
+            self.body_ir.read_txn(unexpected_package_loader()),
         );
         Analysis::new(&txn)
     }
@@ -326,7 +316,7 @@ impl AnalysisFixtureDb {
     fn target_owns_file(&self, target: TargetRef, file_id: FileId) -> bool {
         let def_map = self
             .def_map
-            .def_map(target)
+            .resident_def_map(target)
             .expect("selected fixture target should have a def map");
 
         def_map
@@ -336,13 +326,25 @@ impl AnalysisFixtureDb {
     }
 }
 
-fn all_package_arcs<T>(
-    package_count: usize,
-    mut package_arc: impl FnMut(PackageSlot) -> Option<std::sync::Arc<T>>,
-) -> Vec<Option<std::sync::Arc<T>>> {
-    (0..package_count)
-        .map(|package_idx| package_arc(PackageSlot(package_idx)))
-        .collect()
+fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
+    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
+}
+
+struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
+
+impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UnexpectedPackageLoader").finish()
+    }
+}
+
+impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
+    fn load(&self, package: PackageSlot) -> Result<Arc<T>, PackageStoreError> {
+        panic!(
+            "resident analysis fixture should not load offloaded package {}",
+            package.0,
+        )
+    }
 }
 
 struct AnalysisQuerySnapshot<'a> {
@@ -378,22 +380,39 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         match query.kind {
             AnalysisQueryKind::SymbolAt => {
                 self.render_symbol(
-                    self.db.analysis().symbol_at(target, file_id, offset),
+                    self.db
+                        .analysis()
+                        .symbol_at(target, file_id, offset)
+                        .expect("fixture symbol query should resolve"),
                     target.package,
                     file_id,
                     &mut dump,
                 );
             }
             AnalysisQueryKind::ResolveSymbol => {
-                let Some(symbol) = self.db.analysis().symbol_at(target, file_id, offset) else {
+                let Some(symbol) = self
+                    .db
+                    .analysis()
+                    .symbol_at(target, file_id, offset)
+                    .expect("fixture symbol query should resolve")
+                else {
                     self.render_targets(Vec::new(), &mut dump);
                     return dump;
                 };
-                self.render_targets(self.db.analysis().resolve_symbol(symbol), &mut dump);
+                self.render_targets(
+                    self.db
+                        .analysis()
+                        .resolve_symbol(symbol)
+                        .expect("fixture symbol resolution should resolve"),
+                    &mut dump,
+                );
             }
             AnalysisQueryKind::GotoDefinition => {
                 self.render_targets(
-                    self.db.analysis().goto_definition(target, file_id, offset),
+                    self.db
+                        .analysis()
+                        .goto_definition(target, file_id, offset)
+                        .expect("fixture goto query should resolve"),
                     &mut dump,
                 );
             }
@@ -401,12 +420,17 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 self.render_targets(
                     self.db
                         .analysis()
-                        .goto_type_definition(target, file_id, offset),
+                        .goto_type_definition(target, file_id, offset)
+                        .expect("fixture goto type query should resolve"),
                     &mut dump,
                 );
             }
             AnalysisQueryKind::TypeAt => {
-                let ty = self.db.analysis().type_at(target, file_id, offset);
+                let ty = self
+                    .db
+                    .analysis()
+                    .type_at(target, file_id, offset)
+                    .expect("fixture type query should resolve");
                 writeln!(
                     dump,
                     "\n- {}",
@@ -420,13 +444,17 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 self.render_completions(
                     self.db
                         .analysis()
-                        .completions_at_dot(target, file_id, offset),
+                        .completions_at_dot(target, file_id, offset)
+                        .expect("fixture completion query should resolve"),
                     &mut dump,
                 );
             }
             AnalysisQueryKind::Hover => {
                 self.render_hover(
-                    self.db.analysis().hover(target, file_id, offset),
+                    self.db
+                        .analysis()
+                        .hover(target, file_id, offset)
+                        .expect("fixture hover query should resolve"),
                     target.package,
                     file_id,
                     &mut dump,
@@ -528,7 +556,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 let targets = self
                     .db
                     .analysis()
-                    .resolve_symbol(SymbolAt::Def { def, span });
+                    .resolve_symbol(SymbolAt::Def { def, span })
+                    .expect("fixture symbol resolution should resolve");
                 let label = targets
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
@@ -560,7 +589,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 let targets = self
                     .db
                     .analysis()
-                    .resolve_symbol(SymbolAt::Field { field, span });
+                    .resolve_symbol(SymbolAt::Field { field, span })
+                    .expect("fixture symbol resolution should resolve");
                 let label = targets
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
@@ -576,7 +606,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 let targets = self
                     .db
                     .analysis()
-                    .resolve_symbol(SymbolAt::Function { function, span });
+                    .resolve_symbol(SymbolAt::Function { function, span })
+                    .expect("fixture symbol resolution should resolve");
                 let label = targets
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
@@ -592,7 +623,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 let targets = self
                     .db
                     .analysis()
-                    .resolve_symbol(SymbolAt::EnumVariant { variant, span });
+                    .resolve_symbol(SymbolAt::EnumVariant { variant, span })
+                    .expect("fixture symbol resolution should resolve");
                 let label = targets
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
@@ -860,7 +892,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         let target_ir = self
             .db
             .semantic_ir
-            .target_ir(ty.target)
+            .resident_target_ir(ty.target)
             .expect("target semantic IR should exist while rendering analysis type");
 
         match ty.id {
@@ -948,7 +980,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         let module = self
             .db
             .def_map
-            .def_map(module_ref.target)
+            .resident_def_map(module_ref.target)
             .expect("target def map should exist while rendering analysis module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering analysis module path");
@@ -1027,7 +1059,11 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
 
     fn render_document_symbols(&self, query: &DocumentSymbolsQuery) -> String {
         let (target, file_id) = self.db.target_and_file_for_path(&query.target, query.path);
-        let symbols = self.db.analysis().document_symbols(target, file_id);
+        let symbols = self
+            .db
+            .analysis()
+            .document_symbols(target, file_id)
+            .expect("fixture document symbols should resolve");
         let mut dump = query.title.to_string();
 
         if symbols.is_empty() {
@@ -1041,7 +1077,11 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
     }
 
     fn render_workspace_symbols(&self, query: &str) -> String {
-        let symbols = self.db.analysis().workspace_symbols(query);
+        let symbols = self
+            .db
+            .analysis()
+            .workspace_symbols(query)
+            .expect("fixture workspace symbols should resolve");
         let mut dump = format!("workspace symbols `{query}`");
 
         if symbols.is_empty() {
@@ -1058,7 +1098,11 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
 
     fn render_type_hints(&self, query: &TypeHintsQuery) -> String {
         let (target, file_id) = self.db.target_and_file_for_path(&query.target, query.path);
-        let hints = self.db.analysis().type_hints(target, file_id, None);
+        let hints = self
+            .db
+            .analysis()
+            .type_hints(target, file_id, None)
+            .expect("fixture type hints should resolve");
         let mut dump = query.title.to_string();
 
         if hints.is_empty() {

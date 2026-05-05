@@ -4,7 +4,7 @@
 //! question: "what declaration-like entity does this cursor symbol denote?"
 
 use rg_body_ir::{
-    BodyData, BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution, ResolvedFieldRef,
+    BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution, ResolvedFieldRef,
     ResolvedFunctionRef, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleRef, Path};
@@ -44,11 +44,14 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
         Self(analysis)
     }
 
-    pub(super) fn entities_for_symbol(&self, symbol: SymbolAt) -> Vec<ResolvedEntity> {
+    pub(super) fn entities_for_symbol(
+        &self,
+        symbol: SymbolAt,
+    ) -> anyhow::Result<Vec<ResolvedEntity>> {
         match symbol {
-            SymbolAt::Body { .. } => Vec::new(),
+            SymbolAt::Body { .. } => Ok(Vec::new()),
             SymbolAt::Binding { body, binding } => {
-                vec![ResolvedEntity::LocalBinding { body, binding }]
+                Ok(vec![ResolvedEntity::LocalBinding { body, binding }])
             }
             SymbolAt::BodyPath {
                 body, scope, path, ..
@@ -57,39 +60,40 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
                 body, scope, path, ..
             } => self.entities_for_body_value_path(body, scope, &path),
             SymbolAt::Def { def, .. } => self.entities_for_def(def),
-            SymbolAt::Expr { body, expr } => self
-                .body_data(body)
-                .and_then(|body_data| {
-                    body_data.expr(expr).map(|expr_data| {
-                        self.entities_for_body_resolution(Some(body), &expr_data.resolution, None)
-                    })
-                })
-                .unwrap_or_default(),
-            SymbolAt::Field { field, .. } => {
-                vec![ResolvedEntity::Field(ResolvedFieldRef::Semantic(field))]
+            SymbolAt::Expr { body, expr } => {
+                let Some(body_data) = self.0.body_ir.body_data(body)? else {
+                    return Ok(Vec::new());
+                };
+                let Some(expr_data) = body_data.expr(expr) else {
+                    return Ok(Vec::new());
+                };
+                self.entities_for_body_resolution(Some(body), &expr_data.resolution, None)
             }
-            SymbolAt::Function { function, .. } => vec![ResolvedEntity::Function(
+            SymbolAt::Field { field, .. } => Ok(vec![ResolvedEntity::Field(
+                ResolvedFieldRef::Semantic(field),
+            )]),
+            SymbolAt::Function { function, .. } => Ok(vec![ResolvedEntity::Function(
                 ResolvedFunctionRef::Semantic(function),
-            )],
-            SymbolAt::EnumVariant { variant, .. } => vec![ResolvedEntity::EnumVariant(variant)],
-            SymbolAt::LocalItem { item, .. } => vec![ResolvedEntity::LocalItem(item)],
+            )]),
+            SymbolAt::EnumVariant { variant, .. } => Ok(vec![ResolvedEntity::EnumVariant(variant)]),
+            SymbolAt::LocalItem { item, .. } => Ok(vec![ResolvedEntity::LocalItem(item)]),
             SymbolAt::TypePath { context, path, .. } => {
                 let resolution =
                     self.0
                         .semantic_ir
-                        .resolve_type_path(&self.0.def_map, context, &path);
+                        .resolve_type_path(&self.0.def_map, context, &path)?;
                 let entities = self.entities_for_semantic_type_path_resolution(resolution);
                 if entities.is_empty() {
                     self.entities_for_use_path(context.module, &path)
                 } else {
-                    entities
+                    Ok(entities)
                 }
             }
             SymbolAt::UsePath { module, path, .. } => self.entities_for_use_path(module, &path),
         }
     }
 
-    fn entities_for_def(&self, def: DefId) -> Vec<ResolvedEntity> {
+    fn entities_for_def(&self, def: DefId) -> anyhow::Result<Vec<ResolvedEntity>> {
         self.entities_for_def_with_module_display(def, None)
     }
 
@@ -97,25 +101,30 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
         &self,
         def: DefId,
         display_name: Option<String>,
-    ) -> Vec<ResolvedEntity> {
+    ) -> anyhow::Result<Vec<ResolvedEntity>> {
         match def {
-            DefId::Module(module) => vec![ResolvedEntity::Module {
+            DefId::Module(module) => Ok(vec![ResolvedEntity::Module {
                 module,
                 display_name,
-            }],
-            DefId::Local(local_def) => vec![
-                self.entity_for_local_def(local_def)
-                    .unwrap_or(ResolvedEntity::LocalDef(local_def)),
-            ],
+            }]),
+            DefId::Local(local_def) => {
+                Ok(vec![self.entity_for_local_def(local_def).map(
+                    |entity| entity.unwrap_or(ResolvedEntity::LocalDef(local_def)),
+                )?])
+            }
         }
     }
 
-    fn entity_for_local_def(&self, local_def: LocalDefRef) -> Option<ResolvedEntity> {
-        let item = self
-            .0
-            .semantic_ir
-            .target_ir(local_def.target)?
-            .item_for_local_def(local_def.local_def)?;
+    fn entity_for_local_def(
+        &self,
+        local_def: LocalDefRef,
+    ) -> anyhow::Result<Option<ResolvedEntity>> {
+        let Some(target_ir) = self.0.semantic_ir.target_ir(local_def.target)? else {
+            return Ok(None);
+        };
+        let Some(item) = target_ir.item_for_local_def(local_def.local_def) else {
+            return Ok(None);
+        };
 
         let entity = match item {
             ItemId::Struct(id) => ResolvedEntity::TypeDef(TypeDefRef {
@@ -153,18 +162,20 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
                 id,
             }),
         };
-        Some(entity)
+        Ok(Some(entity))
     }
 
-    fn entities_for_use_path(&self, module: ModuleRef, path: &Path) -> Vec<ResolvedEntity> {
+    fn entities_for_use_path(
+        &self,
+        module: ModuleRef,
+        path: &Path,
+    ) -> anyhow::Result<Vec<ResolvedEntity>> {
         let display_name = path.last_segment_label();
-        self.0
-            .def_map
-            .resolve_path(module, path)
-            .resolved
-            .into_iter()
-            .flat_map(|def| self.entities_for_def_with_module_display(def, display_name.clone()))
-            .collect()
+        let mut entities = Vec::new();
+        for def in self.0.def_map.resolve_path(module, path)?.resolved {
+            entities.extend(self.entities_for_def_with_module_display(def, display_name.clone())?);
+        }
+        Ok(entities)
     }
 
     fn entities_for_body_type_path(
@@ -172,23 +183,24 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         path: &Path,
-    ) -> Vec<ResolvedEntity> {
+    ) -> anyhow::Result<Vec<ResolvedEntity>> {
         let resolution = self.0.body_ir.resolve_type_path_in_scope(
             &self.0.def_map,
             &self.0.semantic_ir,
             body_ref,
             scope,
             path,
-        );
+        )?;
 
         let entities = self.entities_for_body_type_path_resolution(resolution);
         if !entities.is_empty() {
-            return entities;
+            return Ok(entities);
         }
 
-        self.body_data(body_ref)
-            .map(|body| self.entities_for_use_path(body.owner_module, path))
-            .unwrap_or_default()
+        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
+            return Ok(Vec::new());
+        };
+        self.entities_for_use_path(body.owner_module, path)
     }
 
     fn entities_for_body_value_path(
@@ -196,14 +208,14 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         path: &Path,
-    ) -> Vec<ResolvedEntity> {
+    ) -> anyhow::Result<Vec<ResolvedEntity>> {
         let (resolution, _) = self.0.body_ir.resolve_value_path_in_scope(
             &self.0.def_map,
             &self.0.semantic_ir,
             body_ref,
             scope,
             path,
-        );
+        )?;
         self.entities_for_body_resolution(Some(body_ref), &resolution, path.last_segment_label())
     }
 
@@ -212,36 +224,44 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
         body_ref: Option<BodyRef>,
         resolution: &BodyResolution,
         module_display_name: Option<String>,
-    ) -> Vec<ResolvedEntity> {
+    ) -> anyhow::Result<Vec<ResolvedEntity>> {
         match resolution {
-            BodyResolution::Local(binding) => body_ref
+            BodyResolution::Local(binding) => Ok(body_ref
                 .map(|body| ResolvedEntity::LocalBinding {
                     body,
                     binding: *binding,
                 })
                 .into_iter()
-                .collect(),
-            BodyResolution::LocalItem(item) => vec![ResolvedEntity::LocalItem(*item)],
-            BodyResolution::Item(defs) => defs
-                .iter()
-                .flat_map(|def| {
-                    self.entities_for_def_with_module_display(*def, module_display_name.clone())
-                })
-                .collect(),
-            BodyResolution::Field(fields) => {
-                fields.iter().copied().map(ResolvedEntity::Field).collect()
+                .collect()),
+            BodyResolution::LocalItem(item) => Ok(vec![ResolvedEntity::LocalItem(*item)]),
+            BodyResolution::Item(defs) => {
+                let mut entities = Vec::new();
+                for def in defs {
+                    entities.extend(
+                        self.entities_for_def_with_module_display(
+                            *def,
+                            module_display_name.clone(),
+                        )?,
+                    );
+                }
+                Ok(entities)
             }
-            BodyResolution::Function(functions) | BodyResolution::Method(functions) => functions
-                .iter()
-                .copied()
-                .map(ResolvedEntity::Function)
-                .collect(),
-            BodyResolution::EnumVariant(variants) => variants
+            BodyResolution::Field(fields) => {
+                Ok(fields.iter().copied().map(ResolvedEntity::Field).collect())
+            }
+            BodyResolution::Function(functions) | BodyResolution::Method(functions) => {
+                Ok(functions
+                    .iter()
+                    .copied()
+                    .map(ResolvedEntity::Function)
+                    .collect())
+            }
+            BodyResolution::EnumVariant(variants) => Ok(variants
                 .iter()
                 .copied()
                 .map(ResolvedEntity::EnumVariant)
-                .collect(),
-            BodyResolution::Unknown => Vec::new(),
+                .collect()),
+            BodyResolution::Unknown => Ok(Vec::new()),
         }
     }
 
@@ -275,9 +295,5 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
             }
             BodyTypePathResolution::Unknown => Vec::new(),
         }
-    }
-
-    fn body_data(&self, body_ref: BodyRef) -> Option<&BodyData> {
-        self.0.body_ir.body_data(body_ref)
     }
 }

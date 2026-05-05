@@ -7,6 +7,7 @@
 mod scan;
 
 use rg_def_map::{Path, TargetRef};
+use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
 use crate::{BindingId, BodyIrReadTxn, BodyItemRef, BodyRef, BodyTy, ExprId, ScopeId};
@@ -80,7 +81,7 @@ impl BodyIrReadTxn<'_> {
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Vec<BodyCursorCandidate> {
+    ) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
         BodyCursorScanner::new(self, target, file_id, offset).scan()
     }
 
@@ -90,14 +91,15 @@ impl BodyIrReadTxn<'_> {
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Option<DotReceiver> {
+    ) -> Result<Option<DotReceiver>, PackageStoreError> {
         DotReceiverScanner::new(self, target, file_id, offset).receiver_at_dot()
     }
 
     /// Returns the resolved type for a previously-selected dot receiver.
-    pub fn receiver_ty(&self, receiver: DotReceiver) -> Option<&BodyTy> {
-        self.body_data(receiver.body)?
-            .expr(receiver.receiver)
-            .map(|expr| &expr.ty)
+    pub fn receiver_ty(&self, receiver: DotReceiver) -> Result<Option<&BodyTy>, PackageStoreError> {
+        Ok(self
+            .body_data(receiver.body)?
+            .and_then(|body| body.expr(receiver.receiver))
+            .map(|expr| &expr.ty))
     }
 }

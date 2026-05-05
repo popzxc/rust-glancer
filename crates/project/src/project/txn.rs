@@ -1,10 +1,11 @@
 //! Project-level read transactions.
 
 use rg_analysis::AnalysisReadTxn;
+use rg_package_store::PackageSubset;
 
 use crate::cache::integration;
 
-use super::{demand::PackageDemand, state::ProjectState};
+use super::state::ProjectState;
 
 /// Read transaction for project-level query APIs.
 ///
@@ -18,16 +19,16 @@ pub(crate) struct ProjectReadTxn<'a> {
 impl<'a> ProjectReadTxn<'a> {
     pub(crate) fn new(project: &'a ProjectState) -> anyhow::Result<Self> {
         Ok(Self {
-            analysis: integration::materialized_analysis_txn(project)?,
+            analysis: integration::logical_analysis_txn(project)?,
         })
     }
 
-    pub(crate) fn for_demand(
+    pub(crate) fn for_subset(
         project: &'a ProjectState,
-        demand: &PackageDemand,
+        subset: &PackageSubset,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            analysis: integration::materialized_analysis_txn_for_demand(project, demand)?,
+            analysis: integration::logical_analysis_txn_for_subset(project, subset)?,
         })
     }
 

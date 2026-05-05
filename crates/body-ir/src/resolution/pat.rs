@@ -4,9 +4,10 @@
 //! bindings. Enum variants are matched against a known enum scrutinee/annotation type; patterns do
 //! not infer the scrutinee type by themselves.
 
-use rg_def_map::{DefMapDb, Path, PathSegment};
+use rg_def_map::{Path, PathSegment};
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
-use rg_semantic_ir::{SemanticIrDb, TypeDefId, TypePathContext};
+use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{TypeDefId, TypePathContext};
 
 use crate::{
     body::BodyData,
@@ -14,6 +15,7 @@ use crate::{
     ids::{BindingId, BodyRef, ExprId, PatId, ScopeId, StmtId},
     pat::{PatKind, RecordPatField},
     path::BodyPath,
+    query::{DefMapQuery, SemanticIrQuery},
     stmt::StmtKind,
     ty::{BodyNominalTy, BodyTy},
 };
@@ -24,17 +26,25 @@ use super::{
     type_path::BodyTypePathResolver,
 };
 
-pub(super) struct PatternTypePropagator<'db, 'body> {
-    def_map: &'db DefMapDb,
-    semantic_ir: &'db SemanticIrDb,
+pub(super) struct PatternTypePropagator<'db, 'body, D, S>
+where
+    D: DefMapQuery,
+    S: SemanticIrQuery,
+{
+    def_map: &'db D,
+    semantic_ir: &'db S,
     body_ref: BodyRef,
     body: &'body mut BodyData,
 }
 
-impl<'db, 'body> PatternTypePropagator<'db, 'body> {
+impl<'db, 'body, D, S> PatternTypePropagator<'db, 'body, D, S>
+where
+    D: DefMapQuery,
+    S: SemanticIrQuery,
+{
     pub(super) fn new(
-        def_map: &'db DefMapDb,
-        semantic_ir: &'db SemanticIrDb,
+        def_map: &'db D,
+        semantic_ir: &'db S,
         body_ref: BodyRef,
         body: &'body mut BodyData,
     ) -> Self {
@@ -46,7 +56,7 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
         }
     }
 
-    pub(super) fn propagate(&mut self) -> bool {
+    pub(super) fn propagate(&mut self) -> Result<bool, PackageStoreError> {
         let mut changed = false;
 
         for statement_idx in 0..self.body.statements.len() {
@@ -62,8 +72,8 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
                 continue;
             };
 
-            let expected_ty = self.expected_ty_for_let(scope, annotation.as_ref(), initializer);
-            changed |= self.propagate_pat(pat, &expected_ty);
+            let expected_ty = self.expected_ty_for_let(scope, annotation.as_ref(), initializer)?;
+            changed |= self.propagate_pat(pat, &expected_ty)?;
         }
 
         for expr_idx in 0..self.body.exprs.len() {
@@ -77,12 +87,12 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
             let expected_ty = self.body.exprs[scrutinee].ty.clone();
             for arm in arms {
                 if let Some(pat) = arm.pat {
-                    changed |= self.propagate_pat(pat, &expected_ty);
+                    changed |= self.propagate_pat(pat, &expected_ty)?;
                 }
             }
         }
 
-        changed
+        Ok(changed)
     }
 
     fn expected_ty_for_let(
@@ -90,28 +100,32 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
         scope: ScopeId,
         annotation: Option<&rg_item_tree::TypeRef>,
         initializer: Option<ExprId>,
-    ) -> BodyTy {
+    ) -> Result<BodyTy, PackageStoreError> {
         if let Some(annotation) = annotation {
             let ty =
                 BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
-                    .ty_from_type_ref_in_scope(annotation, scope);
+                    .ty_from_type_ref_in_scope(annotation, scope)?;
             if !matches!(ty, BodyTy::Unknown) {
-                return ty;
+                return Ok(ty);
             }
         }
 
-        initializer
+        Ok(initializer
             .map(|expr| self.body.exprs[expr].ty.clone())
-            .unwrap_or(BodyTy::Unknown)
+            .unwrap_or(BodyTy::Unknown))
     }
 
-    fn propagate_pat(&mut self, pat: PatId, expected_ty: &BodyTy) -> bool {
+    fn propagate_pat(
+        &mut self,
+        pat: PatId,
+        expected_ty: &BodyTy,
+    ) -> Result<bool, PackageStoreError> {
         if matches!(expected_ty, BodyTy::Unknown) {
-            return false;
+            return Ok(false);
         }
 
         let Some(data) = self.body.pat(pat).cloned() else {
-            return false;
+            return Ok(false);
         };
 
         match data.kind {
@@ -120,9 +134,9 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
                     .map(|binding| self.set_binding_ty(binding, expected_ty.clone()))
                     .unwrap_or(false);
                 if let Some(subpat) = subpat {
-                    changed |= self.propagate_pat(subpat, expected_ty);
+                    changed |= self.propagate_pat(subpat, expected_ty)?;
                 }
-                changed
+                Ok(changed)
             }
             PatKind::TupleStruct { path, fields } => {
                 self.propagate_tuple_variant(path.as_ref(), &fields, expected_ty)
@@ -130,15 +144,19 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
             PatKind::Record { path, fields } => {
                 self.propagate_record_variant(path.as_ref(), &fields, expected_ty)
             }
-            PatKind::Or { pats } => pats
-                .into_iter()
-                .any(|pat| self.propagate_pat(pat, expected_ty)),
+            PatKind::Or { pats } => {
+                let mut changed = false;
+                for pat in pats {
+                    changed |= self.propagate_pat(pat, expected_ty)?;
+                }
+                Ok(changed)
+            }
             PatKind::Ref { pat } | PatKind::Box { pat } => self.propagate_pat(pat, expected_ty),
             PatKind::Tuple { .. }
             | PatKind::Slice { .. }
             | PatKind::Path { .. }
             | PatKind::Wildcard
-            | PatKind::Unsupported => false,
+            | PatKind::Unsupported => Ok(false),
         }
     }
 
@@ -147,19 +165,19 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
         path: Option<&BodyPath>,
         fields: &[PatId],
         expected_ty: &BodyTy,
-    ) -> bool {
+    ) -> Result<bool, PackageStoreError> {
         let Some(variant_name) = variant_name(path.map(|path| &path.path)) else {
-            return false;
+            return Ok(false);
         };
 
         let mut changed = false;
         for (idx, field_pat) in fields.iter().enumerate() {
             let field_key = FieldKey::Tuple(idx);
-            if let Some(field_ty) = self.variant_field_ty(expected_ty, variant_name, &field_key) {
-                changed |= self.propagate_pat(*field_pat, &field_ty);
+            if let Some(field_ty) = self.variant_field_ty(expected_ty, variant_name, &field_key)? {
+                changed |= self.propagate_pat(*field_pat, &field_ty)?;
             }
         }
-        changed
+        Ok(changed)
     }
 
     fn propagate_record_variant(
@@ -167,18 +185,18 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
         path: Option<&BodyPath>,
         fields: &[RecordPatField],
         expected_ty: &BodyTy,
-    ) -> bool {
+    ) -> Result<bool, PackageStoreError> {
         let Some(variant_name) = variant_name(path.map(|path| &path.path)) else {
-            return false;
+            return Ok(false);
         };
 
         let mut changed = false;
         for field in fields {
-            if let Some(field_ty) = self.variant_field_ty(expected_ty, variant_name, &field.key) {
-                changed |= self.propagate_pat(field.pat, &field_ty);
+            if let Some(field_ty) = self.variant_field_ty(expected_ty, variant_name, &field.key)? {
+                changed |= self.propagate_pat(field.pat, &field_ty)?;
             }
         }
-        changed
+        Ok(changed)
     }
 
     fn variant_field_ty(
@@ -186,10 +204,11 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
         expected_ty: &BodyTy,
         variant_name: &str,
         field_key: &FieldKey,
-    ) -> Option<BodyTy> {
+    ) -> Result<Option<BodyTy>, PackageStoreError> {
         let mut candidates = Vec::new();
         for enum_ty in enum_ty_candidates(expected_ty) {
-            let Some(field_ty) = self.variant_field_ty_for_enum(enum_ty, variant_name, field_key)
+            let Some(field_ty) =
+                self.variant_field_ty_for_enum(enum_ty, variant_name, field_key)?
             else {
                 continue;
             };
@@ -197,8 +216,8 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
         }
 
         match candidates.as_slice() {
-            [ty] => Some(ty.clone()),
-            [] | [_, ..] => None,
+            [ty] => Ok(Some(ty.clone())),
+            [] | [_, ..] => Ok(None),
         }
     }
 
@@ -207,30 +226,37 @@ impl<'db, 'body> PatternTypePropagator<'db, 'body> {
         enum_ty: &BodyNominalTy,
         variant_name: &str,
         field_key: &FieldKey,
-    ) -> Option<BodyTy> {
+    ) -> Result<Option<BodyTy>, PackageStoreError> {
         if !matches!(enum_ty.def.id, TypeDefId::Enum(_)) {
-            return None;
+            return Ok(None);
         }
 
-        let enum_data = self.semantic_ir.enum_data_for_type_def(enum_ty.def)?;
-        let (_, variant) = self
+        let Some(enum_data) = self.semantic_ir.enum_data_for_type_def(enum_ty.def)? else {
+            return Ok(None);
+        };
+        let Some((_, variant)) = self
             .semantic_ir
-            .enum_variant_for_type_def(enum_ty.def, variant_name)?;
-        let field = variant_field(&variant.fields, field_key)?;
+            .enum_variant_for_type_def(enum_ty.def, variant_name)?
+        else {
+            return Ok(None);
+        };
+        let Some(field) = variant_field(&variant.fields, field_key) else {
+            return Ok(None);
+        };
         let subst = self
             .semantic_ir
-            .generic_params_for_type_def(enum_ty.def)
+            .generic_params_for_type_def(enum_ty.def)?
             .map(|generics| subst_from_generics(generics, &enum_ty.args))
             .unwrap_or_else(TypeSubst::new);
 
-        Some(ty_from_type_ref_in_context(
+        Ok(Some(ty_from_type_ref_in_context(
             self.def_map,
             self.semantic_ir,
             &field.ty,
             TypePathContext::module(enum_data.owner),
             BodyTy::Unknown,
             &subst,
-        ))
+        )?))
     }
 
     fn set_binding_ty(&mut self, binding: BindingId, ty: BodyTy) -> bool {

@@ -893,7 +893,7 @@ pub struct Renamed;
 }
 
 #[test]
-fn queries_rebuild_missing_offloaded_package_cache_artifacts() {
+fn queries_report_missing_offloaded_package_cache_artifacts() {
     let fixture = HostFixture::build_with_options(
         r#"
 //- /Cargo.toml
@@ -927,18 +927,16 @@ pub struct Api;
     fixture.remove_cache_namespace();
     assert!(!fixture.package_cache_artifact_exists("dep"));
 
-    fixture.check(
-        &[HostObservation::workspace_symbols("Api")],
-        expect![[r#"
-            workspace symbols `Api`
-            - struct Api @ dep[lib] dep/src/lib.rs
-        "#]],
+    let error = fixture.workspace_symbols_error("Api");
+    assert!(
+        error.contains("offloaded package slot PackageSlot(1) is missing from backing storage"),
+        "{error}",
     );
-    assert!(fixture.package_cache_artifact_exists("dep"));
+    assert!(!fixture.package_cache_artifact_exists("dep"));
 }
 
 #[test]
-fn queries_rebuild_corrupt_offloaded_package_cache_artifacts() {
+fn queries_report_corrupt_offloaded_package_cache_artifacts() {
     let fixture = HostFixture::build_with_options(
         r#"
 //- /Cargo.toml
@@ -970,12 +968,10 @@ pub struct Api;
 
     fixture.corrupt_package_cache_artifact("dep");
 
-    fixture.check(
-        &[HostObservation::workspace_symbols("Api")],
-        expect![[r#"
-            workspace symbols `Api`
-            - struct Api @ dep[lib] dep/src/lib.rs
-        "#]],
+    let error = fixture.workspace_symbols_error("Api");
+    assert!(
+        error.contains("offloaded package slot PackageSlot(1) has malformed cache data"),
+        "{error}",
     );
     assert!(fixture.package_cache_artifact_exists("dep"));
 }
@@ -1036,7 +1032,7 @@ pub struct Unrelated;
     );
     assert!(
         !fixture.package_cache_artifact_exists("unrelated"),
-        "narrow file-local queries should not recover artifacts outside their demand set",
+        "narrow file-local queries should not recover artifacts outside their package subset",
     );
 }
 
@@ -1120,7 +1116,7 @@ pub fn use_dep(_: dep::Api) {}
     );
     assert!(
         !fixture.package_cache_artifact_exists("unrelated"),
-        "source updates should not recover artifacts outside their rebuild demand set",
+        "source updates should not recover artifacts outside their rebuild package subset",
     );
 }
 
@@ -1138,8 +1134,9 @@ edition = "2024"
 dep = { path = "dep" }
 
 //- /src/lib.rs
+use dep::Api;
 pub struct Before;
-pub fn use_dep(_: dep::Api) {}
+pub fn use_dep(_: Api) {}
 
 //- /dep/Cargo.toml
 [package]
@@ -1161,8 +1158,9 @@ pub struct Api;
     fixture.check_save(
         r#"
 //- /src/lib.rs
+use dep::Api;
 pub struct After;
-pub fn use_dep(_: dep::Api) {}
+pub fn use_dep(_: Api) {}
 "#,
         &[
             HostObservation::workspace_symbols("After"),
@@ -1202,8 +1200,9 @@ edition = "2024"
 dep = { path = "dep" }
 
 //- /src/lib.rs
+use dep::Api;
 pub struct Before;
-pub fn use_dep(_: dep::Api) {}
+pub fn use_dep(_: Api) {}
 
 //- /dep/Cargo.toml
 [package]
@@ -1225,8 +1224,9 @@ pub struct Api;
     fixture.check_save(
         r#"
 //- /src/lib.rs
+use dep::Api;
 pub struct After;
-pub fn use_dep(_: dep::Api) {}
+pub fn use_dep(_: Api) {}
 "#,
         &[
             HostObservation::workspace_symbols("After"),
