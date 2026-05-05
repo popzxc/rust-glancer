@@ -73,7 +73,8 @@ impl<'db> BodyIrReadTxn<'db> {
         scope: ScopeId,
         path: &Path,
     ) -> Result<BodyTypePathResolution, PackageStoreError> {
-        resolution::resolve_type_path_in_scope(self, def_map, semantic_ir, body_ref, scope, path)
+        let body = self.body_data(body_ref)?;
+        resolution::resolve_type_path_in_scope(body, def_map, semantic_ir, body_ref, scope, path)
     }
 
     /// Resolves a value path from a body-local lexical scope.
@@ -88,7 +89,8 @@ impl<'db> BodyIrReadTxn<'db> {
         scope: ScopeId,
         path: &Path,
     ) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
-        resolution::resolve_value_path_in_scope(self, def_map, semantic_ir, body_ref, scope, path)
+        let body = self.body_data(body_ref)?;
+        resolution::resolve_value_path_in_scope(body, def_map, semantic_ir, body_ref, scope, path)
     }
 
     /// Converts one Semantic IR field declaration type into Body IR's small type vocabulary.
@@ -139,8 +141,9 @@ impl<'db> BodyIrReadTxn<'db> {
         function_ref: BodyFunctionRef,
         receiver_ty: &BodyLocalNominalTy,
     ) -> Result<bool, PackageStoreError> {
+        let body = self.body_data(function_ref.body)?;
         resolution::local_function_applies_to_receiver(
-            self,
+            body,
             def_map,
             semantic_ir,
             function_ref,

@@ -73,7 +73,7 @@ pub(super) fn apply_imports(
     env: &impl PathResolutionEnv,
     next_scopes: &mut ScopeMatrix,
 ) -> anyhow::Result<()> {
-    for import in state.def_map.imports.iter() {
+    for import in state.def_map.imports().iter() {
         match import.kind {
             ImportKind::Glob => {
                 let source_modules = resolve_path_to_modules_with_env(

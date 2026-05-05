@@ -95,7 +95,8 @@ pub use dep::api::Api as Renamed;
         target: app_lib.id,
     };
     let app_def_map = rebuilt
-        .resident_def_map(app_target)
+        .resident_package(app_target.package)
+        .and_then(|package| package.target(app_target.target))
         .expect("rebuilt app def-map should exist");
     let root_module = app_def_map
         .root_module()

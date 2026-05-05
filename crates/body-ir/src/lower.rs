@@ -14,7 +14,7 @@ use rg_item_tree::{
     Documentation, FieldKey, FieldList, FunctionItem, GenericParams, ImplItem, TypeRef,
 };
 use rg_parse::{FileId, LineIndex, ParseDb, Span, TargetId};
-use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrDb, TraitRef};
+use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrReadTxn, TraitRef};
 use rg_text::{Name, NameInterner};
 
 use super::{
@@ -32,26 +32,28 @@ use super::{
 
 pub(super) fn build_db(
     parse: &ParseDb,
-    semantic_ir: &SemanticIrDb,
+    semantic_ir: &SemanticIrReadTxn<'_>,
+    package_count: usize,
     policy: BodyIrBuildPolicy,
     interner: &mut NameInterner,
 ) -> anyhow::Result<BodyIrDb> {
-    let mut packages = Vec::with_capacity(semantic_ir.package_count());
+    let mut packages = Vec::with_capacity(package_count);
 
-    for package_idx in 0..semantic_ir.package_count() {
+    for package_idx in 0..package_count {
         let package = PackageSlot(package_idx);
-        let package_ir = semantic_ir.resident_package(package).with_context(|| {
+        let package_ir = semantic_ir.package(package).with_context(|| {
             format!(
                 "while attempting to fetch semantic IR package {} for body lowering",
                 package.0,
             )
         })?;
+        let target_count = package_ir.into_ref().targets().len();
         packages.push(build_package(
             parse,
             semantic_ir,
             policy,
             package,
-            package_ir.targets().len(),
+            target_count,
             interner,
         )?);
     }
@@ -61,7 +63,7 @@ pub(super) fn build_db(
 
 pub(super) fn build_package(
     parse: &ParseDb,
-    semantic_ir: &SemanticIrDb,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     policy: BodyIrBuildPolicy,
     package: PackageSlot,
     target_count: usize,
@@ -77,7 +79,15 @@ pub(super) fn build_package(
             package,
             target: TargetId(target_idx),
         };
-        let function_count = semantic_ir.function_count(target_ref);
+        let functions = semantic_ir
+            .functions(target_ref)
+            .with_context(|| {
+                format!("while attempting to fetch semantic IR functions for target {target_idx}")
+            })?
+            .into_iter()
+            .map(|(function_ref, function)| (function_ref, function.source.file_id, function.span))
+            .collect::<Vec<_>>();
+        let function_count = functions.len();
         if !policy.should_lower_package(parse_package) {
             targets.push(TargetBodies::skipped(function_count));
             continue;
@@ -87,7 +97,7 @@ pub(super) fn build_package(
             TargetLowering {
                 parse_package,
                 semantic_ir,
-                target_ref,
+                functions,
                 target_bodies: TargetBodies::new(function_count),
                 interner,
             }
@@ -103,22 +113,16 @@ pub(super) fn build_package(
 
 struct TargetLowering<'a> {
     parse_package: &'a rg_parse::Package,
-    semantic_ir: &'a SemanticIrDb,
-    target_ref: TargetRef,
+    semantic_ir: &'a SemanticIrReadTxn<'a>,
+    functions: Vec<(FunctionRef, FileId, Span)>,
     target_bodies: TargetBodies,
     interner: &'a mut NameInterner,
 }
 
 impl<'a> TargetLowering<'a> {
     fn lower(mut self) -> anyhow::Result<TargetBodies> {
-        let functions = self
-            .semantic_ir
-            .functions(self.target_ref)
-            .map(|(function_ref, function)| (function_ref, function.source.file_id, function.span))
-            .collect::<Vec<_>>();
-
-        for (function_ref, file_id, span) in functions {
-            let Some(owner_module) = self.owner_module(function_ref) else {
+        for &(function_ref, file_id, span) in &self.functions {
+            let Some(owner_module) = self.owner_module(function_ref)? else {
                 continue;
             };
             let Some(ast_fn) = self.find_function_ast(file_id, span)? else {
@@ -150,9 +154,18 @@ impl<'a> TargetLowering<'a> {
         Ok(self.target_bodies)
     }
 
-    fn owner_module(&self, function: FunctionRef) -> Option<ModuleRef> {
-        let function_data = self.semantic_ir.function_data(function)?;
-        match function_data.owner {
+    fn owner_module(&self, function: FunctionRef) -> anyhow::Result<Option<ModuleRef>> {
+        let Some(function_data) = self.semantic_ir.function_data(function).with_context(|| {
+            format!(
+                "while attempting to fetch semantic IR function {:?}",
+                function.id
+            )
+        })?
+        else {
+            return Ok(None);
+        };
+
+        let module = match function_data.owner {
             ItemOwner::Module(module_ref) => Some(module_ref),
             ItemOwner::Trait(trait_id) => self
                 .semantic_ir
@@ -160,6 +173,12 @@ impl<'a> TargetLowering<'a> {
                     target: function.target,
                     id: trait_id,
                 })
+                .with_context(|| {
+                    format!(
+                        "while attempting to fetch semantic IR trait owner {:?}",
+                        trait_id
+                    )
+                })?
                 .map(|data| data.owner),
             ItemOwner::Impl(impl_id) => self
                 .semantic_ir
@@ -167,8 +186,16 @@ impl<'a> TargetLowering<'a> {
                     target: function.target,
                     id: impl_id,
                 })
+                .with_context(|| {
+                    format!(
+                        "while attempting to fetch semantic IR impl owner {:?}",
+                        impl_id
+                    )
+                })?
                 .map(|data| data.owner),
-        }
+        };
+
+        Ok(module)
     }
 
     fn find_function_ast(

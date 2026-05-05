@@ -4,10 +4,10 @@
 //! bindings. Enum variants are matched against a known enum scrutinee/annotation type; patterns do
 //! not infer the scrutinee type by themselves.
 
-use rg_def_map::{Path, PathSegment};
+use rg_def_map::{DefMapReadTxn, Path, PathSegment};
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{TypeDefId, TypePathContext};
+use rg_semantic_ir::{SemanticIrReadTxn, TypeDefId, TypePathContext};
 
 use crate::{
     body::BodyData,
@@ -15,7 +15,6 @@ use crate::{
     ids::{BindingId, BodyRef, ExprId, PatId, ScopeId, StmtId},
     pat::{PatKind, RecordPatField},
     path::BodyPath,
-    query::{DefMapQuery, SemanticIrQuery},
     stmt::StmtKind,
     ty::{BodyNominalTy, BodyTy},
 };
@@ -26,25 +25,17 @@ use super::{
     type_path::BodyTypePathResolver,
 };
 
-pub(super) struct PatternTypePropagator<'db, 'body, D, S>
-where
-    D: DefMapQuery,
-    S: SemanticIrQuery,
-{
-    def_map: &'db D,
-    semantic_ir: &'db S,
+pub(super) struct PatternTypePropagator<'query, 'db, 'body> {
+    def_map: &'query DefMapReadTxn<'db>,
+    semantic_ir: &'query SemanticIrReadTxn<'db>,
     body_ref: BodyRef,
     body: &'body mut BodyData,
 }
 
-impl<'db, 'body, D, S> PatternTypePropagator<'db, 'body, D, S>
-where
-    D: DefMapQuery,
-    S: SemanticIrQuery,
-{
+impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
     pub(super) fn new(
-        def_map: &'db D,
-        semantic_ir: &'db S,
+        def_map: &'query DefMapReadTxn<'db>,
+        semantic_ir: &'query SemanticIrReadTxn<'db>,
         body_ref: BodyRef,
         body: &'body mut BodyData,
     ) -> Self {

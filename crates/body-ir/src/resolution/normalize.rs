@@ -4,28 +4,23 @@
 //! parentheses, `.await`, and `?`, but it does not try to implement borrow checking, autoderef, the
 //! `Try` trait, or `Future::Output` projection.
 
+use rg_semantic_ir::SemanticIrReadTxn;
+
 use crate::{
     body::BodyData,
     expr::ExprWrapperKind,
-    query::SemanticIrQuery,
     ty::{BodyGenericArg, BodyTy},
 };
 
 use super::push_unique;
 
-pub(super) struct BodyTyNormalizer<'db, 'body, S>
-where
-    S: SemanticIrQuery,
-{
-    semantic_ir: &'db S,
+pub(super) struct BodyTyNormalizer<'db, 'body> {
+    semantic_ir: &'db SemanticIrReadTxn<'db>,
     body: &'body BodyData,
 }
 
-impl<'db, 'body, S> BodyTyNormalizer<'db, 'body, S>
-where
-    S: SemanticIrQuery,
-{
-    pub(super) fn new(semantic_ir: &'db S, body: &'body BodyData) -> Self {
+impl<'db, 'body> BodyTyNormalizer<'db, 'body> {
+    pub(super) fn new(semantic_ir: &'db SemanticIrReadTxn<'db>, body: &'body BodyData) -> Self {
         Self { semantic_ir, body }
     }
 

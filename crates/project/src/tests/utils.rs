@@ -1,12 +1,15 @@
 use std::{
-    fmt::Write as _,
+    fmt::{self, Write as _},
     fs,
+    marker::PhantomData,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use expect_test::Expect;
 use rg_analysis::WorkspaceSymbol;
 use rg_def_map::{PackageSlot, TargetRef};
+use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb};
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate_with_markers};
@@ -540,10 +543,20 @@ fn nominal_type_names_at(
         return Vec::new();
     };
 
+    let semantic_ir = host.state.semantic_ir.read_txn(unexpected_package_loader());
+    let def_map = host.state.def_map.read_txn(unexpected_package_loader());
     ty.type_defs()
         .into_iter()
-        .filter_map(|ty| host.state.semantic_ir.local_def_for_type_def(ty))
-        .filter_map(|local_def| host.state.def_map.local_def(local_def))
+        .filter_map(|ty| {
+            semantic_ir
+                .local_def_for_type_def(ty)
+                .expect("fixture semantic IR should load while rendering nominal types")
+        })
+        .filter_map(|local_def| {
+            def_map
+                .local_def(local_def)
+                .expect("fixture def-map should load while rendering nominal types")
+        })
         .map(|local_def| local_def.name.to_string())
         .collect()
 }
@@ -563,5 +576,26 @@ fn push_document_symbol_names(symbol: &rg_analysis::DocumentSymbol, names: &mut 
     names.push(symbol.name.clone());
     for child in &symbol.children {
         push_document_symbol_names(child, names);
+    }
+}
+
+fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
+    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
+}
+
+struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
+
+impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UnexpectedPackageLoader").finish()
+    }
+}
+
+impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
+    fn load(&self, package: PackageSlot) -> Result<Arc<T>, PackageStoreError> {
+        panic!(
+            "resident project fixture should not load offloaded package {}",
+            package.0,
+        )
     }
 }

@@ -1,13 +1,18 @@
-use std::fmt::Write as _;
+use std::{
+    fmt::{self, Write as _},
+    marker::PhantomData,
+    sync::Arc,
+};
 
 use expect_test::Expect;
 
 use crate::{
-    ItemStore, SemanticIrDb,
+    ItemStore, SemanticIrDb, SemanticIrReadTxn,
     ids::{FunctionRef, ImplRef, TraitRef, TypeDefId, TypeDefRef},
 };
-use rg_def_map::{DefMapDb, ModuleId, ModuleRef, Path, PathSegment, TargetRef};
+use rg_def_map::{DefMapDb, ModuleId, ModuleRef, PackageSlot, Path, PathSegment, TargetRef};
 use rg_item_tree::{FieldItem, FieldList, ItemTreeDb, ParamKind, VisibilityLevel};
+use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{Package, ParseDb, Target};
 use rg_workspace::{TargetKind, WorkspaceMetadata};
 use test_fixture::fixture_crate;
@@ -108,8 +113,20 @@ impl SemanticIrFixtureDb {
         &self.def_map
     }
 
+    fn resident_def_map(&self, target: TargetRef) -> Option<&rg_def_map::DefMap> {
+        self.def_map
+            .resident_package(target.package)?
+            .target(target.target)
+    }
+
     fn semantic_ir_db(&self) -> &SemanticIrDb {
         &self.semantic_ir
+    }
+
+    fn resident_target_ir(&self, target: TargetRef) -> Option<&crate::TargetIr> {
+        self.semantic_ir
+            .resident_package(target.package)?
+            .target(target.target)
     }
 }
 
@@ -172,15 +189,25 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         let (target_ref, target) = self.target_ref(query);
         let module_id = self.module_id(target_ref, query.module_path);
         let path = Self::parse_path(query.path);
-        let mut type_defs = self.project.semantic_ir_db().type_defs_for_path(
-            self.project.def_map_db(),
-            ModuleRef {
-                target: target_ref,
-                module: module_id,
-            },
-            &path,
-        );
-        type_defs.sort_by_key(|ty| self.render_type_def_ref(*ty));
+        let def_map_txn = self
+            .project
+            .def_map_db()
+            .read_txn(unexpected_package_loader());
+        let semantic_ir_txn = self
+            .project
+            .semantic_ir_db()
+            .read_txn(unexpected_package_loader());
+        let mut type_defs = semantic_ir_txn
+            .type_defs_for_path(
+                &def_map_txn,
+                ModuleRef {
+                    target: target_ref,
+                    module: module_id,
+                },
+                &path,
+            )
+            .expect("fixture semantic query should resolve type path");
+        type_defs.sort_by_key(|ty| self.render_type_def_ref(&semantic_ir_txn, *ty));
 
         if type_defs.is_empty() {
             return format!(
@@ -198,30 +225,30 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     target.kind,
                     query.module_path,
                     path,
-                    self.render_type_def_ref(ty),
+                    self.render_type_def_ref(&semantic_ir_txn, ty),
                 );
                 self.render_query_section(
                     &mut dump,
                     "impls",
-                    self.project
-                        .semantic_ir_db()
+                    semantic_ir_txn
                         .impls_for_type(ty)
+                        .expect("fixture semantic query should find impls for type")
                         .into_iter()
-                        .map(|impl_ref| self.render_impl_ref(impl_ref))
+                        .map(|impl_ref| self.render_impl_ref(&semantic_ir_txn, impl_ref))
                         .collect(),
                 );
                 self.render_query_section(
                     &mut dump,
                     "trait impls",
-                    self.project
-                        .semantic_ir_db()
+                    semantic_ir_txn
                         .trait_impls_for_type(ty)
+                        .expect("fixture semantic query should find trait impls for type")
                         .into_iter()
                         .map(|trait_impl| {
                             format!(
                                 "{} => {}",
-                                self.render_impl_ref(trait_impl.impl_ref),
-                                self.render_trait_ref(trait_impl.trait_ref),
+                                self.render_impl_ref(&semantic_ir_txn, trait_impl.impl_ref),
+                                self.render_trait_ref(&semantic_ir_txn, trait_impl.trait_ref),
                             )
                         })
                         .collect(),
@@ -229,41 +256,47 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "traits",
-                    self.project
-                        .semantic_ir_db()
+                    semantic_ir_txn
                         .traits_for_type(ty)
+                        .expect("fixture semantic query should find traits for type")
                         .into_iter()
-                        .map(|trait_ref| self.render_trait_ref(trait_ref))
+                        .map(|trait_ref| self.render_trait_ref(&semantic_ir_txn, trait_ref))
                         .collect(),
                 );
                 self.render_query_section(
                     &mut dump,
                     "inherent functions",
-                    self.project
-                        .semantic_ir_db()
+                    semantic_ir_txn
                         .inherent_functions_for_type(ty)
+                        .expect("fixture semantic query should find inherent functions for type")
                         .into_iter()
-                        .map(|function_ref| self.render_function_ref(function_ref))
+                        .map(|function_ref| {
+                            self.render_function_ref(&semantic_ir_txn, function_ref)
+                        })
                         .collect(),
                 );
                 self.render_query_section(
                     &mut dump,
                     "trait functions",
-                    self.project
-                        .semantic_ir_db()
+                    semantic_ir_txn
                         .trait_functions_for_type(ty)
+                        .expect("fixture semantic query should find trait functions for type")
                         .into_iter()
-                        .map(|function_ref| self.render_function_ref(function_ref))
+                        .map(|function_ref| {
+                            self.render_function_ref(&semantic_ir_txn, function_ref)
+                        })
                         .collect(),
                 );
                 self.render_query_section(
                     &mut dump,
                     "trait impl functions",
-                    self.project
-                        .semantic_ir_db()
+                    semantic_ir_txn
                         .trait_impl_functions_for_type(ty)
+                        .expect("fixture semantic query should find trait impl functions for type")
                         .into_iter()
-                        .map(|function_ref| self.render_function_ref(function_ref))
+                        .map(|function_ref| {
+                            self.render_function_ref(&semantic_ir_txn, function_ref)
+                        })
                         .collect(),
                 );
                 dump
@@ -321,7 +354,6 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     fn module_id(&self, target_ref: TargetRef, module_path: &str) -> ModuleId {
         let def_map = self
             .project
-            .def_map_db()
             .resident_def_map(target_ref)
             .expect("target def map should exist while rendering semantic query");
 
@@ -359,11 +391,10 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         Path { absolute, segments }
     }
 
-    fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
-        let target_ir = self
-            .project
-            .semantic_ir_db()
-            .resident_target_ir(ty.target)
+    fn render_type_def_ref(&self, semantic_ir: &SemanticIrReadTxn<'_>, ty: TypeDefRef) -> String {
+        let target_ir = semantic_ir
+            .target_ir(ty.target)
+            .expect("target semantic IR should load while rendering type ref")
             .expect("target semantic IR should exist while rendering type ref");
 
         match ty.id {
@@ -399,11 +430,10 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         }
     }
 
-    fn render_trait_ref(&self, trait_ref: TraitRef) -> String {
-        let data = self
-            .project
-            .semantic_ir_db()
+    fn render_trait_ref(&self, semantic_ir: &SemanticIrReadTxn<'_>, trait_ref: TraitRef) -> String {
+        let data = semantic_ir
             .trait_data(trait_ref)
+            .expect("trait id should load while rendering query")
             .expect("trait id should exist while rendering query");
 
         format!(
@@ -413,11 +443,10 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         )
     }
 
-    fn render_impl_ref(&self, impl_ref: ImplRef) -> String {
-        let data = self
-            .project
-            .semantic_ir_db()
+    fn render_impl_ref(&self, semantic_ir: &SemanticIrReadTxn<'_>, impl_ref: ImplRef) -> String {
+        let data = semantic_ir
             .impl_data(impl_ref)
+            .expect("impl id should load while rendering query")
             .expect("impl id should exist while rendering query");
 
         match &data.trait_ref {
@@ -426,22 +455,31 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         }
     }
 
-    fn render_function_ref(&self, function_ref: FunctionRef) -> String {
-        let data = self
-            .project
-            .semantic_ir_db()
+    fn render_function_ref(
+        &self,
+        semantic_ir: &SemanticIrReadTxn<'_>,
+        function_ref: FunctionRef,
+    ) -> String {
+        let data = semantic_ir
             .function_data(function_ref)
+            .expect("function id should load while rendering query")
             .expect("function id should exist while rendering query");
         let owner = match data.owner {
             crate::ids::ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
-            crate::ids::ItemOwner::Trait(trait_id) => self.render_trait_ref(TraitRef {
-                target: function_ref.target,
-                id: trait_id,
-            }),
-            crate::ids::ItemOwner::Impl(impl_id) => self.render_impl_ref(ImplRef {
-                target: function_ref.target,
-                id: impl_id,
-            }),
+            crate::ids::ItemOwner::Trait(trait_id) => self.render_trait_ref(
+                semantic_ir,
+                TraitRef {
+                    target: function_ref.target,
+                    id: trait_id,
+                },
+            ),
+            crate::ids::ItemOwner::Impl(impl_id) => self.render_impl_ref(
+                semantic_ir,
+                ImplRef {
+                    target: function_ref.target,
+                    id: impl_id,
+                },
+            ),
         };
 
         format!("fn {owner}::{}", data.name)
@@ -469,7 +507,6 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .project
-            .def_map_db()
             .resident_def_map(module_ref.target)
             .expect("target def map should exist while rendering query module path")
             .module(module_ref.module)
@@ -504,12 +541,10 @@ impl TargetSemanticIrSnapshot<'_> {
         let mut dump = format!("{} [{}]\n", self.target_name, self.target_kind);
         let def_map = self
             .project
-            .def_map_db()
             .resident_def_map(self.target_ref)
             .expect("target def map should exist while rendering semantic IR");
         let target_ir = self
             .project
-            .semantic_ir_db()
             .resident_target_ir(self.target_ref)
             .expect("target semantic IR should exist while rendering");
 
@@ -825,7 +860,6 @@ impl TargetSemanticIrSnapshot<'_> {
     fn sorted_modules(&self) -> Vec<(String, ModuleId)> {
         let def_map = self
             .project
-            .def_map_db()
             .resident_def_map(self.target_ref)
             .expect("target def map should exist while sorting semantic IR modules");
         let mut modules = def_map
@@ -844,7 +878,6 @@ impl TargetSemanticIrSnapshot<'_> {
     fn module_path(&self, module_id: ModuleId) -> String {
         let module = self
             .project
-            .def_map_db()
             .resident_def_map(self.target_ref)
             .expect("target def map should exist while rendering module path")
             .module(module_id)
@@ -865,7 +898,6 @@ impl TargetSemanticIrSnapshot<'_> {
 
     fn items(&self) -> &ItemStore {
         self.project
-            .semantic_ir_db()
             .resident_target_ir(self.target_ref)
             .expect("target semantic IR should exist while rendering items")
             .items()
@@ -942,4 +974,25 @@ fn sorted_targets(package: &Package) -> Vec<&Target> {
             ))
     });
     targets
+}
+
+fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
+    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
+}
+
+struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
+
+impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UnexpectedPackageLoader").finish()
+    }
+}
+
+impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
+    fn load(&self, package: PackageSlot) -> Result<Arc<T>, PackageStoreError> {
+        panic!(
+            "resident semantic IR fixture should not load offloaded package {}",
+            package.0,
+        )
+    }
 }

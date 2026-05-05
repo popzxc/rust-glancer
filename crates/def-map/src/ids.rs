@@ -55,18 +55,9 @@ pub struct TargetRef {
 
 /// Target reference proven to come from a resident phase-DB package entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ResidentTargetRef {
+pub(crate) struct ResidentTargetRef {
     pub package: PackageSlot,
     pub target: TargetId,
-}
-
-impl ResidentTargetRef {
-    pub fn expose_target_ref(self) -> TargetRef {
-        TargetRef {
-            package: self.package,
-            target: self.target,
-        }
-    }
 }
 
 /// Stable reference to one module across the whole project analysis.

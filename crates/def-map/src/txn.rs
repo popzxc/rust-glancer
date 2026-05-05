@@ -142,6 +142,32 @@ impl<'db> DefMapReadTxn<'db> {
             .and_then(|def_map| def_map.local_impl(local_impl.local_impl)))
     }
 
+    /// Iterates over one target's impl blocks together with stable project-wide references.
+    pub fn local_impls(
+        &self,
+        target: TargetRef,
+    ) -> Result<Vec<(LocalImplRef, &LocalImplData)>, PackageStoreError> {
+        let local_impls =
+            self.def_map(target)?
+                .into_iter()
+                .flat_map(move |def_map| {
+                    def_map.local_impls().iter().enumerate().map(
+                        move |(local_impl_idx, local_impl)| {
+                            (
+                                LocalImplRef {
+                                    target,
+                                    local_impl: crate::LocalImplId(local_impl_idx),
+                                },
+                                local_impl,
+                            )
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+
+        Ok(local_impls)
+    }
+
     /// Iterates over one target's imports together with stable project-wide references.
     pub fn imports(
         &self,

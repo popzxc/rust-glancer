@@ -18,25 +18,25 @@ pub struct DefMap {
     pub(crate) extern_prelude: HashMap<Name, ModuleRef>,
     // Standard prelude module selected for this target, if sysroot sources are available.
     pub(crate) prelude: Option<ModuleRef>,
-    pub modules: Arena<ModuleId, ModuleData>,
-    pub local_defs: Arena<LocalDefId, LocalDefData>,
-    pub local_impls: Arena<LocalImplId, LocalImplData>,
-    pub imports: Arena<ImportId, ImportData>,
+    pub(crate) modules: Arena<ModuleId, ModuleData>,
+    pub(crate) local_defs: Arena<LocalDefId, LocalDefData>,
+    pub(crate) local_impls: Arena<LocalImplId, LocalImplData>,
+    pub(crate) imports: Arena<ImportId, ImportData>,
 }
 
 impl DefMap {
     /// Returns the root module of this target, if the map has been populated.
-    pub fn root_module(&self) -> Option<ModuleId> {
+    pub(crate) fn root_module(&self) -> Option<ModuleId> {
         self.root_module
     }
 
     /// Returns the external root names visible from this target.
-    pub fn extern_prelude(&self) -> &HashMap<Name, ModuleRef> {
+    pub(crate) fn extern_prelude(&self) -> &HashMap<Name, ModuleRef> {
         &self.extern_prelude
     }
 
     /// Returns the standard prelude module visible from this target, if it was discovered.
-    pub fn prelude(&self) -> Option<ModuleRef> {
+    pub(crate) fn prelude(&self) -> Option<ModuleRef> {
         self.prelude
     }
 
@@ -51,30 +51,23 @@ impl DefMap {
     }
 
     /// Returns local definition data by id.
-    pub fn local_def(&self, local_def: LocalDefId) -> Option<&LocalDefData> {
+    pub(crate) fn local_def(&self, local_def: LocalDefId) -> Option<&LocalDefData> {
         self.local_defs.get(local_def)
     }
 
     /// Returns all local definitions in stable local-def-id order.
-    pub fn local_defs(&self) -> &[LocalDefData] {
+    pub(crate) fn local_defs(&self) -> &[LocalDefData] {
         self.local_defs.as_slice()
     }
 
     /// Returns impl block data by id.
-    #[allow(dead_code)]
-    pub fn local_impl(&self, local_impl: LocalImplId) -> Option<&LocalImplData> {
+    pub(crate) fn local_impl(&self, local_impl: LocalImplId) -> Option<&LocalImplData> {
         self.local_impls.get(local_impl)
     }
 
     /// Returns all impl blocks in stable local-impl-id order.
-    pub fn local_impls(&self) -> &[LocalImplData] {
+    pub(crate) fn local_impls(&self) -> &[LocalImplData] {
         self.local_impls.as_slice()
-    }
-
-    /// Returns import data by id.
-    #[allow(dead_code)]
-    pub fn import(&self, import: ImportId) -> Option<&ImportData> {
-        self.imports.get(import)
     }
 
     /// Returns all imports in stable import-id order.

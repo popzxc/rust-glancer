@@ -6,7 +6,9 @@
 
 use anyhow::Context as _;
 
-use rg_def_map::{DefMapDb, LocalDefRef, LocalImplRef, ModuleRef, PackageSlot, TargetRef};
+use rg_def_map::{
+    DefMapDb, DefMapReadTxn, LocalDefRef, LocalImplRef, ModuleRef, PackageSlot, TargetRef,
+};
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
     Package as ItemTreePackage, StaticItem, TraitItem, TypeAliasItem,
@@ -45,6 +47,7 @@ pub(super) fn build_package(
         .package(package.0)
         .with_context(|| format!("while attempting to fetch item tree package {}", package.0))?;
     let mut targets = Vec::with_capacity(def_map_package.targets().len());
+    let def_map_txn = def_map.read_txn(super::resolution::unexpected_package_loader());
 
     for (target_idx, _) in def_map_package.targets().iter().enumerate() {
         let target_ref = TargetRef {
@@ -52,7 +55,7 @@ pub(super) fn build_package(
             target: TargetId(target_idx),
         };
         targets.push(
-            TargetLowering::new(item_tree_package, target_ref, def_map)
+            TargetLowering::new(item_tree_package, target_ref, &def_map_txn)?
                 .lower()
                 .with_context(|| {
                     format!("while attempting to lower semantic IR for target {target_idx}")
@@ -63,21 +66,35 @@ pub(super) fn build_package(
     Ok(PackageIr::new(targets))
 }
 
-struct TargetLowering<'a> {
+struct TargetLowering<'a, 'db> {
     item_tree: &'a ItemTreePackage,
     target: TargetRef,
-    def_map: &'a DefMapDb,
+    def_map: &'a DefMapReadTxn<'db>,
     target_ir: TargetIr,
 }
 
-impl<'a> TargetLowering<'a> {
-    fn new(item_tree: &'a ItemTreePackage, target: TargetRef, def_map: &'a DefMapDb) -> Self {
-        Self {
+impl<'a, 'db> TargetLowering<'a, 'db> {
+    fn new(
+        item_tree: &'a ItemTreePackage,
+        target: TargetRef,
+        def_map: &'a DefMapReadTxn<'db>,
+    ) -> anyhow::Result<Self> {
+        let local_def_count = def_map
+            .local_defs(target)
+            .with_context(|| {
+                format!(
+                    "while attempting to fetch def-map local definitions for target {:?}",
+                    target.target,
+                )
+            })?
+            .len();
+
+        Ok(Self {
             item_tree,
             target,
             def_map,
-            target_ir: TargetIr::new(def_map.local_defs(target).count()),
-        }
+            target_ir: TargetIr::new(local_def_count),
+        })
     }
 
     fn lower(mut self) -> anyhow::Result<TargetIr> {
@@ -86,6 +103,13 @@ impl<'a> TargetLowering<'a> {
         let local_defs = self
             .def_map
             .local_defs(self.target)
+            .with_context(|| {
+                format!(
+                    "while attempting to fetch def-map local definitions for target {:?}",
+                    self.target.target,
+                )
+            })?
+            .into_iter()
             .map(|(local_def_ref, local_def)| (local_def_ref, local_def.source, local_def.module))
             .collect::<Vec<_>>();
         for (local_def_ref, source, module) in local_defs {
@@ -106,6 +130,13 @@ impl<'a> TargetLowering<'a> {
         let local_impls = self
             .def_map
             .local_impls(self.target)
+            .with_context(|| {
+                format!(
+                    "while attempting to fetch def-map local impls for target {:?}",
+                    self.target.target,
+                )
+            })?
+            .into_iter()
             .map(|(local_impl_ref, local_impl)| {
                 (local_impl_ref, local_impl.source, local_impl.module)
             })

@@ -1,3 +1,5 @@
+use std::{fmt, marker::PhantomData, sync::Arc};
+
 use expect_test::Expect;
 
 use crate::{
@@ -5,6 +7,7 @@ use crate::{
     ResolvePathResult, ScopeBinding, ScopeEntry, TargetRef,
 };
 use rg_item_tree::{ItemTreeDb, VisibilityLevel};
+use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, Package, ParseDb, Target};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::fixture_crate;
@@ -112,6 +115,12 @@ impl DefMapFixtureDb {
         &self.def_map
     }
 
+    fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
+        self.def_map
+            .resident_package(target.package)?
+            .target(target.target)
+    }
+
     /// Returns the library target for one package.
     pub(super) fn lib(&self, package_name: &str) -> FixtureTarget<'_> {
         self.target(package_name, TargetKind::Lib)
@@ -175,7 +184,6 @@ impl<'a> FixtureTarget<'a> {
 
     fn def_map(&self) -> &'a DefMap {
         self.db
-            .def_map_db()
             .resident_def_map(self.target_ref)
             .expect("target def map should exist in fixture db")
     }
@@ -257,7 +265,7 @@ impl<'a> FixtureEntry<'a> {
             DefId::Local(local_def_ref) => local_def_ref.target,
         };
         self.db.parse_db().packages().get(target_ref.package.0)?;
-        self.db.def_map_db().resident_def_map(target_ref)?;
+        self.db.resident_def_map(target_ref)?;
 
         Some(FixtureBindingOrigin {
             db: self.db,
@@ -279,7 +287,6 @@ impl FixtureBindingOrigin<'_> {
         };
 
         self.db
-            .def_map_db()
             .resident_def_map(module_ref.target)?
             .module(module_ref.module)
             .and_then(|module| module.name.as_deref())
@@ -337,13 +344,19 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
         let (target_ref, target) = self.target_ref(query);
         let module_id = self.module_id(target_ref, query.module_path);
         let path = Self::parse_path(query.path);
-        let result = self.project.def_map_db().resolve_path(
-            ModuleRef {
-                target: target_ref,
-                module: module_id,
-            },
-            &path,
-        );
+        let def_map = self
+            .project
+            .def_map_db()
+            .read_txn(unexpected_package_loader());
+        let result = def_map
+            .resolve_path(
+                ModuleRef {
+                    target: target_ref,
+                    module: module_id,
+                },
+                &path,
+            )
+            .expect("path resolution fixture should load def-map packages");
 
         format!(
             "{} [{}] {} resolves {} -> {}",
@@ -387,7 +400,6 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
     fn module_id(&self, target_ref: TargetRef, module_path: &str) -> ModuleId {
         let def_map = self
             .project
-            .def_map_db()
             .resident_def_map(target_ref)
             .expect("target def map should exist while resolving path snapshot query");
 
@@ -405,7 +417,6 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
     fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {
         let module = self
             .project
-            .def_map_db()
             .resident_def_map(target_ref)
             .expect("target def map should exist while building module path")
             .module(module_id)
@@ -468,6 +479,27 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
         }
 
         rendered
+    }
+}
+
+fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
+    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
+}
+
+struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
+
+impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UnexpectedPackageLoader").finish()
+    }
+}
+
+impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
+    fn load(&self, package: rg_workspace::PackageSlot) -> Result<Arc<T>, PackageStoreError> {
+        panic!(
+            "def-map fixture query should not load offloaded package {}",
+            package.0,
+        );
     }
 }
 
@@ -572,7 +604,6 @@ impl<'a> TargetDefMapSnapshot<'a> {
 
     fn def_map(&self) -> &'a DefMap {
         self.project
-            .def_map_db()
             .resident_def_map(self.target_ref)
             .expect("target def map should exist while rendering snapshot")
     }
@@ -647,7 +678,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
             .parse_db()
             .packages()
             .get(target_ref.package.0)?;
-        self.project.def_map_db().resident_def_map(target_ref)?;
+        self.project.resident_def_map(target_ref)?;
 
         Some(BindingOrigin {
             project: self.project,
@@ -677,7 +708,6 @@ impl<'a> TargetDefMapSnapshot<'a> {
     fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {
         let module = self
             .project
-            .def_map_db()
             .resident_def_map(target_ref)
             .expect("target def map should exist while building relative module path")
             .module(module_id)
@@ -740,7 +770,6 @@ impl ResolvedDefOrigin<'_> {
             DefId::Local(local_def_ref) => {
                 let local_def = self
                     .project
-                    .def_map_db()
                     .resident_def_map(local_def_ref.target)
                     .expect("target def map should exist while dumping")
                     .local_defs
@@ -778,7 +807,6 @@ impl ResolvedDefOrigin<'_> {
     fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {
         let module = self
             .project
-            .def_map_db()
             .resident_def_map(target_ref)
             .expect("target def map should exist while building relative module path")
             .module(module_id)

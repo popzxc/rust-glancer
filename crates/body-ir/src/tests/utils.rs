@@ -1,11 +1,16 @@
-use std::fmt::Write as _;
+use std::{
+    fmt::{self, Write as _},
+    marker::PhantomData,
+    sync::Arc,
+};
 
 use expect_test::Expect;
 
 use crate::{
     BindingData, BodyData, BodyFunctionData, BodyGenericArg, BodyImplData, BodyIrBuildPolicy,
-    BodyIrDb, BodyItemData, BodyLocalNominalTy, BodyNominalTy, BodyResolution, BodySource, BodyTy,
-    ExprData, ExprKind, ResolvedFieldRef, ResolvedFunctionRef, StmtKind, TargetBodiesStatus,
+    BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy, BodyResolution,
+    BodySource, BodyTy, ExprData, ExprKind, ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
+    TargetBodiesStatus,
     ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
         BodyItemRef, ExprId, StmtId,
@@ -13,10 +18,11 @@ use crate::{
 };
 use rg_def_map::{DefId, DefMapDb, LocalDefRef, ModuleRef, TargetRef};
 use rg_item_tree::ItemTreeDb;
+use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{Package, ParseDb, Target};
 use rg_semantic_ir::{
-    FieldRef, FunctionRef, ImplRef, ItemId, ItemOwner, SemanticIrDb, TraitRef, TypeDefId,
-    TypeDefRef,
+    FieldRef, FunctionRef, ImplRef, ItemId, ItemOwner, SemanticIrDb, SemanticIrReadTxn, TraitRef,
+    TypeDefId, TypeDefRef,
 };
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, fixture_crate};
@@ -79,12 +85,20 @@ impl BodyIrFixtureDb {
         &self.parse
     }
 
-    fn def_map_db(&self) -> &DefMapDb {
-        &self.def_map
+    fn resident_def_map(&self, target: TargetRef) -> Option<&rg_def_map::DefMap> {
+        self.def_map
+            .resident_package(target.package)?
+            .target(target.target)
     }
 
     fn semantic_ir_db(&self) -> &SemanticIrDb {
         &self.semantic_ir
+    }
+
+    fn resident_target_ir(&self, target: TargetRef) -> Option<&rg_semantic_ir::TargetIr> {
+        self.semantic_ir
+            .resident_package(target.package)?
+            .target(target.target)
     }
 
     fn body_ir_db(&self) -> &BodyIrDb {
@@ -139,10 +153,10 @@ struct TargetBodyIrSnapshot<'a> {
 impl TargetBodyIrSnapshot<'_> {
     fn render(&self) -> String {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
-        let Some(target_bodies) = self
-            .project
-            .body_ir_db()
-            .resident_target_bodies(self.target_ref)
+        let body_ir = self.body_ir_txn();
+        let Some(target_bodies) = body_ir
+            .target_bodies(self.target_ref)
+            .expect("target body IR should load while rendering body IR")
         else {
             return dump;
         };
@@ -695,7 +709,11 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_body_item_ref(&self, item_ref: BodyItemRef) -> String {
-        let Some(body) = self.project.body_ir_db().body_data(item_ref.body) else {
+        let body_ir = self.body_ir_txn();
+        let Some(body) = body_ir
+            .body_data(item_ref.body)
+            .expect("body item ref should load while rendering body IR")
+        else {
             return "<missing>".to_string();
         };
         let Some(item) = body.local_item(item_ref.item) else {
@@ -719,11 +737,7 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_local_def(&self, local_def: LocalDefRef) -> String {
-        let Some(target_ir) = self
-            .project
-            .semantic_ir_db()
-            .resident_target_ir(local_def.target)
-        else {
+        let Some(target_ir) = self.project.resident_target_ir(local_def.target) else {
             return "<missing>".to_string();
         };
         let Some(item_id) = target_ir.item_for_local_def(local_def.local_def) else {
@@ -814,7 +828,6 @@ impl TargetBodyIrSnapshot<'_> {
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
         let target_ir = self
             .project
-            .semantic_ir_db()
             .resident_target_ir(ty.target)
             .expect("target semantic IR should exist while rendering body type");
 
@@ -852,10 +865,10 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_field_ref(&self, field_ref: FieldRef) -> String {
-        let data = self
-            .project
-            .semantic_ir_db()
+        let semantic_ir = self.semantic_ir_txn();
+        let data = semantic_ir
             .field_data(field_ref)
+            .expect("field ref should load while rendering body IR")
             .expect("field ref should exist while rendering body IR");
         let name = data
             .field
@@ -878,10 +891,10 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_body_field_ref(&self, field_ref: BodyFieldRef) -> String {
-        let data = self
-            .project
-            .body_ir_db()
+        let body_ir = self.body_ir_txn();
+        let data = body_ir
             .local_field_data(field_ref)
+            .expect("body field ref should load while rendering body IR")
             .expect("body field ref should exist while rendering body IR");
         let name = data
             .field
@@ -897,10 +910,10 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_enum_variant_ref(&self, variant_ref: rg_semantic_ir::EnumVariantRef) -> String {
-        let data = self
-            .project
-            .semantic_ir_db()
+        let semantic_ir = self.semantic_ir_txn();
+        let data = semantic_ir
             .enum_variant_data(variant_ref)
+            .expect("enum variant ref should load while rendering body IR")
             .expect("enum variant ref should exist while rendering body IR");
 
         format!(
@@ -918,20 +931,20 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_body_function_ref(&self, function_ref: BodyFunctionRef) -> String {
-        let data = self
-            .project
-            .body_ir_db()
+        let body_ir = self.body_ir_txn();
+        let data = body_ir
             .local_function_data(function_ref)
+            .expect("body function ref should load while rendering body IR")
             .expect("body function ref should exist while rendering body IR");
 
         format!("fn {}", data.name)
     }
 
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {
-        let data = self
-            .project
-            .semantic_ir_db()
+        let semantic_ir = self.semantic_ir_txn();
+        let data = semantic_ir
             .function_data(function_ref)
+            .expect("function id should load while rendering body IR")
             .expect("function id should exist while rendering body IR");
         let owner = self.render_owner(data.owner, function_ref.target);
 
@@ -953,10 +966,10 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_trait_ref(&self, trait_ref: TraitRef) -> String {
-        let data = self
-            .project
-            .semantic_ir_db()
+        let semantic_ir = self.semantic_ir_txn();
+        let data = semantic_ir
             .trait_data(trait_ref)
+            .expect("trait id should load while rendering body IR")
             .expect("trait id should exist while rendering body IR");
 
         format!(
@@ -967,16 +980,28 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_impl_ref(&self, impl_ref: ImplRef) -> String {
-        let data = self
-            .project
-            .semantic_ir_db()
+        let semantic_ir = self.semantic_ir_txn();
+        let data = semantic_ir
             .impl_data(impl_ref)
+            .expect("impl id should load while rendering body IR")
             .expect("impl id should exist while rendering body IR");
 
         match &data.trait_ref {
             Some(trait_ref) => format!("impl {trait_ref} for {}", data.self_ty),
             None => format!("impl {}", data.self_ty),
         }
+    }
+
+    fn semantic_ir_txn(&self) -> SemanticIrReadTxn<'_> {
+        self.project
+            .semantic_ir_db()
+            .read_txn(unexpected_package_loader())
+    }
+
+    fn body_ir_txn(&self) -> BodyIrReadTxn<'_> {
+        self.project
+            .body_ir_db()
+            .read_txn(unexpected_package_loader())
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
@@ -1001,7 +1026,6 @@ impl TargetBodyIrSnapshot<'_> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .project
-            .def_map_db()
             .resident_def_map(module_ref.target)
             .expect("target def map should exist while rendering body IR module path")
             .module(module_ref.module)
@@ -1085,4 +1109,25 @@ fn sorted_targets(package: &Package) -> Vec<&Target> {
             ))
     });
     targets
+}
+
+fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
+    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
+}
+
+struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
+
+impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UnexpectedPackageLoader").finish()
+    }
+}
+
+impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
+    fn load(&self, package: rg_def_map::PackageSlot) -> Result<Arc<T>, PackageStoreError> {
+        panic!(
+            "resident body IR fixture should not load offloaded package {}",
+            package.0,
+        )
+    }
 }

@@ -9,7 +9,6 @@ mod lower;
 mod memsize;
 mod pat;
 mod path;
-mod query;
 mod resolution;
 mod resolved;
 mod stmt;

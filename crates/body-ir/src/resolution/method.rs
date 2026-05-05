@@ -3,17 +3,18 @@
 //! This module checks whether an impl method is a plausible candidate for a known receiver type.
 //! It is intentionally not a trait solver: it only compares explicit nominal self types and args.
 
+use rg_def_map::DefMapReadTxn;
 use rg_item_tree::{GenericParams, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
-    FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef, TypePathContext,
+    FunctionRef, ImplRef, ItemOwner, SemanticIrReadTxn, TraitApplicability, TraitImplRef,
+    TypePathContext,
 };
 
 use crate::{
     body::BodyData,
     ids::{BodyFunctionRef, BodyRef},
     item::{BodyFunctionOwner, BodyImplData},
-    query::{DefMapQuery, SemanticIrQuery},
     ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
@@ -26,8 +27,8 @@ use super::{
 };
 
 pub(super) fn semantic_function_applies_to_receiver(
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     function_ref: FunctionRef,
     receiver_ty: &BodyNominalTy,
 ) -> Result<bool, PackageStoreError> {
@@ -54,7 +55,7 @@ pub(super) fn semantic_function_applies_to_receiver(
 }
 
 pub(super) fn semantic_impl_self_subst(
-    semantic_ir: &impl SemanticIrQuery,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     function_ref: FunctionRef,
     receiver_ty: &BodyNominalTy,
 ) -> TypeSubst {
@@ -101,8 +102,8 @@ pub(super) fn semantic_impl_self_subst(
 }
 
 pub(super) fn semantic_trait_function_candidates_for_receiver(
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     receiver_ty: &BodyNominalTy,
 ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
     let mut functions = Vec::new();
@@ -123,8 +124,8 @@ pub(super) fn semantic_trait_function_candidates_for_receiver(
 }
 
 pub(super) fn local_function_applies_to_receiver(
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     body_ref: BodyRef,
     body: &BodyData,
     function_ref: BodyFunctionRef,
@@ -204,8 +205,8 @@ pub(super) fn local_impl_self_subst(
 }
 
 fn impl_self_args_match_receiver(
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     impl_ref: ImplRef,
     impl_data: &rg_semantic_ir::ImplData,
     receiver_ty: &BodyNominalTy,
@@ -267,8 +268,8 @@ fn impl_self_args_match_receiver(
 }
 
 fn semantic_trait_impl_applicability(
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     trait_impl: TraitImplRef,
     receiver_ty: &BodyNominalTy,
 ) -> Result<TraitApplicability, PackageStoreError> {
@@ -298,8 +299,8 @@ fn semantic_trait_impl_applicability(
 }
 
 fn local_impl_self_args_match_receiver(
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     body_ref: BodyRef,
     body: &BodyData,
     impl_data: &BodyImplData,
@@ -356,8 +357,8 @@ fn local_impl_self_args_match_receiver(
 }
 
 fn impl_self_args_applicability(
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     impl_ref: ImplRef,
     impl_data: &rg_semantic_ir::ImplData,
     receiver_ty: &BodyNominalTy,

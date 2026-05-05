@@ -3,15 +3,16 @@
 //! Semantic IR can resolve module items, but body-local structs live in lexical scopes. This
 //! resolver checks those scopes first and then falls back to the semantic/def-map context.
 
-use rg_def_map::{ModuleRef, Path};
+use rg_def_map::{DefMapReadTxn, ModuleRef, Path};
 use rg_item_tree::{GenericArg, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{FunctionRef, SemanticTypePathResolution, TypeDefRef, TypePathContext};
+use rg_semantic_ir::{
+    FunctionRef, SemanticIrReadTxn, SemanticTypePathResolution, TypeDefRef, TypePathContext,
+};
 
 use crate::{
     body::BodyData,
     ids::{BodyItemId, BodyItemRef, BodyRef, ScopeId},
-    query::{DefMapQuery, SemanticIrQuery},
     resolved::BodyTypePathResolution,
     ty::{BodyGenericArg, BodyTy},
 };
@@ -20,25 +21,17 @@ use super::ty::{
     TypeSubst, substitute_type_param, ty_from_body_resolution, ty_from_type_ref_in_context,
 };
 
-pub(super) struct BodyTypePathResolver<'db, 'body, D, S>
-where
-    D: DefMapQuery,
-    S: SemanticIrQuery,
-{
-    def_map: &'db D,
-    semantic_ir: &'db S,
+pub(super) struct BodyTypePathResolver<'query, 'db, 'body> {
+    def_map: &'query DefMapReadTxn<'db>,
+    semantic_ir: &'query SemanticIrReadTxn<'db>,
     body_ref: BodyRef,
     body: &'body BodyData,
 }
 
-impl<'db, 'body, D, S> BodyTypePathResolver<'db, 'body, D, S>
-where
-    D: DefMapQuery,
-    S: SemanticIrQuery,
-{
+impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
     pub(super) fn new(
-        def_map: &'db D,
-        semantic_ir: &'db S,
+        def_map: &'query DefMapReadTxn<'db>,
+        semantic_ir: &'query SemanticIrReadTxn<'db>,
         body_ref: BodyRef,
         body: &'body BodyData,
     ) -> Self {
@@ -273,8 +266,8 @@ where
 }
 
 pub(super) fn resolve_type_path_in_context(
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     context: TypePathContext,
     path: &Path,
 ) -> Result<BodyTypePathResolution, PackageStoreError> {

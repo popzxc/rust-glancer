@@ -10,16 +10,17 @@ mod pat;
 mod ty;
 mod type_path;
 
-use rg_def_map::{DefMapDb, PackageSlot, Path, TargetRef};
+use rg_def_map::{DefMapReadTxn, PackageSlot, Path, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
-use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrDb, TraitApplicability, TypePathContext};
+use rg_semantic_ir::{
+    FieldRef, FunctionRef, SemanticIrReadTxn, TraitApplicability, TypePathContext,
+};
 
 use crate::{
-    BodyIrDb, BodyResolution,
+    BodyData, BodyIrDb, BodyResolution,
     body::TargetBodiesStatus,
     ids::{BodyFunctionRef, BodyId, BodyRef, ScopeId},
-    query::{BodyIrQuery, DefMapQuery, SemanticIrQuery},
     resolved::BodyTypePathResolution,
     ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
@@ -35,7 +36,11 @@ use self::{
     type_path::BodyTypePathResolver,
 };
 
-pub(super) fn resolve_bodies(db: &mut BodyIrDb, def_map: &DefMapDb, semantic_ir: &SemanticIrDb) {
+pub(super) fn resolve_bodies(
+    db: &mut BodyIrDb,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
+) {
     let packages = (0..db.package_count()).map(PackageSlot).collect::<Vec<_>>();
     resolve_bodies_for_packages(db, def_map, semantic_ir, &packages)
         .expect("resident body resolution should not fail");
@@ -43,8 +48,8 @@ pub(super) fn resolve_bodies(db: &mut BodyIrDb, def_map: &DefMapDb, semantic_ir:
 
 pub(super) fn resolve_bodies_for_packages(
     db: &mut BodyIrDb,
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     packages: &[PackageSlot],
 ) -> Result<(), PackageStoreError> {
     // Resolution is a mutation pass over already-lowered bodies. Skipped targets intentionally
@@ -83,14 +88,14 @@ pub(super) fn resolve_bodies_for_packages(
 }
 
 pub(super) fn resolve_type_path_in_scope(
-    db: &impl BodyIrQuery,
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    body: Option<&BodyData>,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     body_ref: BodyRef,
     scope: ScopeId,
     path: &Path,
 ) -> Result<BodyTypePathResolution, PackageStoreError> {
-    let Some(body) = db.body_data(body_ref)? else {
+    let Some(body) = body else {
         return Ok(BodyTypePathResolution::Unknown);
     };
 
@@ -98,14 +103,14 @@ pub(super) fn resolve_type_path_in_scope(
 }
 
 pub(super) fn resolve_value_path_in_scope(
-    db: &impl BodyIrQuery,
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    body: Option<&BodyData>,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     body_ref: BodyRef,
     scope: ScopeId,
     path: &Path,
 ) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
-    let Some(body) = db.body_data(body_ref)? else {
+    let Some(body) = body else {
         return Ok((BodyResolution::Unknown, BodyTy::Unknown));
     };
 
@@ -114,8 +119,8 @@ pub(super) fn resolve_value_path_in_scope(
 }
 
 pub(super) fn ty_for_field(
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     field_ref: FieldRef,
 ) -> Result<Option<BodyTy>, PackageStoreError> {
     // Field declarations live in Semantic IR, but Analysis expects Body IR's small type
@@ -134,8 +139,8 @@ pub(super) fn ty_for_field(
 }
 
 pub(super) fn semantic_function_applies_to_receiver(
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     function_ref: FunctionRef,
     receiver_ty: &BodyNominalTy,
 ) -> Result<bool, PackageStoreError> {
@@ -143,21 +148,21 @@ pub(super) fn semantic_function_applies_to_receiver(
 }
 
 pub(super) fn semantic_trait_function_candidates_for_receiver(
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     receiver_ty: &BodyNominalTy,
 ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
     semantic_trait_function_candidates_for_receiver_impl(def_map, semantic_ir, receiver_ty)
 }
 
 pub(super) fn local_function_applies_to_receiver(
-    db: &impl BodyIrQuery,
-    def_map: &impl DefMapQuery,
-    semantic_ir: &impl SemanticIrQuery,
+    body: Option<&BodyData>,
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
     function_ref: BodyFunctionRef,
     receiver_ty: &BodyLocalNominalTy,
 ) -> Result<bool, PackageStoreError> {
-    let Some(body) = db.body_data(function_ref.body)? else {
+    let Some(body) = body else {
         return Ok(false);
     };
     local_function_applies_to_receiver_impl(

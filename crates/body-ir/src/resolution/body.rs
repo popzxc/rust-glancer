@@ -3,10 +3,10 @@
 //! This module walks lowered bodies and fills resolution/type slots on bindings and expressions.
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
-use rg_def_map::{DefId, Path, PathSegment};
+use rg_def_map::{DefId, DefMapReadTxn, Path, PathSegment};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{FunctionRef, TypeDefId, TypePathContext};
+use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn, TypeDefId, TypePathContext};
 
 use crate::{
     body::BodyData,
@@ -15,7 +15,6 @@ use crate::{
         BindingId, BodyFieldRef, BodyFunctionRef, BodyImplId, BodyItemRef, BodyRef, ExprId, ScopeId,
     },
     item::BodyFunctionOwner,
-    query::{DefMapQuery, SemanticIrQuery},
     resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
     stmt::BindingKind,
     ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
@@ -34,25 +33,17 @@ use super::{
     type_path::BodyTypePathResolver,
 };
 
-pub(super) struct BodyResolver<'db, 'body, D, S>
-where
-    D: DefMapQuery,
-    S: SemanticIrQuery,
-{
-    def_map: &'db D,
-    semantic_ir: &'db S,
+pub(super) struct BodyResolver<'query, 'db, 'body> {
+    def_map: &'query DefMapReadTxn<'db>,
+    semantic_ir: &'query SemanticIrReadTxn<'db>,
     body_ref: BodyRef,
     body: &'body mut BodyData,
 }
 
-impl<'db, 'body, D, S> BodyResolver<'db, 'body, D, S>
-where
-    D: DefMapQuery,
-    S: SemanticIrQuery,
-{
+impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
     pub(super) fn new(
-        def_map: &'db D,
-        semantic_ir: &'db S,
+        def_map: &'query DefMapReadTxn<'db>,
+        semantic_ir: &'query SemanticIrReadTxn<'db>,
         body_ref: BodyRef,
         body: &'body mut BodyData,
     ) -> Self {
@@ -64,7 +55,7 @@ where
         }
     }
 
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'db, '_, D, S> {
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db, '_> {
         BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
@@ -652,25 +643,17 @@ where
 /// The main resolver uses this during the fixed-point pass, and analysis reuses it for cursor
 /// queries over path prefixes. Keeping it read-only avoids cloning bodies just to answer
 /// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
-pub(super) struct BodyValuePathResolver<'db, 'body, D, S>
-where
-    D: DefMapQuery,
-    S: SemanticIrQuery,
-{
-    def_map: &'db D,
-    semantic_ir: &'db S,
+pub(super) struct BodyValuePathResolver<'query, 'db, 'body> {
+    def_map: &'query DefMapReadTxn<'db>,
+    semantic_ir: &'query SemanticIrReadTxn<'db>,
     body_ref: BodyRef,
     body: &'body BodyData,
 }
 
-impl<'db, 'body, D, S> BodyValuePathResolver<'db, 'body, D, S>
-where
-    D: DefMapQuery,
-    S: SemanticIrQuery,
-{
+impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
     pub(super) fn new(
-        def_map: &'db D,
-        semantic_ir: &'db S,
+        def_map: &'query DefMapReadTxn<'db>,
+        semantic_ir: &'query SemanticIrReadTxn<'db>,
         body_ref: BodyRef,
         body: &'body BodyData,
     ) -> Self {
@@ -721,7 +704,7 @@ where
         Ok((BodyResolution::Item(result.resolved), ty))
     }
 
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'db, '_, D, S> {
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db, '_> {
         BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 

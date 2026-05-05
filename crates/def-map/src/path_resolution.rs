@@ -9,8 +9,8 @@
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
 use super::{
-    DefId, DefMapDb, DefMapReadTxn, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleRef,
-    Path, ScopeBinding, TargetRef,
+    DefId, DefMapReadTxn, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleRef, Path,
+    ScopeBinding, TargetRef,
     scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
 };
 use rg_item_tree::VisibilityLevel;
@@ -75,75 +75,6 @@ pub(super) trait PathResolutionEnv {
             target,
             module: parent,
         }))
-    }
-}
-
-impl PathResolutionEnv for DefMapDb {
-    fn extern_root(
-        &self,
-        target: TargetRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, PackageStoreError> {
-        Ok(self
-            .resident_def_map(target)
-            .and_then(|def_map| def_map.extern_prelude().get(name).copied()))
-    }
-
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        Ok(self
-            .resident_def_map(target)
-            .and_then(|def_map| def_map.prelude()))
-    }
-
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        Ok(self.resident_def_map(target).and_then(|def_map| {
-            Some(ModuleRef {
-                target,
-                module: def_map.root_module()?,
-            })
-        }))
-    }
-
-    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, PackageStoreError> {
-        Ok(self
-            .resident_def_map(module_ref.target)
-            .and_then(|def_map| def_map.module(module_ref.module)))
-    }
-
-    fn module_scope_entry<'a>(
-        &'a self,
-        module_ref: ModuleRef,
-        name: &str,
-    ) -> Result<Option<ScopeEntryRef<'a>>, PackageStoreError> {
-        Ok(self
-            .module_data(module_ref)?
-            .and_then(|module| module.scope.entry(name))
-            .map(|entry| entry.as_ref()))
-    }
-
-    fn module_scope_entries<'a>(
-        &'a self,
-        module_ref: ModuleRef,
-    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, PackageStoreError> {
-        Ok(self
-            .module_data(module_ref)?
-            .map(|module| {
-                module
-                    .scope
-                    .entries()
-                    .map(|(name, entry)| (name, entry.as_ref()))
-                    .collect()
-            })
-            .unwrap_or_default())
-    }
-
-    fn local_def_kind(
-        &self,
-        local_def_ref: LocalDefRef,
-    ) -> Result<Option<LocalDefKind>, PackageStoreError> {
-        Ok(self
-            .local_def(local_def_ref)
-            .map(|local_def| local_def.kind))
     }
 }
 
@@ -311,24 +242,8 @@ pub(super) fn resolve_path_to_modules_with_env(
     Ok(modules)
 }
 
-/// Resolves a path against the already-frozen def maps.
-pub fn resolve_path_in_db(
-    db: &DefMapDb,
-    importing_module: ModuleRef,
-    path: &Path,
-) -> ResolvePathResult {
-    resolve_path_with_env(
-        db,
-        importing_module,
-        path.absolute,
-        &path.segments,
-        NameResolutionFilter::AllNamespaces,
-    )
-    .expect("resident def-map path resolution should not fail")
-}
-
 /// Resolves a path against one read transaction.
-pub fn resolve_path_in_txn(
+pub(crate) fn resolve_path_in_txn(
     txn: &DefMapReadTxn<'_>,
     importing_module: ModuleRef,
     path: &Path,
@@ -342,24 +257,8 @@ pub fn resolve_path_in_txn(
     )
 }
 
-/// Resolves a path whose terminal segment is being used in the type namespace.
-pub fn resolve_path_in_type_namespace(
-    db: &DefMapDb,
-    importing_module: ModuleRef,
-    path: &Path,
-) -> ResolvePathResult {
-    resolve_path_with_env(
-        db,
-        importing_module,
-        path.absolute,
-        &path.segments,
-        NameResolutionFilter::TypesOnly,
-    )
-    .expect("resident def-map type path resolution should not fail")
-}
-
 /// Resolves a type-position path against one read transaction.
-pub fn resolve_path_in_type_namespace_txn(
+pub(crate) fn resolve_path_in_type_namespace_txn(
     txn: &DefMapReadTxn<'_>,
     importing_module: ModuleRef,
     path: &Path,
