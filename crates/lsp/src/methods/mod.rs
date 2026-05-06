@@ -26,7 +26,11 @@ pub(crate) async fn initialize(
         AnalysisConfig::from_initialization_options(params.initialization_options.as_ref());
     ctx.check.configure(root.clone(), check_config).await;
     ctx.engine
-        .initialize(root, analysis_config.package_residency_policy)
+        .initialize(
+            root,
+            analysis_config.package_residency_policy,
+            analysis_config.cargo_metadata_config,
+        )
         .await
         .map_err(internal_error)?;
 

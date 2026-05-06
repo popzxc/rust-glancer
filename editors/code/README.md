@@ -67,6 +67,7 @@ stderr there.
   "rust-glancer.server.path": null,
   "rust-glancer.server.extraEnv": {},
   "rust-glancer.server.purgeMemoryAfterBuild": true,
+  "rust-glancer.cargo.target": null,
   "rust-glancer.trace.server": "off",
   "rust-glancer.checkOnStartup": false,
   "rust-glancer.checkOnSave": false,
@@ -82,6 +83,10 @@ itself; the extension adds the `lsp` subcommand.
 allocator pages to the OS after initial indexing and saved-file reindexing. It
 is enabled by default because indexing is allocation-heavy and the server is
 otherwise meant to sit idle in the background.
+
+`rust-glancer.cargo.target` sets the target triple passed to
+`cargo metadata --filter-platform`. Leave it unset to use the current rustc host
+target.
 
 Server logs are controlled through environment variables. For example:
 

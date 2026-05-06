@@ -29,5 +29,10 @@ rg_text = { workspace = true, features = ["memsize"] }
 
 [dev-dependencies]
 cargo_metadata.workspace = true
+divan.workspace = true
 expect-test.workspace = true
 test_fixture.workspace = true
+
+[[bench]]
+name = "analysis_pipeline"
+harness = false

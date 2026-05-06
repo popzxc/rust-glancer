@@ -1,0 +1,8 @@
+[package]
+name = "bench_app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bench_body = { path = "../body" }
+bench_items = { path = "../items" }

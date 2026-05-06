@@ -20,9 +20,11 @@ pub(super) fn rebuild_workspace_graph(
         .workspace_root()
         .join("Cargo.toml");
     let sysroot = project.state.workspace().sysroot_sources();
-    let workspace = WorkspaceMetadata::from_manifest_path(&manifest_path)
-        .with_context(|| format!("while attempting to load {}", manifest_path.display()))?
-        .with_sysroot_sources(sysroot);
+    let cargo_metadata_config = project.state.cargo_metadata_config.clone();
+    let workspace =
+        WorkspaceMetadata::from_manifest_path_with_config(&manifest_path, &cargo_metadata_config)
+            .with_context(|| format!("while attempting to load {}", manifest_path.display()))?
+            .with_sysroot_sources(sysroot);
     let body_ir_policy = project.state.body_ir_policy;
     let package_residency_policy = project.state.package_residency_policy;
 
@@ -30,6 +32,7 @@ pub(super) fn rebuild_workspace_graph(
     // from scratch keeps every phase on one slot-stable snapshot instead of trying to partially
     // reuse state whose internal ids may no longer describe the refreshed metadata graph.
     project.state = Project::builder(workspace)
+        .cargo_metadata_config(cargo_metadata_config)
         .body_ir_policy(body_ir_policy)
         .package_residency_policy(package_residency_policy)
         .build()

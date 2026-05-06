@@ -65,6 +65,15 @@
           "default": true,
           "description": "Ask the language server to purge allocator memory after project indexing and saved-file reindexing. This lowers idle RSS after large indexing spikes."
         },
+        "rust-glancer.cargo.target": {
+          "scope": "resource",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Target triple used to filter Cargo metadata for analysis. When unset, rust-glancer uses the current rustc host target. Restart the rust-glancer server after changing this setting."
+        },
         "rust-glancer.cache.packageResidency": {
           "scope": "window",
           "type": "string",

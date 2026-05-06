@@ -22,6 +22,7 @@ exclude = [
   "test_targets/complex_crate",
   "test_targets/moderate_workspace",
   "test_targets/complex_workspace",
+  "test_targets/bench_target",
 ]
 resolver = "3"
 
@@ -43,6 +44,7 @@ blake3 = "1.8.2"
 clap = "4.5.50"
 cargo_metadata = "0.23"
 derive_more = { version = "2.1.1" }
+divan = "0.1.21"
 expect-test = "1.5.1"
 ls_types = { package = "ls-types", version = "0.0.6" }
 rkyv = "0.8.12"

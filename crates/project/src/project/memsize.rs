@@ -28,6 +28,7 @@ impl MemorySize for ProjectState {
             recorder,
             self,
             workspace,
+            cargo_metadata_config,
             cached_workspace,
             body_ir_policy,
             package_residency_policy,

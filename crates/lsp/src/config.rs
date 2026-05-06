@@ -1,10 +1,12 @@
 use rg_project::PackageResidencyPolicy;
+use rg_workspace::CargoMetadataConfig;
 use tower_lsp_server::ls_types::LSPAny;
 
 /// Analysis configuration sent by the LSP client during initialization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AnalysisConfig {
     pub(crate) package_residency_policy: PackageResidencyPolicy,
+    pub(crate) cargo_metadata_config: CargoMetadataConfig,
 }
 
 impl AnalysisConfig {
@@ -21,9 +23,21 @@ impl AnalysisConfig {
             .and_then(LSPAny::as_str)
             .and_then(PackageResidencyPolicy::from_config_name)
             .unwrap_or(default.package_residency_policy);
+        let cargo_metadata_config = options
+            .and_then(LSPAny::as_object)
+            .and_then(|options| {
+                options
+                    .get("cargo")
+                    .and_then(LSPAny::as_object)
+                    .and_then(|cargo| cargo.get("target"))
+            })
+            .and_then(LSPAny::as_str)
+            .map(|target| CargoMetadataConfig::default().target_triple(target))
+            .unwrap_or_else(|| default.cargo_metadata_config.clone());
 
         Self {
             package_residency_policy,
+            cargo_metadata_config,
         }
     }
 }
@@ -35,6 +49,7 @@ impl Default for AnalysisConfig {
             // dependencies are the packages users are most likely to edit by hand, so they remain
             // resident while registry/git dependencies can be offloaded.
             package_residency_policy: PackageResidencyPolicy::WorkspaceAndPathDepsResident,
+            cargo_metadata_config: CargoMetadataConfig::default(),
         }
     }
 }
@@ -42,6 +57,7 @@ impl Default for AnalysisConfig {
 #[cfg(test)]
 mod tests {
     use rg_project::PackageResidencyPolicy;
+    use rg_workspace::CargoMetadataTarget;
     use tower_lsp_server::ls_types::LSPAny;
 
     use super::AnalysisConfig;
@@ -53,6 +69,10 @@ mod tests {
         assert_eq!(
             config.package_residency_policy,
             PackageResidencyPolicy::WorkspaceAndPathDepsResident,
+        );
+        assert_eq!(
+            config.cargo_metadata_config.target(),
+            &CargoMetadataTarget::Auto
         );
     }
 
@@ -71,6 +91,24 @@ mod tests {
         assert_eq!(
             config.package_residency_policy,
             PackageResidencyPolicy::AllResident,
+        );
+    }
+
+    #[test]
+    fn parses_cargo_target() {
+        let options = object([(
+            "cargo",
+            object([(
+                "target",
+                LSPAny::String("x86_64-unknown-linux-gnu".to_string()),
+            )]),
+        )]);
+
+        let config = AnalysisConfig::from_initialization_options(Some(&options));
+
+        assert_eq!(
+            config.cargo_metadata_config.target(),
+            &CargoMetadataTarget::Triple("x86_64-unknown-linux-gnu".to_string()),
         );
     }
 

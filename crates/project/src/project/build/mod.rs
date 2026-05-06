@@ -5,7 +5,7 @@ mod phases;
 use anyhow::Context as _;
 
 use rg_body_ir::BodyIrBuildPolicy;
-use rg_workspace::WorkspaceMetadata;
+use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
     BuildProcessMemory, BuildProfile, PackageResidencyPlan, PackageResidencyPolicy,
@@ -38,7 +38,9 @@ impl ProjectBuild {
 /// Fluent construction API for a fresh analysis project.
 pub struct ProjectBuilder {
     workspace: WorkspaceMetadata,
+    cargo_metadata_config: CargoMetadataConfig,
     body_ir_policy: BodyIrBuildPolicy,
+    profile_build_timing: bool,
     package_residency_policy: PackageResidencyPolicy,
     measure_retained_memory: bool,
     process_memory_sampler: Option<ProcessMemorySampler>,
@@ -48,7 +50,9 @@ impl ProjectBuilder {
     pub(crate) fn new(workspace: WorkspaceMetadata) -> Self {
         Self {
             workspace,
+            cargo_metadata_config: CargoMetadataConfig::default(),
             body_ir_policy: BodyIrBuildPolicy::default(),
+            profile_build_timing: false,
             package_residency_policy: PackageResidencyPolicy::default(),
             measure_retained_memory: false,
             process_memory_sampler: None,
@@ -57,6 +61,16 @@ impl ProjectBuilder {
 
     pub fn body_ir_policy(mut self, policy: BodyIrBuildPolicy) -> Self {
         self.body_ir_policy = policy;
+        self
+    }
+
+    pub fn cargo_metadata_config(mut self, config: CargoMetadataConfig) -> Self {
+        self.cargo_metadata_config = config;
+        self
+    }
+
+    pub fn profile_build_timing(mut self, enabled: bool) -> Self {
+        self.profile_build_timing = enabled;
         self
     }
 
@@ -79,12 +93,17 @@ impl ProjectBuilder {
     }
 
     pub fn build(self) -> anyhow::Result<ProjectBuild> {
-        let profile_requested =
-            self.measure_retained_memory || self.process_memory_sampler.is_some();
-        let mut profiler =
-            BuildProfiler::new(self.measure_retained_memory, self.process_memory_sampler);
+        let profile_requested = self.profile_build_timing
+            || self.measure_retained_memory
+            || self.process_memory_sampler.is_some();
+        let mut profiler = BuildProfiler::new(
+            self.profile_build_timing,
+            self.measure_retained_memory,
+            self.process_memory_sampler,
+        );
         let mut state = build_resident_state(
             self.workspace,
+            self.cargo_metadata_config,
             self.body_ir_policy,
             self.package_residency_policy,
             &mut profiler,
@@ -112,6 +131,7 @@ impl ProjectBuilder {
 
 pub(crate) fn build_resident_state(
     workspace: WorkspaceMetadata,
+    cargo_metadata_config: CargoMetadataConfig,
     body_ir_policy: BodyIrBuildPolicy,
     package_residency_policy: PackageResidencyPolicy,
     profiler: &mut BuildProfiler,
@@ -123,6 +143,7 @@ pub(crate) fn build_resident_state(
 
     Ok(ProjectState {
         workspace,
+        cargo_metadata_config,
         cached_workspace,
         cache_store,
         body_ir_policy,

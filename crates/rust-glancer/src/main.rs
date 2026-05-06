@@ -21,11 +21,17 @@ enum Command {
     /// Analyze the crate or workspace package located at `path`.
     Analyze {
         path: PathBuf,
+        /// Print build phase timings after analysis finishes.
+        #[clap(long)]
+        profile: bool,
         #[clap(short, long)]
         memory: bool,
         /// Which packages should remain resident after analysis is built.
         #[clap(long = "package-residency", value_enum, default_value = "all-resident")]
         package_residency: CliPackageResidencyPolicy,
+        /// Target triple used to filter Cargo metadata. Defaults to the current rustc host target.
+        #[clap(long)]
+        target: Option<String>,
     },
     /// Start the language server over stdio.
     Lsp,
@@ -38,9 +44,11 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Analyze {
             path,
+            profile,
             memory,
             package_residency,
-        } => analyze::analyze(path, memory, package_residency.into()),
+            target,
+        } => analyze::analyze(path, profile, memory, package_residency.into(), target),
         Command::Lsp => rg_lsp::run_stdio_with_memory_control(runtime::memory_control()),
     }
 }

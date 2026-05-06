@@ -81,6 +81,7 @@ export class ClientManager implements vscode.Disposable {
       traceOutputChannel: this.output,
       initializationOptions: {
         check: config.check,
+        cargo: config.cargo,
         cache: config.cache,
       },
       middleware: hoverMiddleware(() => this.client, this.output),

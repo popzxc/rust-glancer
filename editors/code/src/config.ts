@@ -12,9 +12,14 @@ export interface ExtensionConfig {
   readonly serverPath: string | undefined;
   readonly extraEnv: Record<string, string>;
   readonly purgeMemoryAfterBuild: boolean;
+  readonly cargo: CargoConfig;
   readonly cache: CacheConfig;
   readonly traceServer: TraceSetting;
   readonly check: CheckConfig;
+}
+
+export interface CargoConfig {
+  readonly target: string | undefined;
 }
 
 export interface CacheConfig {
@@ -34,6 +39,7 @@ export namespace ExtensionConfig {
     const serverPath = config.get<string | null>("server.path", null);
     const extraEnv = config.get<Record<string, unknown>>("server.extraEnv", {});
     const purgeMemoryAfterBuild = config.get<boolean>("server.purgeMemoryAfterBuild", true);
+    const cargoTarget = config.get<string | null>("cargo.target", null);
     const packageResidency = config.get<PackageResidencySetting>(
       "cache.packageResidency",
       "workspace-and-path-deps",
@@ -48,6 +54,9 @@ export namespace ExtensionConfig {
       serverPath: normalizeOptionalString(serverPath),
       extraEnv: normalizeStringRecord(extraEnv),
       purgeMemoryAfterBuild,
+      cargo: {
+        target: normalizeOptionalString(cargoTarget),
+      },
       cache: {
         packageResidency,
       },
