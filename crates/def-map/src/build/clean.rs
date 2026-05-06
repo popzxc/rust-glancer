@@ -6,7 +6,6 @@
 use anyhow::Context as _;
 
 use rg_item_tree::ItemTreeDb;
-use rg_parse;
 use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 

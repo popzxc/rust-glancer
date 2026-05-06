@@ -93,7 +93,7 @@ fn doc_attr_text(attr: &ast::Attr) -> Option<String> {
         return None;
     };
     let path = meta.path()?;
-    if path.syntax().text().to_string() != "doc" {
+    if path.syntax().text() != "doc" {
         return None;
     }
 

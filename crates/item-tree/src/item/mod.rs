@@ -86,7 +86,7 @@ impl ItemNode {
         Self {
             kind,
             name,
-            name_span: name_range.map(|range| Span::from_text_range(range)),
+            name_span: name_range.map(Span::from_text_range),
             visibility,
             docs,
             file_id,

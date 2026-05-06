@@ -63,9 +63,8 @@ pub use dep::api::Api as Renamed;
 
     let mut app_slot = None;
     for (package_idx, package) in parse.packages().iter().enumerate() {
-        match package.package_name() {
-            "app" => app_slot = Some(PackageSlot(package_idx)),
-            _ => {}
+        if package.package_name() == "app" {
+            app_slot = Some(PackageSlot(package_idx));
         }
     }
     let app_slot = app_slot.expect("fixture app package should exist");

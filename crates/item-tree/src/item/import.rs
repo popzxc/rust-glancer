@@ -20,7 +20,7 @@ impl ExternCrateItem {
         Self {
             name: item
                 .name_ref()
-                .map(|name_ref| interner.intern(name_ref.text().to_string())),
+                .map(|name_ref| interner.intern(name_ref.text())),
             alias: ImportAlias::from_rename(item.rename(), interner),
         }
     }
@@ -133,7 +133,7 @@ impl ImportAlias {
             .name()
             .map(|name| Self::Explicit {
                 span: Span::from_text_range(name.syntax().text_range()),
-                name: interner.intern(name.text().to_string()),
+                name: interner.intern(name.text()),
             })
             .unwrap_or(Self::Inferred)
     }
@@ -171,7 +171,7 @@ impl UsePath {
             let span = Span::from_text_range(segment.syntax().text_range());
             let lowered_segment = match segment.kind()? {
                 ast::PathSegmentKind::Name(name_ref) => UsePathSegment {
-                    kind: UsePathSegmentKind::Name(interner.intern(name_ref.text().to_string())),
+                    kind: UsePathSegmentKind::Name(interner.intern(name_ref.text())),
                     span: Span::from_text_range(name_ref.syntax().text_range()),
                 },
                 ast::PathSegmentKind::SelfKw => UsePathSegment {

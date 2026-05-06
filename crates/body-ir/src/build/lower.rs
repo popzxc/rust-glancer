@@ -400,7 +400,7 @@ impl<'a> FunctionBodyLowering<'a> {
             name_source: self.source(name.syntax()),
             scope,
             kind: BodyItemKind::Struct,
-            name: self.interner.intern(name.text().to_string()),
+            name: self.interner.intern(name.text()),
             docs: Documentation::from_ast(&item),
             generics: GenericParams::from_ast(&item, self.line_index, self.interner),
             fields,
@@ -444,7 +444,7 @@ impl<'a> FunctionBodyLowering<'a> {
             source: self.source(function.syntax()),
             name_source: self.source(name.syntax()),
             owner: BodyFunctionOwner::LocalImpl(impl_id),
-            name: self.interner.intern(name.text().to_string()),
+            name: self.interner.intern(name.text()),
             docs: Documentation::from_ast(&function),
             declaration: FunctionItem::from_ast(&function, self.line_index, self.interner),
         }))
@@ -560,7 +560,7 @@ impl<'a> FunctionBodyLowering<'a> {
                     .into_iter()
                     .flat_map(|field_list| field_list.fields())
                     .filter_map(|field| {
-                        let name = self.interner.intern(field.field_name()?.text().to_string());
+                        let name = self.interner.intern(field.field_name()?.text());
                         let key = FieldKey::Named(name.clone());
                         let pat = if let Some(inner) = field.pat() {
                             self.lower_pat_inner(inner, scope, kind, None, bindings)

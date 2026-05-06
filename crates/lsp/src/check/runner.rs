@@ -196,23 +196,12 @@ struct CurrentCheck {
     progress_token: NumberOrString,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct CheckState {
     workspace_root: Option<PathBuf>,
     config: CheckConfig,
     generation: u64,
     published_paths: BTreeSet<PathBuf>,
-}
-
-impl Default for CheckState {
-    fn default() -> Self {
-        Self {
-            workspace_root: None,
-            config: CheckConfig::default(),
-            generation: 0,
-            published_paths: BTreeSet::new(),
-        }
-    }
 }
 
 impl CheckState {

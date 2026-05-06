@@ -444,7 +444,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         &self,
         target: TargetRef,
         file_id: FileId,
-        symbols: &mut Vec<DocumentSymbol>,
+        symbols: &mut [DocumentSymbol],
     ) -> Result<()> {
         let Some(target_bodies) = self.0.body_ir.target_bodies(target)? else {
             return Ok(());
@@ -877,6 +877,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_local_def_workspace_symbol(
         &self,
         target: TargetRef,

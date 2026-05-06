@@ -72,7 +72,7 @@ impl ProcessMemoryControl {
 
         #[cfg(all(feature = "jemalloc-stats", not(target_env = "msvc")))]
         {
-            return Some(jemalloc_stats::purge());
+            Some(jemalloc_stats::purge())
         }
 
         #[cfg(not(all(feature = "jemalloc-stats", not(target_env = "msvc"))))]
