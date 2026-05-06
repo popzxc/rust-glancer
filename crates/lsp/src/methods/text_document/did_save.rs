@@ -34,7 +34,7 @@ pub(crate) async fn did_save(ctx: &ServerContext, params: DidSaveTextDocumentPar
         "document freshness before save reindex"
     );
 
-    ctx.check.run_on_save(path.clone()).await;
+    ctx.check.launch_on_save(path.clone()).await;
 
     if let Err(error) = ctx.engine.did_save(path.clone(), saved_text).await {
         let mut documents = ctx.documents.lock().await;

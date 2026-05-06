@@ -3,6 +3,7 @@ use tower_lsp_server::ls_types::LSPAny;
 /// Cargo diagnostics configuration sent by the VS Code client during initialization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckConfig {
+    pub(crate) on_startup: bool,
     pub(crate) on_save: bool,
     pub(crate) command: String,
     pub(crate) arguments: Vec<String>,
@@ -18,6 +19,10 @@ impl CheckConfig {
             return Self::default();
         };
 
+        let on_startup = check
+            .get("onStartup")
+            .and_then(LSPAny::as_bool)
+            .unwrap_or_default();
         let on_save = check
             .get("onSave")
             .and_then(LSPAny::as_bool)
@@ -42,6 +47,7 @@ impl CheckConfig {
             .unwrap_or_else(|| vec!["--workspace".to_string(), "--all-targets".to_string()]);
 
         Self {
+            on_startup,
             on_save,
             command,
             arguments,
@@ -62,6 +68,7 @@ impl CheckConfig {
 impl Default for CheckConfig {
     fn default() -> Self {
         Self {
+            on_startup: false,
             on_save: false,
             command: "check".to_string(),
             arguments: vec!["--workspace".to_string(), "--all-targets".to_string()],
@@ -78,6 +85,7 @@ mod tests {
     fn defaults_to_disabled_cargo_check() {
         let config = CheckConfig::from_initialization_options(None);
 
+        assert!(!config.on_startup);
         assert!(!config.on_save);
         assert_eq!(
             config.user_facing_command(),
@@ -90,6 +98,7 @@ mod tests {
         let options = object([(
             "check",
             object([
+                ("onStartup", LSPAny::Bool(true)),
                 ("onSave", LSPAny::Bool(true)),
                 ("command", LSPAny::String("clippy".to_string())),
                 (
@@ -106,6 +115,7 @@ mod tests {
 
         let config = CheckConfig::from_initialization_options(Some(&options));
 
+        assert!(config.on_startup);
         assert!(config.on_save);
         assert_eq!(config.command, "clippy");
         assert_eq!(

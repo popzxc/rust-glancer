@@ -44,11 +44,8 @@ impl LanguageServer for Backend {
         methods::initialize(&self.ctx, params).await
     }
 
-    async fn initialized(&self, _: InitializedParams) {
-        self.ctx
-            .client
-            .log_message(MessageType::INFO, "rust-glancer initialized")
-            .await;
+    async fn initialized(&self, params: InitializedParams) {
+        methods::initialized(&self.ctx, params).await;
     }
 
     async fn shutdown(&self) -> Result<()> {

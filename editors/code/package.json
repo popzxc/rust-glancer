@@ -96,6 +96,12 @@
           "default": "off",
           "description": "Controls LSP protocol tracing for the rust-glancer client."
         },
+        "rust-glancer.checkOnStartup": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": false,
+          "description": "Run Cargo diagnostics once after the rust-glancer server initializes."
+        },
         "rust-glancer.checkOnSave": {
           "scope": "resource",
           "type": "boolean",

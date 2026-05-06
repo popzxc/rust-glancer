@@ -68,6 +68,7 @@ stderr there.
   "rust-glancer.server.extraEnv": {},
   "rust-glancer.server.purgeMemoryAfterBuild": true,
   "rust-glancer.trace.server": "off",
+  "rust-glancer.checkOnStartup": false,
   "rust-glancer.checkOnSave": false,
   "rust-glancer.check.command": "check",
   "rust-glancer.check.arguments": ["--workspace", "--all-targets"]
@@ -95,3 +96,7 @@ Server logs are controlled through environment variables. For example:
 `rust-glancer.check.command` is a Cargo subcommand, not an arbitrary shell
 command. For example, use `"check"` for `cargo check` or `"clippy"` for
 `cargo clippy`; rust-glancer adds `cargo` and `--message-format=json` itself.
+
+Cargo diagnostics are opt-in. `rust-glancer.checkOnStartup` runs them once
+after server initialization, and `rust-glancer.checkOnSave` runs them after
+each saved Rust file.

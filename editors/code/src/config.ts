@@ -22,6 +22,7 @@ export interface CacheConfig {
 }
 
 export interface CheckConfig {
+  readonly onStartup: boolean;
   readonly onSave: boolean;
   readonly command: string;
   readonly arguments: string[];
@@ -38,6 +39,7 @@ export namespace ExtensionConfig {
       "workspace-and-path-deps",
     );
     const traceServer = config.get<TraceSetting>("trace.server", "off");
+    const checkOnStartup = config.get<boolean>("checkOnStartup", false);
     const checkOnSave = config.get<boolean>("checkOnSave", false);
     const checkCommand = config.get<string>("check.command", "check");
     const checkArguments = config.get<unknown[]>("check.arguments", ["--workspace", "--all-targets"]);
@@ -51,6 +53,7 @@ export namespace ExtensionConfig {
       },
       traceServer,
       check: {
+        onStartup: checkOnStartup,
         onSave: checkOnSave,
         command: normalizeCargoSubcommand(checkCommand),
         arguments: normalizeStringArray(checkArguments),
