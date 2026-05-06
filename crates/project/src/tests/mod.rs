@@ -5,7 +5,7 @@ use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
 use self::utils::{HostFixture, HostObservation};
-use crate::{BuildProfileOptions, PackageResidencyPolicy, Project, ProjectBuildOptions};
+use crate::{PackageResidencyPolicy, Project};
 
 #[test]
 fn profiled_build_reports_phase_checkpoints_without_exposing_phase_dbs() {
@@ -23,15 +23,12 @@ pub struct User;
     );
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should build");
-    let (_project, profile) = Project::build_profiled(
-        workspace,
-        ProjectBuildOptions::default(),
-        BuildProfileOptions {
-            retained_memory: true,
-            process_memory_sampler: None,
-        },
-    )
-    .expect("profiled project build should succeed");
+    let (_project, profile) = Project::builder(workspace)
+        .measure_retained_memory(true)
+        .build()
+        .expect("profiled project build should succeed")
+        .into_parts();
+    let profile = profile.expect("retained memory profiling should produce a profile");
 
     let labels = profile
         .checkpoints()
@@ -317,7 +314,7 @@ path = "src/tool.rs"
 
 #[test]
 fn workspace_graph_rebuild_reports_changed_targets_when_packages_are_offloaded() {
-    let mut fixture = HostFixture::build_with_options(
+    let mut fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [package]
@@ -331,10 +328,7 @@ pub struct Lib;
 //- /src/tool.rs
 fn main() {}
 "#,
-        ProjectBuildOptions {
-            package_residency_policy: PackageResidencyPolicy::AllOffloadable,
-            ..ProjectBuildOptions::default()
-        },
+        PackageResidencyPolicy::AllOffloadable,
     );
 
     fixture.check_save(
@@ -826,7 +820,7 @@ pub struct Renamed;
 
 #[test]
 fn rebuilds_offloaded_path_dependency_after_source_change() {
-    let mut fixture = HostFixture::build_with_options(
+    let mut fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [package]
@@ -849,10 +843,7 @@ edition = "2024"
 //- /dep/src/lib.rs
 pub struct Api;
 "#,
-        ProjectBuildOptions {
-            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
-            ..ProjectBuildOptions::default()
-        },
+        PackageResidencyPolicy::WorkspaceResident,
     );
 
     fixture.check(
@@ -894,7 +885,7 @@ pub struct Renamed;
 
 #[test]
 fn queries_report_missing_offloaded_package_cache_artifacts() {
-    let fixture = HostFixture::build_with_options(
+    let fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [package]
@@ -917,10 +908,7 @@ edition = "2024"
 //- /dep/src/lib.rs
 pub struct Api;
 "#,
-        ProjectBuildOptions {
-            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
-            ..ProjectBuildOptions::default()
-        },
+        PackageResidencyPolicy::WorkspaceResident,
     );
 
     assert!(fixture.package_cache_artifact_exists("dep"));
@@ -937,7 +925,7 @@ pub struct Api;
 
 #[test]
 fn queries_report_corrupt_offloaded_package_cache_artifacts() {
-    let fixture = HostFixture::build_with_options(
+    let fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [package]
@@ -960,10 +948,7 @@ edition = "2024"
 //- /dep/src/lib.rs
 pub struct Api;
 "#,
-        ProjectBuildOptions {
-            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
-            ..ProjectBuildOptions::default()
-        },
+        PackageResidencyPolicy::WorkspaceResident,
     );
 
     fixture.corrupt_package_cache_artifact("dep");
@@ -978,7 +963,7 @@ pub struct Api;
 
 #[test]
 fn file_local_queries_do_not_materialize_unrelated_offloaded_packages() {
-    let fixture = HostFixture::build_with_options(
+    let fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -1016,10 +1001,7 @@ edition = "2024"
 //- /unrelated/src/lib.rs
 pub struct Unrelated;
 "#,
-        ProjectBuildOptions {
-            package_residency_policy: PackageResidencyPolicy::AllOffloadable,
-            ..ProjectBuildOptions::default()
-        },
+        PackageResidencyPolicy::AllOffloadable,
     );
 
     assert!(fixture.package_cache_artifact_exists("unrelated"));
@@ -1038,7 +1020,7 @@ pub struct Unrelated;
 
 #[test]
 fn source_updates_do_not_materialize_unrelated_offloaded_packages() {
-    let mut fixture = HostFixture::build_with_options(
+    let mut fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -1076,10 +1058,7 @@ edition = "2024"
 //- /unrelated/src/lib.rs
 pub struct Unrelated;
 "#,
-        ProjectBuildOptions {
-            package_residency_policy: PackageResidencyPolicy::AllOffloadable,
-            ..ProjectBuildOptions::default()
-        },
+        PackageResidencyPolicy::AllOffloadable,
     );
 
     assert!(fixture.package_cache_artifact_exists("unrelated"));
@@ -1122,7 +1101,7 @@ pub fn use_dep(_: dep::Api) {}
 
 #[test]
 fn source_updates_rebuild_missing_offloaded_package_cache_artifacts() {
-    let mut fixture = HostFixture::build_with_options(
+    let mut fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [package]
@@ -1147,10 +1126,7 @@ edition = "2024"
 //- /dep/src/lib.rs
 pub struct Api;
 "#,
-        ProjectBuildOptions {
-            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
-            ..ProjectBuildOptions::default()
-        },
+        PackageResidencyPolicy::WorkspaceResident,
     );
 
     fixture.remove_cache_namespace();
@@ -1188,7 +1164,7 @@ pub fn use_dep(_: Api) {}
 
 #[test]
 fn source_updates_rebuild_corrupt_offloaded_package_cache_artifacts() {
-    let mut fixture = HostFixture::build_with_options(
+    let mut fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [package]
@@ -1213,10 +1189,7 @@ edition = "2024"
 //- /dep/src/lib.rs
 pub struct Api;
 "#,
-        ProjectBuildOptions {
-            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
-            ..ProjectBuildOptions::default()
-        },
+        PackageResidencyPolicy::WorkspaceResident,
     );
 
     fixture.corrupt_package_cache_artifact("dep");
@@ -1254,7 +1227,7 @@ pub fn use_dep(_: Api) {}
 
 #[test]
 fn source_updates_restore_offloaded_residency_for_unchanged_packages() {
-    let mut fixture = HostFixture::build_with_options(
+    let mut fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [package]
@@ -1278,10 +1251,7 @@ edition = "2024"
 //- /dep/src/lib.rs
 pub struct Api;
 "#,
-        ProjectBuildOptions {
-            package_residency_policy: PackageResidencyPolicy::AllOffloadable,
-            ..ProjectBuildOptions::default()
-        },
+        PackageResidencyPolicy::AllOffloadable,
     );
 
     fixture.check(

@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_project::ProjectBuildOptions;
+use rg_project::PackageResidencyPolicy;
 use tokio::sync::oneshot;
 use tower_lsp_server::ls_types;
 
@@ -38,11 +38,11 @@ impl EngineHandle {
     pub(crate) async fn initialize(
         &self,
         root: PathBuf,
-        build_options: ProjectBuildOptions,
+        package_residency_policy: PackageResidencyPolicy,
     ) -> anyhow::Result<()> {
         self.request(|respond_to| EngineCommand::Initialize {
             root,
-            build_options,
+            package_residency_policy,
             respond_to,
         })
         .await

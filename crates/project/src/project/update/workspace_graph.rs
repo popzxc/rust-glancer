@@ -1,18 +1,18 @@
 //! Detects changes that invalidate the workspace package graph.
 //!
-//! Source saves can usually reuse package and target slots, but manifest or lockfile edits may add,
-//! remove, or reorder packages, dependencies, or targets. Those graph-level changes are uncommon
-//! enough that the project intentionally treats them as a full-project rebuild boundary instead of
-//! forcing every downstream phase to support slot remapping.
+//! Source saves can usually reuse package and target slots, but manifest or lockfile edits may
+//! add, remove, or reorder packages, dependencies, or targets. Those graph-level changes are
+//! uncommon enough that the project intentionally treats them as a full-project rebuild boundary
+//! instead of forcing every downstream phase to support slot remapping.
 //!
-//! Saved paths are canonicalized by `Project`, and workspace metadata paths are canonicalized
-//! when `WorkspaceMetadata` is built. That lets this module express graph checks as direct path
+//! Saved paths are canonicalized by `Project`, and workspace metadata paths are canonicalized when
+//! `WorkspaceMetadata` is built. That lets this module express graph checks as direct path
 //! comparisons instead of carrying defensive path-normalization fallbacks.
 
 use rg_parse::ParseDb;
 use rg_workspace::WorkspaceMetadata;
 
-use super::SavedFileChange;
+use crate::project::SavedFileChange;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum WorkspaceGraphChanges {

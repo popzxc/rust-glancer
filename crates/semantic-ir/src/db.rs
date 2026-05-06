@@ -5,7 +5,8 @@ use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 
 use crate::{
-    ImplData, ImplRef, PackageIr, SemanticIrReadTxn, SemanticIrStats, build::SemanticIrDbBuilder,
+    ImplData, ImplRef, PackageIr, SemanticIrReadTxn, SemanticIrStats,
+    build::{SemanticIrDbBuilder, SemanticIrDbPackageRebuilder},
 };
 
 /// Semantic item graph for all analyzed packages and targets.
@@ -19,25 +20,25 @@ pub struct SemanticIrDb {
 }
 
 impl SemanticIrDb {
-    /// Builds semantic IR from already-collected item trees and frozen name-resolution maps.
-    pub fn build(
-        item_tree: &rg_item_tree::ItemTreeDb,
-        def_map: &rg_def_map::DefMapDb,
-    ) -> anyhow::Result<Self> {
-        SemanticIrDbBuilder::build(item_tree, def_map)
+    /// Starts building semantic IR from collected item trees and frozen name-resolution maps.
+    pub fn builder<'db>(
+        item_tree: &'db rg_item_tree::ItemTreeDb,
+        def_map: &'db rg_def_map::DefMapDb,
+    ) -> SemanticIrDbBuilder<'db> {
+        SemanticIrDbBuilder::new(item_tree, def_map)
     }
 
-    /// Returns a new semantic-IR snapshot with selected packages rebuilt against lazy read views.
-    pub fn rebuild_packages_with_loaders<'db>(
+    /// Starts rebuilding selected packages against lazy read views.
+    pub fn package_rebuilder<'db>(
         &'db self,
-        item_tree: &rg_item_tree::ItemTreeDb,
+        item_tree: &'db rg_item_tree::ItemTreeDb,
         def_map: &'db rg_def_map::DefMapDb,
-        packages: &[PackageSlot],
+        packages: &'db [PackageSlot],
         def_map_loader: PackageLoader<'db, DefMapPackage>,
         semantic_ir_loader: PackageLoader<'db, PackageIr>,
-        subset: &PackageSubset,
-    ) -> anyhow::Result<Self> {
-        SemanticIrDbBuilder::rebuild_packages_with_loaders(
+        subset: &'db PackageSubset,
+    ) -> SemanticIrDbPackageRebuilder<'db> {
+        SemanticIrDbPackageRebuilder::new(
             self,
             item_tree,
             def_map,

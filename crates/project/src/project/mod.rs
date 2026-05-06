@@ -1,13 +1,12 @@
+mod build;
 mod inventory;
 mod memsize;
-mod rebuild;
 mod snapshot;
 pub(crate) mod state;
 mod stats;
 pub(crate) mod subset;
 pub(crate) mod txn;
-mod update;
-mod workspace_graph;
+pub(crate) mod update;
 
 use std::path::{Path, PathBuf};
 
@@ -16,13 +15,14 @@ use rg_def_map::{PackageSlot, TargetRef};
 use rg_parse::FileId;
 use rg_workspace::WorkspaceMetadata;
 
-use self::{state::ProjectState, workspace_graph::WorkspaceGraphChanges};
-use crate::{
-    profile::{BuildProfile, BuildProfileOptions},
-    residency::PackageResidencyPlan,
-};
+use self::state::ProjectState;
+use crate::residency::PackageResidencyPlan;
 
-pub use self::{snapshot::ProjectSnapshot, state::ProjectBuildOptions, stats::ProjectStats};
+pub use self::{
+    build::{ProjectBuild, ProjectBuilder},
+    snapshot::ProjectSnapshot,
+    stats::ProjectStats,
+};
 
 /// Mutable owner for the current analysis state.
 ///
@@ -38,31 +38,9 @@ pub struct Project {
 }
 
 impl Project {
-    /// Builds a project using default project build options.
-    pub fn build(workspace: WorkspaceMetadata) -> anyhow::Result<Self> {
-        Self::build_with_options(workspace, ProjectBuildOptions::default())
-    }
-
-    /// Builds a project using explicit project build options.
-    pub fn build_with_options(
-        workspace: WorkspaceMetadata,
-        build_options: ProjectBuildOptions,
-    ) -> anyhow::Result<Self> {
-        Ok(Self {
-            state: ProjectState::build_with_options(workspace, build_options)
-                .context("while attempting to build analysis project")?,
-        })
-    }
-
-    /// Builds a project and returns coarse build-time profiling checkpoints.
-    pub fn build_profiled(
-        workspace: WorkspaceMetadata,
-        build_options: ProjectBuildOptions,
-        options: BuildProfileOptions,
-    ) -> anyhow::Result<(Self, BuildProfile)> {
-        let (state, profile) = ProjectState::build_profiled(workspace, build_options, options)
-            .context("while attempting to build profiled analysis project")?;
-        Ok((Self { state }, profile))
+    /// Starts configuring a fresh analysis project build.
+    pub fn builder(workspace: WorkspaceMetadata) -> ProjectBuilder {
+        ProjectBuilder::new(workspace)
     }
 
     /// Returns an immutable query view of the current project state.
@@ -110,14 +88,7 @@ impl Project {
         changes: impl IntoIterator<Item = SavedFileChange>,
     ) -> anyhow::Result<AnalysisChangeSummary> {
         let changes = canonicalize_changes(changes)?;
-        let graph_changes =
-            WorkspaceGraphChanges::check(self.state.workspace(), self.state.parse_db(), &changes);
-
-        match graph_changes {
-            WorkspaceGraphChanges::Changed => rebuild::rebuild_workspace_graph(self, &changes)
-                .context("while attempting to rebuild analysis project after workspace change"),
-            WorkspaceGraphChanges::Unchanged => update::apply_source_changes(self, changes),
-        }
+        update::apply_changes(self, changes)
     }
 }
 

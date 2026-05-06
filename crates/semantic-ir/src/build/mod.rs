@@ -1,4 +1,4 @@
-//! Builds and updates semantic IR snapshots.
+//! Builds and rebuilds semantic IR snapshots.
 
 mod impl_headers;
 mod lower;
@@ -12,40 +12,73 @@ use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError, PackageSub
 
 use crate::{PackageIr, SemanticIrDb};
 
-pub(crate) struct SemanticIrDbBuilder;
+/// Builder for a fresh semantic IR snapshot.
+pub struct SemanticIrDbBuilder<'db> {
+    item_tree: &'db rg_item_tree::ItemTreeDb,
+    def_map: &'db rg_def_map::DefMapDb,
+}
 
-impl SemanticIrDbBuilder {
-    pub(crate) fn build(
-        item_tree: &rg_item_tree::ItemTreeDb,
-        def_map: &rg_def_map::DefMapDb,
-    ) -> anyhow::Result<SemanticIrDb> {
-        let packages = lower::build_packages(item_tree, def_map)?;
+impl<'db> SemanticIrDbBuilder<'db> {
+    pub(crate) fn new(
+        item_tree: &'db rg_item_tree::ItemTreeDb,
+        def_map: &'db rg_def_map::DefMapDb,
+    ) -> Self {
+        Self { item_tree, def_map }
+    }
+
+    pub fn build(self) -> anyhow::Result<SemanticIrDb> {
+        let packages = lower::build_packages(self.item_tree, self.def_map)?;
         let mut db = SemanticIrDb::from_packages(packages);
         {
             let mut mutator = db.mutator();
-            impl_headers::resolve_impl_headers(&mut mutator, def_map)
+            impl_headers::resolve_impl_headers(&mut mutator, self.def_map)
                 .context("while attempting to resolve semantic IR impl headers")?;
             mutator.shrink_to_fit();
         }
         Ok(db)
     }
+}
 
-    pub(crate) fn rebuild_packages_with_loaders<'db>(
+/// Builder for a semantic IR snapshot that replaces selected packages.
+pub struct SemanticIrDbPackageRebuilder<'db> {
+    old: &'db SemanticIrDb,
+    item_tree: &'db rg_item_tree::ItemTreeDb,
+    def_map: &'db rg_def_map::DefMapDb,
+    packages: &'db [PackageSlot],
+    def_map_loader: PackageLoader<'db, DefMapPackage>,
+    semantic_ir_loader: PackageLoader<'db, PackageIr>,
+    subset: &'db PackageSubset,
+}
+
+impl<'db> SemanticIrDbPackageRebuilder<'db> {
+    pub(crate) fn new(
         old: &'db SemanticIrDb,
-        item_tree: &rg_item_tree::ItemTreeDb,
+        item_tree: &'db rg_item_tree::ItemTreeDb,
         def_map: &'db rg_def_map::DefMapDb,
-        packages: &[PackageSlot],
+        packages: &'db [PackageSlot],
         def_map_loader: PackageLoader<'db, DefMapPackage>,
         semantic_ir_loader: PackageLoader<'db, PackageIr>,
-        subset: &PackageSubset,
-    ) -> anyhow::Result<SemanticIrDb> {
-        let mut next = old.clone();
-        let packages = normalized_package_slots(packages);
+        subset: &'db PackageSubset,
+    ) -> SemanticIrDbPackageRebuilder<'db> {
+        Self {
+            old,
+            item_tree,
+            def_map,
+            packages,
+            def_map_loader,
+            semantic_ir_loader,
+            subset,
+        }
+    }
+
+    pub fn build(self) -> anyhow::Result<SemanticIrDb> {
+        let mut next = self.old.clone();
+        let packages = normalized_package_slots(self.packages);
 
         {
             let mut mutator = next.mutator();
             for package in &packages {
-                let rebuilt = lower::build_package(item_tree, def_map, *package)?;
+                let rebuilt = lower::build_package(self.item_tree, self.def_map, *package)?;
                 mutator
                     .replace_package(*package, rebuilt)
                     .with_context(|| {
@@ -57,8 +90,10 @@ impl SemanticIrDbBuilder {
             }
         }
 
-        let def_map_txn = def_map.read_txn_for_subset(def_map_loader, subset);
-        let semantic_ir_txn = next.read_txn_for_subset(semantic_ir_loader, subset);
+        let def_map_txn = self
+            .def_map
+            .read_txn_for_subset(self.def_map_loader, self.subset);
+        let semantic_ir_txn = next.read_txn_for_subset(self.semantic_ir_loader, self.subset);
         let impl_resolutions = impl_headers::impl_header_resolutions_for_packages(
             &semantic_ir_txn,
             &def_map_txn,

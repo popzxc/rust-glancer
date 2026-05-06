@@ -7,8 +7,8 @@ use rg_semantic_ir::PackageIr;
 use rg_text::NameInterner;
 
 use crate::{
-    BodyIrBuildPolicy, BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodiesStatus,
-    build::BodyIrDbBuilder,
+    BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodiesStatus,
+    build::{BodyIrDbBuilder, BodyIrDbPackageRebuilder},
 };
 
 /// Body-level IR for all analyzed packages and targets.
@@ -18,79 +18,32 @@ pub struct BodyIrDb {
 }
 
 impl BodyIrDb {
-    /// Builds Body IR using the default editor-oriented policy.
-    ///
-    /// By default we lower bodies only for workspace packages. Dependency signatures remain
-    /// available through Semantic IR, but dependency body internals are skipped to keep the eager
-    /// analysis cheaper.
-    pub fn build<'db>(
-        parse: &rg_parse::ParseDb,
+    /// Starts building Body IR.
+    pub fn builder<'db>(
+        parse: &'db rg_parse::ParseDb,
         def_map: &'db rg_def_map::DefMapDb,
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-    ) -> anyhow::Result<Self> {
-        let mut interner = NameInterner::new();
-        BodyIrDbBuilder::build_with_policy_and_interner(
-            parse,
-            def_map,
-            semantic_ir,
-            BodyIrBuildPolicy::default(),
-            &mut interner,
-        )
+    ) -> BodyIrDbBuilder<'db, 'static> {
+        BodyIrDbBuilder::new(parse, def_map, semantic_ir)
     }
 
-    /// Builds Body IR using an explicit package selection policy.
-    pub fn build_with_policy<'db>(
-        parse: &rg_parse::ParseDb,
-        def_map: &'db rg_def_map::DefMapDb,
-        semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-        policy: BodyIrBuildPolicy,
-    ) -> anyhow::Result<Self> {
-        let mut interner = NameInterner::new();
-        BodyIrDbBuilder::build_with_policy_and_interner(
-            parse,
-            def_map,
-            semantic_ir,
-            policy,
-            &mut interner,
-        )
-    }
-
-    /// Builds Body IR using an explicit package selection policy and retained name interner.
-    pub fn build_with_policy_and_interner<'db>(
-        parse: &rg_parse::ParseDb,
-        def_map: &'db rg_def_map::DefMapDb,
-        semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-        policy: BodyIrBuildPolicy,
-        interner: &mut NameInterner,
-    ) -> anyhow::Result<Self> {
-        BodyIrDbBuilder::build_with_policy_and_interner(
-            parse,
-            def_map,
-            semantic_ir,
-            policy,
-            interner,
-        )
-    }
-
-    /// Returns a new Body IR snapshot with selected packages rebuilt against lazy read views.
-    pub fn rebuild_packages_with_interner_and_loaders<'db>(
+    /// Starts rebuilding selected packages against lazy read views.
+    pub fn package_rebuilder<'db, 'names>(
         &'db self,
-        parse: &rg_parse::ParseDb,
+        parse: &'db rg_parse::ParseDb,
         def_map: &'db rg_def_map::DefMapDb,
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-        policy: BodyIrBuildPolicy,
-        packages: &[PackageSlot],
-        interner: &mut NameInterner,
+        packages: &'db [PackageSlot],
+        interner: &'names mut NameInterner,
         def_map_loader: PackageLoader<'db, DefMapPackage>,
         semantic_ir_loader: PackageLoader<'db, PackageIr>,
-        subset: &PackageSubset,
-    ) -> anyhow::Result<Self> {
-        BodyIrDbBuilder::rebuild_packages_with_interner_and_loaders(
+        subset: &'db PackageSubset,
+    ) -> BodyIrDbPackageRebuilder<'db, 'names> {
+        BodyIrDbPackageRebuilder::new(
             self,
             parse,
             def_map,
             semantic_ir,
-            policy,
             packages,
             interner,
             def_map_loader,

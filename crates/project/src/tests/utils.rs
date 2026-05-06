@@ -14,7 +14,7 @@ use rg_parse::{FileId, ParseDb};
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate_with_markers};
 
-use crate::{AnalysisChangeSummary, FileContext, Project, ProjectBuildOptions, SavedFileChange};
+use crate::{AnalysisChangeSummary, FileContext, PackageResidencyPolicy, Project, SavedFileChange};
 
 pub(super) struct HostFixture {
     fixture: CrateFixture,
@@ -24,15 +24,21 @@ pub(super) struct HostFixture {
 
 impl HostFixture {
     pub(super) fn build(spec: &str) -> Self {
-        Self::build_with_options(spec, ProjectBuildOptions::default())
+        Self::build_with_package_residency_policy(spec, PackageResidencyPolicy::default())
     }
 
-    pub(super) fn build_with_options(spec: &str, options: ProjectBuildOptions) -> Self {
+    pub(super) fn build_with_package_residency_policy(
+        spec: &str,
+        package_residency_policy: PackageResidencyPolicy,
+    ) -> Self {
         let (fixture, markers) = fixture_crate_with_markers(spec);
         let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
             .expect("fixture workspace metadata should build");
-        let host =
-            Project::build_with_options(workspace, options).expect("analysis project should build");
+        let host = Project::builder(workspace)
+            .package_residency_policy(package_residency_policy)
+            .build()
+            .expect("analysis project should build")
+            .into_project();
 
         Self {
             fixture,

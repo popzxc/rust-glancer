@@ -8,7 +8,7 @@ use anyhow::Context as _;
 
 use rg_workspace::WorkspaceMetadata;
 
-use super::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, state::ProjectState};
+use crate::project::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange};
 
 pub(super) fn rebuild_workspace_graph(
     project: &mut Project,
@@ -23,13 +23,19 @@ pub(super) fn rebuild_workspace_graph(
     let workspace = WorkspaceMetadata::from_manifest_path(&manifest_path)
         .with_context(|| format!("while attempting to load {}", manifest_path.display()))?
         .with_sysroot_sources(sysroot);
-    let build_options = project.state.build_options;
+    let body_ir_policy = project.state.body_ir_policy;
+    let package_residency_policy = project.state.package_residency_policy;
 
     // Cargo graph edits can add, remove, or reorder packages, targets, and dependencies. Starting
     // from scratch keeps every phase on one slot-stable snapshot instead of trying to partially
     // reuse state whose internal ids may no longer describe the refreshed metadata graph.
-    project.state = ProjectState::build_with_options(workspace, build_options)
-        .context("while attempting to build refreshed analysis project")?;
+    project.state = Project::builder(workspace)
+        .body_ir_policy(body_ir_policy)
+        .package_residency_policy(package_residency_policy)
+        .build()
+        .context("while attempting to build refreshed analysis project")?
+        .into_project()
+        .state;
 
     let changed_files = changed_source_files_for_saved_paths(project, changes);
     let mut affected_packages = Vec::new();

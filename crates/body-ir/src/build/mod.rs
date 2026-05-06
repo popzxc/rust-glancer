@@ -1,4 +1,4 @@
-//! Builds and updates Body IR snapshots.
+//! Builds and rebuilds Body IR snapshots.
 
 mod lower;
 mod resolve;
@@ -14,24 +14,56 @@ use rg_text::NameInterner;
 
 use crate::{BodyIrBuildPolicy, BodyIrDb};
 
-pub(crate) struct BodyIrDbBuilder;
+/// Builder for a fresh Body IR snapshot.
+pub struct BodyIrDbBuilder<'db, 'names> {
+    parse: &'db rg_parse::ParseDb,
+    def_map: &'db rg_def_map::DefMapDb,
+    semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
+    policy: BodyIrBuildPolicy,
+    interner: NameInternerSource<'names>,
+}
 
-impl BodyIrDbBuilder {
-    pub(crate) fn build_with_policy_and_interner<'db>(
-        parse: &rg_parse::ParseDb,
+impl<'db> BodyIrDbBuilder<'db, 'static> {
+    pub(crate) fn new(
+        parse: &'db rg_parse::ParseDb,
         def_map: &'db rg_def_map::DefMapDb,
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-        policy: BodyIrBuildPolicy,
-        interner: &mut NameInterner,
-    ) -> anyhow::Result<BodyIrDb> {
-        let def_map_txn = def_map.read_txn(unexpected_package_loader());
-        let semantic_ir_txn = semantic_ir.read_txn(unexpected_package_loader());
-        let packages = lower::build_packages(
+    ) -> Self {
+        Self {
             parse,
+            def_map,
+            semantic_ir,
+            policy: BodyIrBuildPolicy::default(),
+            interner: NameInternerSource::Owned(NameInterner::new()),
+        }
+    }
+}
+
+impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
+    pub fn name_interner(self, interner: &'names mut NameInterner) -> BodyIrDbBuilder<'db, 'names> {
+        BodyIrDbBuilder {
+            parse: self.parse,
+            def_map: self.def_map,
+            semantic_ir: self.semantic_ir,
+            policy: self.policy,
+            interner: NameInternerSource::Borrowed(interner),
+        }
+    }
+
+    pub fn policy(mut self, policy: BodyIrBuildPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    pub fn build(mut self) -> anyhow::Result<BodyIrDb> {
+        let def_map_txn = self.def_map.read_txn(unexpected_package_loader());
+        let semantic_ir_txn = self.semantic_ir.read_txn(unexpected_package_loader());
+        let packages = lower::build_packages(
+            self.parse,
             &semantic_ir_txn,
-            semantic_ir.package_count(),
-            policy,
-            interner,
+            self.semantic_ir.package_count(),
+            self.policy,
+            self.interner.as_mut(),
         )?;
         let mut db = BodyIrDb::from_packages(packages);
         {
@@ -41,22 +73,73 @@ impl BodyIrDbBuilder {
         }
         Ok(db)
     }
+}
 
-    pub(crate) fn rebuild_packages_with_interner_and_loaders<'db>(
+enum NameInternerSource<'names> {
+    Owned(NameInterner),
+    Borrowed(&'names mut NameInterner),
+}
+
+impl NameInternerSource<'_> {
+    fn as_mut(&mut self) -> &mut NameInterner {
+        match self {
+            Self::Owned(interner) => interner,
+            Self::Borrowed(interner) => interner,
+        }
+    }
+}
+
+/// Builder for a Body IR snapshot that replaces selected packages.
+pub struct BodyIrDbPackageRebuilder<'db, 'names> {
+    old: &'db BodyIrDb,
+    parse: &'db rg_parse::ParseDb,
+    def_map: &'db rg_def_map::DefMapDb,
+    semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
+    policy: BodyIrBuildPolicy,
+    packages: &'db [PackageSlot],
+    interner: &'names mut NameInterner,
+    def_map_loader: PackageLoader<'db, DefMapPackage>,
+    semantic_ir_loader: PackageLoader<'db, PackageIr>,
+    subset: &'db PackageSubset,
+}
+
+impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
+    pub(crate) fn new(
         old: &'db BodyIrDb,
-        parse: &rg_parse::ParseDb,
+        parse: &'db rg_parse::ParseDb,
         def_map: &'db rg_def_map::DefMapDb,
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-        policy: BodyIrBuildPolicy,
-        packages: &[PackageSlot],
-        interner: &mut NameInterner,
+        packages: &'db [PackageSlot],
+        interner: &'names mut NameInterner,
         def_map_loader: PackageLoader<'db, DefMapPackage>,
         semantic_ir_loader: PackageLoader<'db, PackageIr>,
-        subset: &PackageSubset,
-    ) -> anyhow::Result<BodyIrDb> {
-        let mut next = old.clone();
-        let packages = normalized_package_slots(packages);
-        let semantic_ir_txn = semantic_ir.read_txn_for_subset(semantic_ir_loader, subset);
+        subset: &'db PackageSubset,
+    ) -> Self {
+        Self {
+            old,
+            parse,
+            def_map,
+            semantic_ir,
+            policy: BodyIrBuildPolicy::default(),
+            packages,
+            interner,
+            def_map_loader,
+            semantic_ir_loader,
+            subset,
+        }
+    }
+
+    pub fn policy(mut self, policy: BodyIrBuildPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    pub fn build(self) -> anyhow::Result<BodyIrDb> {
+        let mut next = self.old.clone();
+        let packages = normalized_package_slots(self.packages);
+        let semantic_ir_txn = self
+            .semantic_ir
+            .read_txn_for_subset(self.semantic_ir_loader, self.subset);
 
         {
             let mut mutator = next.mutator();
@@ -69,12 +152,12 @@ impl BodyIrDbBuilder {
                 })?;
                 let target_count = package_ir.into_ref().targets().len();
                 let rebuilt = lower::build_package(
-                    parse,
+                    self.parse,
                     &semantic_ir_txn,
-                    policy,
+                    self.policy,
                     *package,
                     target_count,
-                    interner,
+                    self.interner,
                 )
                 .with_context(|| {
                     format!(
@@ -90,7 +173,9 @@ impl BodyIrDbBuilder {
             }
         }
 
-        let def_map_txn = def_map.read_txn_for_subset(def_map_loader, subset);
+        let def_map_txn = self
+            .def_map
+            .read_txn_for_subset(self.def_map_loader, self.subset);
         {
             let mut mutator = next.mutator();
             resolve::resolve_bodies_for_packages(

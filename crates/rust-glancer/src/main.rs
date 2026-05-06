@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use rg_project::{PackageResidencyPolicy, ProjectBuildOptions};
+use rg_project::PackageResidencyPolicy;
 
 mod analyze;
 mod runtime;
@@ -40,14 +40,7 @@ fn main() -> anyhow::Result<()> {
             path,
             memory,
             package_residency,
-        } => analyze::analyze(
-            path,
-            memory,
-            ProjectBuildOptions {
-                package_residency_policy: package_residency.into(),
-                ..ProjectBuildOptions::default()
-            },
-        ),
+        } => analyze::analyze(path, memory, package_residency.into()),
         Command::Lsp => rg_lsp::run_stdio_with_memory_control(runtime::memory_control()),
     }
 }

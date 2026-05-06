@@ -9,8 +9,7 @@ use crate::cache::{
 use crate::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
 
 use super::{
-    AnalysisChangeSummary, ChangedFile, FileContext, Project, SavedFileChange,
-    state::{ProjectBuildOptions, ProjectState},
+    AnalysisChangeSummary, ChangedFile, FileContext, Project, SavedFileChange, state::ProjectState,
 };
 
 macro_rules! record_fields {
@@ -30,7 +29,8 @@ impl MemorySize for ProjectState {
             self,
             workspace,
             cached_workspace,
-            build_options,
+            body_ir_policy,
+            package_residency_policy,
             package_residency,
             names,
             parse,
@@ -38,12 +38,6 @@ impl MemorySize for ProjectState {
             semantic_ir,
             body_ir,
         );
-    }
-}
-
-impl MemorySize for ProjectBuildOptions {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, body_ir_policy, package_residency_policy);
     }
 }
 

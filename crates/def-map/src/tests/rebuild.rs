@@ -46,8 +46,9 @@ pub use dep::api::Api as Before;
         .expect("fixture workspace metadata should build");
     let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
     let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item-tree db should build");
-    let old =
-        DefMapDb::build(&workspace, &parse, &item_tree).expect("fixture def-map db should build");
+    let old = DefMapDb::builder(&workspace, &parse, &item_tree)
+        .build()
+        .expect("fixture def-map db should build");
 
     fixture.write_fixture_files(
         r#"
@@ -72,7 +73,7 @@ pub use dep::api::Api as Renamed;
     let old_read = old.read_txn(PackageLoader::new(UnexpectedPackageLoader));
     let mut interner = NameInterner::new();
     let rebuilt = old
-        .rebuild_packages_with_interner_and_read_txn(
+        .package_rebuilder(
             &old_read,
             &workspace,
             &parse,
@@ -80,6 +81,7 @@ pub use dep::api::Api as Renamed;
             &[app_slot],
             &mut interner,
         )
+        .build()
         .expect("fixture def-map package rebuild should succeed");
 
     let app_package = parse

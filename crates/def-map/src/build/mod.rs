@@ -21,33 +21,108 @@ use rg_workspace::WorkspaceMetadata;
 
 use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
 
-pub(crate) struct DefMapDbBuilder;
+/// Builder for a fresh def-map snapshot.
+pub struct DefMapDbBuilder<'a, 'names> {
+    workspace: &'a WorkspaceMetadata,
+    parse: &'a rg_parse::ParseDb,
+    item_tree: &'a ItemTreeDb,
+    interner: NameInternerSource<'names>,
+}
 
-impl DefMapDbBuilder {
-    pub(crate) fn build_with_interner(
-        workspace: &WorkspaceMetadata,
-        parse: &rg_parse::ParseDb,
-        item_tree: &ItemTreeDb,
-        interner: &mut NameInterner,
-    ) -> anyhow::Result<DefMapDb> {
-        let mut db = clean::build_db(workspace, parse, item_tree, interner)?;
+impl<'a> DefMapDbBuilder<'a, 'static> {
+    pub(crate) fn new(
+        workspace: &'a WorkspaceMetadata,
+        parse: &'a rg_parse::ParseDb,
+        item_tree: &'a ItemTreeDb,
+    ) -> Self {
+        DefMapDbBuilder {
+            workspace,
+            parse,
+            item_tree,
+            interner: NameInternerSource::Owned(NameInterner::new()),
+        }
+    }
+}
+
+impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
+    pub fn name_interner(self, interner: &'names mut NameInterner) -> DefMapDbBuilder<'a, 'names> {
+        DefMapDbBuilder {
+            workspace: self.workspace,
+            parse: self.parse,
+            item_tree: self.item_tree,
+            interner: NameInternerSource::Borrowed(interner),
+        }
+    }
+
+    pub fn build(mut self) -> anyhow::Result<DefMapDb> {
+        let mut db = clean::build_db(
+            self.workspace,
+            self.parse,
+            self.item_tree,
+            self.interner.as_mut(),
+        )?;
         db.mutator().shrink_to_fit();
         Ok(db)
     }
+}
 
-    pub(crate) fn rebuild_packages_with_interner_and_read_txn(
-        old: &DefMapDb,
-        old_read: &DefMapReadTxn<'_>,
-        workspace: &WorkspaceMetadata,
-        parse: &rg_parse::ParseDb,
-        item_tree: &ItemTreeDb,
-        packages: &[PackageSlot],
-        interner: &mut NameInterner,
-    ) -> anyhow::Result<DefMapDb> {
+enum NameInternerSource<'names> {
+    Owned(NameInterner),
+    Borrowed(&'names mut NameInterner),
+}
+
+impl NameInternerSource<'_> {
+    fn as_mut(&mut self) -> &mut NameInterner {
+        match self {
+            Self::Owned(interner) => interner,
+            Self::Borrowed(interner) => interner,
+        }
+    }
+}
+
+/// Builder for a new def-map snapshot that reuses unchanged packages from an old snapshot.
+pub struct DefMapDbPackageRebuilder<'a, 'db> {
+    old: &'a DefMapDb,
+    old_read: &'a DefMapReadTxn<'db>,
+    workspace: &'a WorkspaceMetadata,
+    parse: &'a rg_parse::ParseDb,
+    item_tree: &'a ItemTreeDb,
+    packages: &'a [PackageSlot],
+    interner: &'a mut NameInterner,
+}
+
+impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
+    pub(crate) fn new(
+        old: &'a DefMapDb,
+        old_read: &'a DefMapReadTxn<'db>,
+        workspace: &'a WorkspaceMetadata,
+        parse: &'a rg_parse::ParseDb,
+        item_tree: &'a ItemTreeDb,
+        packages: &'a [PackageSlot],
+        interner: &'a mut NameInterner,
+    ) -> Self {
+        DefMapDbPackageRebuilder {
+            old,
+            old_read,
+            workspace,
+            parse,
+            item_tree,
+            packages,
+            interner,
+        }
+    }
+
+    pub fn build(self) -> anyhow::Result<DefMapDb> {
         let mut db = rebuild::rebuild_packages(
-            old, old_read, workspace, parse, item_tree, packages, interner,
+            self.old,
+            self.old_read,
+            self.workspace,
+            self.parse,
+            self.item_tree,
+            self.packages,
+            self.interner,
         )?;
-        db.mutator().shrink_packages(packages);
+        db.mutator().shrink_packages(self.packages);
         Ok(db)
     }
 }

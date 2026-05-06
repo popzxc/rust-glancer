@@ -17,7 +17,7 @@ use crate::cache::{
     PackageCacheArtifact, PackageCacheBodyIrState, PackageCacheCodec, PackageCacheHeader,
     PackageCachePayload, PackageCacheStore,
 };
-use crate::{PackageResidencyPolicy, Project, ProjectBuildOptions, project::state::ProjectState};
+use crate::{PackageResidencyPolicy, Project, project::state::ProjectState};
 
 pub(super) fn check_cached_workspace(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
@@ -155,7 +155,10 @@ pub(super) fn check_fixture_cache_artifact_codec(fixture: &str, expect: Expect) 
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let project = Project::build(workspace).expect("fixture project should build");
+    let project = Project::builder(workspace)
+        .build()
+        .expect("fixture project should build")
+        .into_project();
     let artifact = package_artifact_from_project(
         &project.state.cached_workspace,
         &project.state,
@@ -184,7 +187,10 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let project = Project::build(workspace).expect("fixture project should build");
+    let project = Project::builder(workspace)
+        .build()
+        .expect("fixture project should build")
+        .into_project();
     let artifact = package_artifact_from_project(
         &project.state.cached_workspace,
         &project.state,
@@ -268,7 +274,10 @@ pub(super) fn check_cache_store_generation_cleanup(fixture: &str, expect: Expect
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let project = Project::build(workspace).expect("fixture project should build");
+    let project = Project::builder(workspace)
+        .build()
+        .expect("fixture project should build")
+        .into_project();
     let artifact = package_artifact_from_project(
         &project.state.cached_workspace,
         &project.state,
@@ -322,14 +331,11 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let project = Project::build_with_options(
-        workspace,
-        ProjectBuildOptions {
-            package_residency_policy: PackageResidencyPolicy::WorkspaceResident,
-            ..ProjectBuildOptions::default()
-        },
-    )
-    .expect("fixture project should build");
+    let project = Project::builder(workspace)
+        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
+        .build()
+        .expect("fixture project should build")
+        .into_project();
     let dep = package_slot_by_name(project.snapshot().parse_db(), "dep");
     let analysis = project
         .snapshot()

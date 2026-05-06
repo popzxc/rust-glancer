@@ -4,12 +4,9 @@ mod project;
 mod residency;
 
 pub use self::{
-    profile::{
-        BuildCheckpoint, BuildProcessMemory, BuildProfile, BuildProfileOptions,
-        ProcessMemorySampler,
-    },
+    profile::{BuildCheckpoint, BuildProcessMemory, BuildProfile, ProcessMemorySampler},
     project::{
-        AnalysisChangeSummary, ChangedFile, FileContext, Project, ProjectBuildOptions,
+        AnalysisChangeSummary, ChangedFile, FileContext, Project, ProjectBuild, ProjectBuilder,
         ProjectSnapshot, ProjectStats, SavedFileChange,
     },
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},

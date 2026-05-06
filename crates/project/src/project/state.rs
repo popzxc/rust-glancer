@@ -1,9 +1,6 @@
-use anyhow::Context as _;
-
 use rg_analysis::Analysis;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::{DefMapDb, PackageSlot};
-use rg_item_tree::ItemTreeDb;
+use rg_def_map::DefMapDb;
 use rg_package_store::{PackageStoreError, PackageSubset};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
@@ -11,19 +8,11 @@ use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    BuildProfile, BuildProfileOptions, PackageResidencyPlan, PackageResidencyPolicy,
-    cache::{CachedWorkspace, PackageCacheStore, integration},
-    profile::BuildProfiler,
+    PackageResidencyPlan, PackageResidencyPolicy,
+    cache::{CachedWorkspace, PackageCacheStore},
 };
 
-use super::{inventory::ProjectInventory, stats::ProjectStats, subset, txn::ProjectReadTxn};
-
-/// Configuration that affects how a project snapshot is built and retained.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct ProjectBuildOptions {
-    pub body_ir_policy: BodyIrBuildPolicy,
-    pub package_residency_policy: PackageResidencyPolicy,
-}
+use super::{inventory::ProjectInventory, stats::ProjectStats, txn::ProjectReadTxn};
 
 /// Fully built project pipeline state.
 #[derive(Debug, Clone)]
@@ -31,7 +20,8 @@ pub(crate) struct ProjectState {
     pub(crate) workspace: WorkspaceMetadata,
     pub(crate) cached_workspace: CachedWorkspace,
     pub(crate) cache_store: PackageCacheStore,
-    pub(crate) build_options: ProjectBuildOptions,
+    pub(crate) body_ir_policy: BodyIrBuildPolicy,
+    pub(crate) package_residency_policy: PackageResidencyPolicy,
     pub(crate) package_residency: PackageResidencyPlan,
     pub(crate) names: NameInterner,
     pub(crate) parse: ParseDb,
@@ -41,295 +31,6 @@ pub(crate) struct ProjectState {
 }
 
 impl ProjectState {
-    /// Builds every analysis phase using explicit project build options.
-    pub(crate) fn build_with_options(
-        workspace: WorkspaceMetadata,
-        build_options: ProjectBuildOptions,
-    ) -> anyhow::Result<Self> {
-        let mut profiler = BuildProfiler::disabled();
-        let mut project =
-            Self::build_resident_with_profiler(workspace, build_options, &mut profiler)
-                .context("while attempting to build resident analysis project")?;
-        integration::apply_residency(&mut project)
-            .context("while attempting to apply package cache residency")?;
-
-        Ok(project)
-    }
-
-    /// Builds every analysis phase and returns coarse build-time profiling checkpoints.
-    pub(crate) fn build_profiled(
-        workspace: WorkspaceMetadata,
-        build_options: ProjectBuildOptions,
-        options: BuildProfileOptions,
-    ) -> anyhow::Result<(Self, BuildProfile)> {
-        let mut profiler = BuildProfiler::new(options);
-        let mut project =
-            Self::build_resident_with_profiler(workspace, build_options, &mut profiler)
-                .context("while attempting to build resident analysis project")?;
-        integration::apply_residency(&mut project)
-            .context("while attempting to apply package cache residency")?;
-
-        let process_memory = profiler.sample_process_memory();
-        let project_bytes = profiler.measure(&project);
-        profiler.record(
-            "after project",
-            project_bytes,
-            project_bytes,
-            process_memory,
-        );
-
-        Ok((project, profiler.finish()))
-    }
-
-    pub(crate) fn rebuild_packages(&mut self, packages: &[PackageSlot]) -> anyhow::Result<()> {
-        if packages.is_empty() {
-            return Ok(());
-        }
-
-        match self.try_rebuild_packages(packages) {
-            Ok(()) => Ok(()),
-            Err(error) if Self::is_recoverable_cache_load_failure(&error) => {
-                integration::recover_residency_after_cache_load_failure(self).with_context(|| {
-                    format!(
-                        "while attempting to recover analysis project after package cache load failed during package rebuild: {error}",
-                    )
-                })
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    fn try_rebuild_packages(&mut self, packages: &[PackageSlot]) -> anyhow::Result<()> {
-        // Rebuilding one package can resolve names through its dependencies, but unrelated
-        // packages should stay offloaded so save handling does not recreate full-project spikes.
-        let rebuild_subset =
-            subset::rebuild_packages_with_visible_dependencies(&self.workspace, packages);
-        let loaders = integration::package_read_loaders(self);
-        let old_def_map_txn = self
-            .def_map
-            .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
-
-        let package_indices = packages.iter().map(|package| package.0).collect::<Vec<_>>();
-        let item_tree = ItemTreeDb::build_packages_with_interner(
-            &mut self.parse,
-            &package_indices,
-            &mut self.names,
-        )
-        .context("while attempting to rebuild affected item-tree packages")?;
-        let def_map = self
-            .def_map
-            .rebuild_packages_with_interner_and_read_txn(
-                &old_def_map_txn,
-                &self.workspace,
-                &self.parse,
-                &item_tree,
-                packages,
-                &mut self.names,
-            )
-            .context("while attempting to rebuild affected def-map packages")?;
-        drop(old_def_map_txn);
-        let semantic_ir = self
-            .semantic_ir
-            .rebuild_packages_with_loaders(
-                &item_tree,
-                &def_map,
-                packages,
-                loaders.def_map.clone(),
-                loaders.semantic_ir.clone(),
-                &rebuild_subset,
-            )
-            .context("while attempting to rebuild affected semantic IR packages")?;
-        let body_ir = self
-            .body_ir
-            .rebuild_packages_with_interner_and_loaders(
-                &self.parse,
-                &def_map,
-                &semantic_ir,
-                self.build_options.body_ir_policy,
-                packages,
-                &mut self.names,
-                loaders.def_map,
-                loaders.semantic_ir,
-                &rebuild_subset,
-            )
-            .context("while attempting to rebuild affected body IR packages")?;
-
-        // ItemTree is a transient rebuild input. Drop it before pruning the weak interner so names
-        // that did not survive into retained DBs are no longer treated as live.
-        drop(item_tree);
-
-        self.parse.evict_syntax_trees();
-        self.parse.shrink_to_fit();
-        self.def_map = def_map;
-        self.semantic_ir = semantic_ir;
-        self.body_ir = body_ir;
-        self.names.shrink_to_fit();
-        integration::restore_residency_after_rebuild(self, packages)
-            .context("while attempting to apply package cache residency after package rebuild")?;
-
-        Ok(())
-    }
-
-    /// Replaces the project with a fully resident rebuild from the same workspace metadata.
-    ///
-    /// This is the mutable cache recovery path: after an artifact disappears or becomes invalid,
-    /// package rebuilds need source-built phase payloads before residency can be restored.
-    pub(crate) fn rebuild_resident_from_source(&mut self) -> anyhow::Result<()> {
-        let workspace = self.workspace.clone();
-        let build_options = self.build_options;
-        let cache_store = self.cache_store.clone();
-        let mut profiler = BuildProfiler::disabled();
-        let mut rebuilt =
-            Self::build_resident_with_profiler(workspace, build_options, &mut profiler)
-                .context("while attempting to rebuild resident analysis project")?;
-
-        // Keep the original cache namespace. Recovery can happen while the process is alive, and
-        // the environment that selected the target directory may have changed since initialization.
-        rebuilt.cache_store = cache_store;
-        *self = rebuilt;
-
-        Ok(())
-    }
-
-    fn build_resident_with_profiler(
-        workspace: WorkspaceMetadata,
-        build_options: ProjectBuildOptions,
-        profiler: &mut BuildProfiler,
-    ) -> anyhow::Result<Self> {
-        let (names, parse, def_map, semantic_ir, body_ir) =
-            Self::build_phases(&workspace, build_options.body_ir_policy, profiler)?;
-        let package_residency =
-            PackageResidencyPlan::build(&workspace, build_options.package_residency_policy);
-        let cached_workspace = CachedWorkspace::build(&workspace, &parse);
-        let cache_store = PackageCacheStore::for_workspace(&workspace, &cached_workspace);
-
-        Ok(Self {
-            workspace,
-            cached_workspace,
-            cache_store,
-            build_options,
-            package_residency,
-            names,
-            parse,
-            def_map,
-            semantic_ir,
-            body_ir,
-        })
-    }
-
-    fn build_phases(
-        workspace: &WorkspaceMetadata,
-        body_ir_policy: BodyIrBuildPolicy,
-        profiler: &mut BuildProfiler,
-    ) -> anyhow::Result<(NameInterner, ParseDb, DefMapDb, SemanticIrDb, BodyIrDb)> {
-        let mut names = NameInterner::new();
-        let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
-        let process_memory = profiler.sample_process_memory();
-        let parse_bytes = profiler.measure(&parse);
-        profiler.record("after parse", parse_bytes, parse_bytes, process_memory);
-
-        let item_tree = ItemTreeDb::build_with_interner(&mut parse, &mut names)
-            .context("while attempting to build item tree db")?;
-        let process_memory = profiler.sample_process_memory();
-        let names_bytes = profiler.measure(&names);
-        let parse_bytes = profiler.measure(&parse);
-        let item_tree_bytes = profiler.measure(&item_tree);
-        profiler.record(
-            "after item-tree",
-            item_tree_bytes,
-            profiler.sum_retained(&[names_bytes, parse_bytes, item_tree_bytes]),
-            process_memory,
-        );
-
-        let def_map = DefMapDb::build_with_interner(workspace, &parse, &item_tree, &mut names)
-            .context("while attempting to build def map db")?;
-        let process_memory = profiler.sample_process_memory();
-        let names_bytes = profiler.measure(&names);
-        let def_map_bytes = profiler.measure(&def_map);
-        profiler.record(
-            "after def-map",
-            def_map_bytes,
-            profiler.sum_retained(&[names_bytes, parse_bytes, item_tree_bytes, def_map_bytes]),
-            process_memory,
-        );
-
-        let semantic_ir = SemanticIrDb::build(&item_tree, &def_map)
-            .context("while attempting to build semantic ir db")?;
-        let process_memory = profiler.sample_process_memory();
-        let names_bytes = profiler.measure(&names);
-        let semantic_ir_bytes = profiler.measure(&semantic_ir);
-        profiler.record(
-            "after semantic-ir",
-            semantic_ir_bytes,
-            profiler.sum_retained(&[
-                names_bytes,
-                parse_bytes,
-                item_tree_bytes,
-                def_map_bytes,
-                semantic_ir_bytes,
-            ]),
-            process_memory,
-        );
-
-        // ItemTree is a lowering input, not retained project state. Dropping it here makes the
-        // following process-only checkpoint useful for separating transient build pressure from
-        // final retained memory.
-        drop(item_tree);
-        let process_memory = profiler.sample_process_memory();
-        let names_bytes = profiler.measure(&names);
-        profiler.record(
-            "after item-tree drop",
-            None,
-            profiler.sum_retained(&[names_bytes, parse_bytes, def_map_bytes, semantic_ir_bytes]),
-            process_memory,
-        );
-
-        let body_ir = BodyIrDb::build_with_policy_and_interner(
-            &parse,
-            &def_map,
-            &semantic_ir,
-            body_ir_policy,
-            &mut names,
-        )
-        .context("while attempting to build body ir db")?;
-        let process_memory = profiler.sample_process_memory();
-        let names_bytes = profiler.measure(&names);
-        let body_ir_bytes = profiler.measure(&body_ir);
-        profiler.record(
-            "after body-ir",
-            body_ir_bytes,
-            profiler.sum_retained(&[
-                names_bytes,
-                parse_bytes,
-                def_map_bytes,
-                semantic_ir_bytes,
-                body_ir_bytes,
-            ]),
-            process_memory,
-        );
-
-        parse.evict_syntax_trees();
-        parse.shrink_to_fit();
-        let process_memory = profiler.sample_process_memory();
-        names.shrink_to_fit();
-        let names_bytes = profiler.measure(&names);
-        let parse_bytes = profiler.measure(&parse);
-        profiler.record(
-            "after parse syntax eviction",
-            parse_bytes,
-            profiler.sum_retained(&[
-                names_bytes,
-                parse_bytes,
-                def_map_bytes,
-                semantic_ir_bytes,
-                body_ir_bytes,
-            ]),
-            process_memory,
-        );
-
-        Ok((names, parse, def_map, semantic_ir, body_ir))
-    }
-
     /// Returns the normalized workspace metadata this project was built from.
     pub(crate) fn workspace(&self) -> &WorkspaceMetadata {
         &self.workspace

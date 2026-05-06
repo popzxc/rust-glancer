@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use rg_analysis::TypeHint;
 use rg_def_map::TargetRef;
 use rg_parse::TextSpan;
-use rg_project::{FileContext, Project, ProjectBuildOptions, ProjectSnapshot, SavedFileChange};
+use rg_project::{FileContext, PackageResidencyPolicy, Project, ProjectSnapshot, SavedFileChange};
 use rg_workspace::{SysrootSources, WorkspaceMetadata};
 use tower_lsp_server::ls_types;
 
@@ -40,11 +40,11 @@ impl EngineWorker {
             match command {
                 EngineCommand::Initialize {
                     root,
-                    build_options,
+                    package_residency_policy,
                     respond_to,
                 } => {
                     tracing::trace!(root = %root.display(), "engine command started: initialize");
-                    let _ = respond_to.send(self.initialize(root, build_options));
+                    let _ = respond_to.send(self.initialize(root, package_residency_policy));
                 }
                 EngineCommand::DidSave {
                     path,
@@ -165,12 +165,12 @@ impl EngineWorker {
     fn initialize(
         &mut self,
         root: PathBuf,
-        build_options: ProjectBuildOptions,
+        package_residency_policy: PackageResidencyPolicy,
     ) -> anyhow::Result<()> {
         let started = Instant::now();
         tracing::info!(
             root = %root.display(),
-            package_residency = build_options.package_residency_policy.config_name(),
+            package_residency = package_residency_policy.config_name(),
             "starting workspace indexing"
         );
 
@@ -210,8 +210,11 @@ impl EngineWorker {
         }
 
         let workspace = workspace.with_sysroot_sources(sysroot);
-        let project = Project::build_with_options(workspace, build_options)
+        let project = Project::builder(workspace)
+            .package_residency_policy(package_residency_policy)
+            .build()
             .context("while attempting to build LSP analysis project")?;
+        let project = project.into_project();
         let snapshot = project.snapshot();
         Self::post_project_build(self.memory_control.as_ref(), snapshot, "initial index");
 

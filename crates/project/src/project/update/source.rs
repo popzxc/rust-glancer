@@ -10,7 +10,8 @@ use anyhow::Context as _;
 
 use rg_def_map::{PackageSlot, TargetRef};
 
-use super::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange};
+use super::package;
+use crate::project::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange};
 
 pub(super) fn apply_source_changes(
     project: &mut Project,
@@ -66,9 +67,7 @@ pub(super) fn apply_source_changes(
 
     let affected_packages = affected_packages(project, &changed_files, &fallback_package_roots);
     if !affected_packages.is_empty() {
-        project
-            .state
-            .rebuild_packages(&affected_packages)
+        package::rebuild_packages(&mut project.state, &affected_packages)
             .context("while attempting to rebuild affected analysis packages")?;
     }
     promote_discovered_fallback_files(

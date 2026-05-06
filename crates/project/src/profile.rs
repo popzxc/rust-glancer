@@ -48,13 +48,6 @@ pub struct BuildProcessMemory {
 
 pub type ProcessMemorySampler = Box<dyn FnMut() -> Option<BuildProcessMemory>>;
 
-/// Optional profiling knobs for `Project::build_profiled`.
-#[derive(Default)]
-pub struct BuildProfileOptions {
-    pub retained_memory: bool,
-    pub process_memory_sampler: Option<ProcessMemorySampler>,
-}
-
 pub(crate) struct BuildProfiler {
     started_at: Instant,
     retained_memory: bool,
@@ -72,11 +65,14 @@ impl BuildProfiler {
         }
     }
 
-    pub(crate) fn new(options: BuildProfileOptions) -> Self {
+    pub(crate) fn new(
+        retained_memory: bool,
+        process_memory_sampler: Option<ProcessMemorySampler>,
+    ) -> Self {
         Self {
             started_at: Instant::now(),
-            retained_memory: options.retained_memory,
-            process_memory_sampler: options.process_memory_sampler,
+            retained_memory,
+            process_memory_sampler,
             checkpoints: Vec::new(),
         }
     }

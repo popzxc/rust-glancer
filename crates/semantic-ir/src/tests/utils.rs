@@ -93,10 +93,12 @@ impl SemanticIrFixtureDb {
             .expect("fixture workspace metadata should build");
         let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
         let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
-        let def_map = DefMapDb::build(&workspace, &parse, &item_tree)
+        let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
+            .build()
             .expect("fixture def map db should build");
-        let semantic_ir =
-            SemanticIrDb::build(&item_tree, &def_map).expect("fixture semantic ir db should build");
+        let semantic_ir = SemanticIrDb::builder(&item_tree, &def_map)
+            .build()
+            .expect("fixture semantic ir db should build");
 
         Self {
             parse,

@@ -177,8 +177,7 @@ pub(crate) fn recover_residency_after_cache_load_failure(
         .cache_store
         .invalidate_workspace_cache()
         .context("while attempting to invalidate package cache namespace")?;
-    project
-        .rebuild_resident_from_source()
+    crate::project::update::rebuild_resident_from_source(project)
         .context("while attempting to rebuild resident analysis project from source")?;
     apply_residency(project).context("while attempting to reapply package cache residency")?;
 

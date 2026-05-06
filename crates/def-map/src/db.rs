@@ -8,7 +8,9 @@ use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    DefMap, DefMapReadTxn, Package, PackageSlot, build::DefMapDbBuilder, ids::ResidentTargetRef,
+    DefMap, DefMapReadTxn, Package, PackageSlot,
+    build::{DefMapDbBuilder, DefMapDbPackageRebuilder},
+    ids::ResidentTargetRef,
 };
 
 /// Frozen def maps for all parsed packages and targets.
@@ -18,37 +20,26 @@ pub struct DefMapDb {
 }
 
 impl DefMapDb {
-    /// Builds target-local def maps from parsed project metadata and lowered item trees.
-    pub fn build(
-        workspace: &WorkspaceMetadata,
-        parse: &rg_parse::ParseDb,
-        item_tree: &ItemTreeDb,
-    ) -> anyhow::Result<Self> {
-        let mut interner = NameInterner::new();
-        DefMapDbBuilder::build_with_interner(workspace, parse, item_tree, &mut interner)
+    /// Starts building target-local def maps from parsed metadata and lowered item trees.
+    pub fn builder<'a>(
+        workspace: &'a WorkspaceMetadata,
+        parse: &'a rg_parse::ParseDb,
+        item_tree: &'a ItemTreeDb,
+    ) -> DefMapDbBuilder<'a, 'static> {
+        DefMapDbBuilder::new(workspace, parse, item_tree)
     }
 
-    /// Builds target-local def maps using a caller-retained name interner.
-    pub fn build_with_interner(
-        workspace: &WorkspaceMetadata,
-        parse: &rg_parse::ParseDb,
-        item_tree: &ItemTreeDb,
-        interner: &mut NameInterner,
-    ) -> anyhow::Result<Self> {
-        DefMapDbBuilder::build_with_interner(workspace, parse, item_tree, interner)
-    }
-
-    /// Returns a new def-map snapshot with selected packages rebuilt against a logical old view.
-    pub fn rebuild_packages_with_interner_and_read_txn(
-        &self,
-        old_read: &DefMapReadTxn<'_>,
-        workspace: &WorkspaceMetadata,
-        parse: &rg_parse::ParseDb,
-        item_tree: &ItemTreeDb,
-        packages: &[PackageSlot],
-        interner: &mut NameInterner,
-    ) -> anyhow::Result<Self> {
-        DefMapDbBuilder::rebuild_packages_with_interner_and_read_txn(
+    /// Starts rebuilding selected packages against a logical old def-map view.
+    pub fn package_rebuilder<'a, 'db>(
+        &'a self,
+        old_read: &'a DefMapReadTxn<'db>,
+        workspace: &'a WorkspaceMetadata,
+        parse: &'a rg_parse::ParseDb,
+        item_tree: &'a ItemTreeDb,
+        packages: &'a [PackageSlot],
+        interner: &'a mut NameInterner,
+    ) -> DefMapDbPackageRebuilder<'a, 'db> {
+        DefMapDbPackageRebuilder::new(
             self, old_read, workspace, parse, item_tree, packages, interner,
         )
     }
