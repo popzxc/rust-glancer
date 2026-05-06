@@ -275,8 +275,8 @@ impl LineIndex {
             let local_range_start = usize::try_from(metrics.range_start)
                 .expect("range start should fit into usize")
                 .saturating_sub(old_non_ascii_start);
-            metrics.range_start = u32::try_from(non_ascii_range.start + local_range_start)
-                .expect("packed non-ASCII range start should fit into u32");
+            metrics.range_start = u32::try_from(local_range_start)
+                .expect("local non-ASCII range start should fit into u32");
             non_ascii_lines.push(metrics);
         }
 
@@ -636,6 +636,33 @@ mod tests {
             assert_eq!(
                 second.offset_from_utf16_position(position),
                 expected,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_line_indexes_keep_non_ascii_ranges_file_local() {
+        let mut first = LineIndex::new("é");
+        let mut second = LineIndex::new("prefix\n𝄞a");
+        LineIndex::pack_many(&mut [&mut first, &mut second]);
+
+        let cases = [
+            ("second file start", 0, Position { line: 0, column: 0 }),
+            (
+                "second file non-ascii line",
+                7,
+                Position { line: 1, column: 0 },
+            ),
+            ("after surrogate pair", 11, Position { line: 1, column: 2 }),
+            ("after ascii", 12, Position { line: 1, column: 3 }),
+        ];
+
+        for (label, offset, expected) in cases {
+            assert_eq!(second.utf16_position(offset), expected, "{label}");
+            assert_eq!(
+                second.offset_from_utf16_position(expected),
+                Some(offset),
                 "{label}"
             );
         }

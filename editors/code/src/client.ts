@@ -74,7 +74,6 @@ export class ClientManager implements vscode.Disposable {
         {
           scheme: "file",
           language: "rust",
-          pattern: `${workspaceFolder.uri.fsPath.replace(/\\/g, "/")}/**/*.rs`,
         },
       ],
       diagnosticCollectionName: "rust-glancer",
