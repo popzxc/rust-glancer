@@ -8,11 +8,16 @@ allow = [
   "Apache-2.0",
   "BSD-2-Clause",
   "BSD-3-Clause",
-  "ISC",
   "MIT",
+  "MIT-0",
   "Unicode-3.0",
 ]
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+wildcards = "allow"
+
+[sources]
+allow-git = [
+  "https://github.com/rust-lang/rust-analyzer",
+]
