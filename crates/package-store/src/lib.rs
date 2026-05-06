@@ -185,6 +185,10 @@ impl<T> PackageStore<T> {
         self.packages.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.packages.is_empty()
+    }
+
     pub fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
     }

@@ -42,7 +42,7 @@ impl GenericParams {
                         params.consts.push(ConstParamData {
                             name: param
                                 .name()
-                                .map(|name| interner.intern(name.text().to_string()))
+                                .map(|name| interner.intern(name.text()))
                                 .unwrap_or_else(|| interner.intern("<missing>")),
                             ty: param
                                 .ty()
@@ -63,7 +63,7 @@ impl GenericParams {
                         params.types.push(TypeParamData {
                             name: param
                                 .name()
-                                .map(|name| interner.intern(name.text().to_string()))
+                                .map(|name| interner.intern(name.text()))
                                 .unwrap_or_else(|| interner.intern("<missing>")),
                             bounds: TypeBound::list_from_ast(
                                 param.type_bound_list(),
@@ -509,7 +509,7 @@ impl EnumVariantItem {
 
         Self {
             name: name
-                .map(|name| interner.intern(name.text().to_string()))
+                .map(|name| interner.intern(name.text()))
                 .unwrap_or_else(|| interner.intern("<missing>")),
             span,
             name_span,
@@ -628,7 +628,7 @@ impl FieldItem {
                     .unwrap_or_else(|| field.syntax().text_range());
 
                 Self {
-                    key: name.map(|name| FieldKey::Named(interner.intern(name.text().to_string()))),
+                    key: name.map(|name| FieldKey::Named(interner.intern(name.text()))),
                     visibility: VisibilityLevel::from_ast(field.visibility()),
                     ty: field
                         .ty()

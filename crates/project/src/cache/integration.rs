@@ -46,9 +46,9 @@ pub(crate) fn restore_residency_after_rebuild(
         }
     }
 
-    for package_idx in 0..package_count {
+    for (package_idx, was_rebuilt) in rebuilt.iter().copied().enumerate() {
         let package = PackageSlot(package_idx);
-        if !rebuilt[package_idx]
+        if !was_rebuilt
             || project.package_residency.package(package) != Some(PackageResidency::Offloadable)
         {
             continue;
@@ -127,7 +127,7 @@ fn finish_offloading(
             } else {
                 project
                     .parse
-                    .pack_line_indexes_for_packages(&offloaded_packages);
+                    .pack_line_indexes_for_packages(offloaded_packages);
             }
         }
     }

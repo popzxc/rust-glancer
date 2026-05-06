@@ -56,16 +56,11 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
             return format!("{header} {{}}");
         }
 
-        format_block(
-            header,
-            data.variants
-                .iter()
-                .map(|variant| enum_variant_signature(variant)),
-        )
+        format_block(header, data.variants.iter().map(enum_variant_signature))
     }
 
     pub(super) fn trait_signature(&self, data: &TraitData) -> String {
-        let unsafe_prefix = data.is_unsafe.then_some("unsafe ").unwrap_or_default();
+        let unsafe_prefix = if data.is_unsafe { "unsafe " } else { "" };
         let super_traits = if data.super_traits.is_empty() {
             String::new()
         } else {

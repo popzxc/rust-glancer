@@ -154,7 +154,7 @@ impl<'db> PackageLowering<'db> {
     }
 
     fn intern_ast_name(&mut self, name: Option<ast::Name>) -> Option<Name> {
-        name.map(|name| self.intern_name(name.text().to_string()))
+        name.map(|name| self.intern_name(name.text()))
     }
 
     fn intern_ast_name_ref(&mut self, name: Option<ast::NameRef>) -> Option<Name> {

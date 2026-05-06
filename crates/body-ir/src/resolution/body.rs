@@ -100,9 +100,9 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
     fn binding_ty(&self, binding: BindingId) -> Result<BodyTy, PackageStoreError> {
         let binding_data = &self.body.bindings[binding];
         if let Some(annotation) = &binding_data.annotation {
-            return Ok(self
+            return self
                 .type_path_resolver()
-                .ty_from_type_ref_in_scope(annotation, binding_data.scope)?);
+                .ty_from_type_ref_in_scope(annotation, binding_data.scope);
         }
 
         if matches!(binding_data.kind, BindingKind::SelfParam)

@@ -104,6 +104,7 @@ pub struct BodyIrDbPackageRebuilder<'db, 'names> {
 }
 
 impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         old: &'db BodyIrDb,
         parse: &'db rg_parse::ParseDb,

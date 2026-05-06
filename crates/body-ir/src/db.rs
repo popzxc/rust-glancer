@@ -28,6 +28,7 @@ impl BodyIrDb {
     }
 
     /// Starts rebuilding selected packages against lazy read views.
+    #[allow(clippy::too_many_arguments)]
     pub fn package_rebuilder<'db, 'names>(
         &'db self,
         parse: &'db rg_parse::ParseDb,

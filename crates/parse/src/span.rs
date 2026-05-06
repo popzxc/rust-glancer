@@ -41,6 +41,11 @@ impl Span {
     pub fn len(self) -> u32 {
         self.text.len()
     }
+
+    /// Returns true when the text range has no bytes.
+    pub fn is_empty(self) -> bool {
+        self.text.is_empty()
+    }
 }
 
 /// A half-open byte-offset range within a source file.
@@ -64,6 +69,11 @@ impl TextSpan {
     /// Returns the byte length of the range, saturating if invalid input ever appears.
     pub fn len(self) -> u32 {
         self.end.saturating_sub(self.start)
+    }
+
+    /// Returns true when the half-open range has no bytes.
+    pub fn is_empty(self) -> bool {
+        self.start >= self.end
     }
 }
 
