@@ -503,8 +503,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     "\n- body @ {}",
                     self.render_source_span(
                         body.target.package,
-                        body_data.source.file_id,
-                        body_data.source.span
+                        body_data.source().file_id,
+                        body_data.source().span
                     )
                 )
                 .expect("string writes should not fail");
@@ -888,7 +888,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         format!(
             "{} {}::{}",
             item.kind,
-            self.render_function_ref(body.owner),
+            self.render_function_ref(body.owner()),
             item.name
         )
     }

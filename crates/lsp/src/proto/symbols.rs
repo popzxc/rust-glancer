@@ -1,6 +1,7 @@
 use anyhow::Context as _;
 use rg_analysis::{DocumentSymbol, SymbolKind, WorkspaceSymbol};
-use rg_parse::ParseDb;
+use rg_def_map::PackageSlot;
+use rg_project::ProjectSnapshot;
 use tower_lsp_server::ls_types::{
     DocumentSymbol as LspDocumentSymbol, Location, OneOf, SymbolKind as LspSymbolKind, Uri,
     WorkspaceSymbol as LspWorkspaceSymbol,
@@ -10,20 +11,17 @@ use crate::proto::{navigation, position};
 
 #[allow(deprecated)]
 pub(crate) fn document_symbol(
-    parse: &ParseDb,
-    package_slot: usize,
+    snapshot: ProjectSnapshot<'_>,
+    package_slot: PackageSlot,
     symbol: DocumentSymbol,
 ) -> anyhow::Result<LspDocumentSymbol> {
-    let package = parse
-        .package(package_slot)
-        .context("while attempting to find package for document symbol conversion")?;
-    let file = package
-        .parsed_file(symbol.file_id)
+    let line_index = snapshot
+        .file_line_index(package_slot, symbol.file_id)
         .context("while attempting to find file for document symbol conversion")?;
     let children = symbol
         .children
         .into_iter()
-        .map(|child| document_symbol(parse, package_slot, child))
+        .map(|child| document_symbol(snapshot, package_slot, child))
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     Ok(LspDocumentSymbol {
@@ -32,27 +30,24 @@ pub(crate) fn document_symbol(
         kind: symbol_kind(symbol.kind),
         tags: None,
         deprecated: None,
-        range: position::range(file.line_index(), symbol.span),
-        selection_range: position::range(file.line_index(), symbol.selection_span),
+        range: position::range(line_index, symbol.span),
+        selection_range: position::range(line_index, symbol.selection_span),
         children: (!children.is_empty()).then_some(children),
     })
 }
 
 pub(crate) fn workspace_symbol(
-    parse: &ParseDb,
+    snapshot: ProjectSnapshot<'_>,
     symbol: WorkspaceSymbol,
 ) -> anyhow::Result<Option<LspWorkspaceSymbol>> {
-    let Some(package) = parse.package(symbol.target.package.0) else {
-        return Ok(None);
-    };
-    let Some(path) = package.file_path(symbol.file_id) else {
+    let Some(path) = snapshot.file_path(symbol.target.package, symbol.file_id) else {
         return Ok(None);
     };
     let Some(uri) = Uri::from_file_path(path) else {
         return Ok(None);
     };
     let range =
-        navigation::range_for_file(parse, symbol.target.package.0, symbol.file_id, symbol.span)?;
+        navigation::range_for_file(snapshot, symbol.target.package, symbol.file_id, symbol.span)?;
 
     Ok(Some(LspWorkspaceSymbol {
         name: symbol.name,

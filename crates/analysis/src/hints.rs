@@ -27,7 +27,7 @@ impl<'a, 'db> TypeHintCollector<'a, 'db> {
         let mut hints = Vec::new();
 
         for body in target_bodies.bodies() {
-            for binding in body.bindings.iter() {
+            for binding in body.bindings() {
                 if binding.source.file_id != file_id {
                     continue;
                 }

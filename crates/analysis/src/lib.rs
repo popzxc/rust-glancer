@@ -36,6 +36,13 @@ pub struct Analysis<'a> {
 }
 
 impl<'a> Analysis<'a> {
+    /// Builds a query API over one request-scoped analysis transaction.
+    ///
+    /// # Safety
+    ///
+    /// The transaction must contain phase transactions from the same immutable project snapshot and
+    /// package subset. Mixing phases from different project revisions can pair semantic facts with
+    /// unrelated source files, package slots, or line indexes.
     pub fn new(txn: &AnalysisReadTxn<'a>) -> Self {
         Self {
             def_map: txn.def_map().clone(),

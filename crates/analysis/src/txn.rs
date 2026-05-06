@@ -16,6 +16,13 @@ pub struct AnalysisReadTxn<'a> {
 }
 
 impl<'a> AnalysisReadTxn<'a> {
+    /// Creates an analysis transaction from already-open phase transactions.
+    ///
+    /// # Safety
+    ///
+    /// All phase transactions must represent the same logical project snapshot and package subset.
+    /// They may share lazy package loaders, but they must not be mixed across rebuilds or project
+    /// instances because analysis queries assume package slots and source metadata line up exactly.
     pub fn from_phase_txns(
         def_map: DefMapReadTxn<'a>,
         semantic_ir: SemanticIrReadTxn<'a>,

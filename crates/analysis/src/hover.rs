@@ -337,7 +337,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                 .0
                 .body_ir
                 .body_data(*body)?
-                .map(|body_data| body_data.source.span)),
+                .map(|body_data| body_data.source().span)),
             SymbolAt::Binding { body, binding } => Ok(self
                 .0
                 .body_ir

@@ -328,13 +328,10 @@ impl EngineWorker {
             let Some(info) = analysis.hover(target, context.file, offset)? else {
                 continue;
             };
-            let Some(package) = snapshot.parse_db().package(context.package.0) else {
+            let Some(line_index) = snapshot.file_line_index(context.package, context.file) else {
                 continue;
             };
-            let Some(file) = package.parsed_file(context.file) else {
-                continue;
-            };
-            let Some(hover) = hover::hover(info, file.line_index()) else {
+            let Some(hover) = hover::hover(info, line_index) else {
                 continue;
             };
             tracing::debug!(
@@ -374,8 +371,7 @@ impl EngineWorker {
             for target in context.targets {
                 let symbols = analysis.document_symbols(target, context.file)?;
                 for symbol in symbols {
-                    let symbol =
-                        symbols::document_symbol(snapshot.parse_db(), context.package.0, symbol)?;
+                    let symbol = symbols::document_symbol(snapshot, context.package, symbol)?;
                     if !lsp_symbols.contains(&symbol) {
                         lsp_symbols.push(symbol);
                     }
@@ -427,7 +423,7 @@ impl EngineWorker {
 
         let mut lsp_hints = Vec::new();
         for (package, hint) in hints {
-            let Some(hint) = inlay_hint::type_hint(snapshot.parse_db(), package.0, hint)? else {
+            let Some(hint) = inlay_hint::type_hint(snapshot, package, hint)? else {
                 continue;
             };
             lsp_hints.push(hint);
@@ -450,7 +446,7 @@ impl EngineWorker {
         let mut lsp_symbols = Vec::new();
 
         for symbol in analysis.workspace_symbols(query)? {
-            let Some(symbol) = symbols::workspace_symbol(snapshot.parse_db(), symbol)? else {
+            let Some(symbol) = symbols::workspace_symbol(snapshot, symbol)? else {
                 continue;
             };
             if !lsp_symbols.contains(&symbol) {
@@ -495,8 +491,7 @@ impl EngineWorker {
             };
 
             for target in targets {
-                let Some(location) = navigation::location_for_target(snapshot.parse_db(), &target)?
-                else {
+                let Some(location) = navigation::location_for_target(snapshot, &target)? else {
                     continue;
                 };
                 if !locations.contains(&location) {
@@ -593,12 +588,8 @@ impl EngineWorker {
         context: &FileContext,
         position: ls_types::Position,
     ) -> Option<u32> {
-        let package = snapshot.parse_db().package(context.package.0)?;
-        let file = package.parsed_file(context.file)?;
-
-        let offset = file
-            .line_index()
-            .offset_from_utf16_position(position::parse_position(position));
+        let line_index = snapshot.file_line_index(context.package, context.file)?;
+        let offset = line_index.offset_from_utf16_position(position::parse_position(position));
         tracing::trace!(
             package = ?context.package,
             file = ?context.file,
@@ -616,14 +607,9 @@ impl EngineWorker {
         context: &FileContext,
         range: ls_types::Range,
     ) -> Option<TextSpan> {
-        let package = snapshot.parse_db().package(context.package.0)?;
-        let file = package.parsed_file(context.file)?;
-        let start = file
-            .line_index()
-            .offset_from_utf16_position(position::parse_position(range.start))?;
-        let end = file
-            .line_index()
-            .offset_from_utf16_position(position::parse_position(range.end))?;
+        let line_index = snapshot.file_line_index(context.package, context.file)?;
+        let start = line_index.offset_from_utf16_position(position::parse_position(range.start))?;
+        let end = line_index.offset_from_utf16_position(position::parse_position(range.end))?;
 
         let span = TextSpan { start, end };
         tracing::trace!(

@@ -368,7 +368,9 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         match resolution {
             BodyResolution::Local(binding) => Ok(body
                 .binding(*binding)
-                .map(|binding_data| NavigationTarget::from_binding(body.owner.target, binding_data))
+                .map(|binding_data| {
+                    NavigationTarget::from_binding(body.owner().target, binding_data)
+                })
                 .into_iter()
                 .collect()),
             BodyResolution::LocalItem(item) => Ok(self
@@ -482,7 +484,7 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
             let Some(body) = self.0.body_ir.body_data(body_ref)? else {
                 return Ok(Vec::new());
             };
-            self.navigation_targets_for_use_path(body.owner_module, path)
+            self.navigation_targets_for_use_path(body.owner_module(), path)
         } else {
             Ok(targets)
         }

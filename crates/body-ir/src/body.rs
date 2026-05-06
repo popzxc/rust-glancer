@@ -164,23 +164,79 @@ impl TargetBodies {
 /// Lowered body for one function.
 #[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct BodyData {
-    pub owner: FunctionRef,
-    pub owner_module: rg_def_map::ModuleRef,
-    pub source: BodySource,
-    pub param_scope: ScopeId,
-    pub root_expr: ExprId,
-    pub params: Vec<BindingId>,
-    pub scopes: Arena<ScopeId, ScopeData>,
-    pub local_items: Arena<BodyItemId, BodyItemData>,
-    pub local_impls: Arena<BodyImplId, BodyImplData>,
-    pub local_functions: Arena<BodyFunctionId, BodyFunctionData>,
-    pub bindings: Arena<BindingId, BindingData>,
-    pub pats: Arena<PatId, PatData>,
-    pub statements: Arena<StmtId, StmtData>,
-    pub exprs: Arena<ExprId, ExprData>,
+    pub(crate) owner: FunctionRef,
+    pub(crate) owner_module: rg_def_map::ModuleRef,
+    pub(crate) source: BodySource,
+    pub(crate) param_scope: ScopeId,
+    pub(crate) root_expr: ExprId,
+    pub(crate) params: Vec<BindingId>,
+    pub(crate) scopes: Arena<ScopeId, ScopeData>,
+    pub(crate) local_items: Arena<BodyItemId, BodyItemData>,
+    pub(crate) local_impls: Arena<BodyImplId, BodyImplData>,
+    pub(crate) local_functions: Arena<BodyFunctionId, BodyFunctionData>,
+    pub(crate) bindings: Arena<BindingId, BindingData>,
+    pub(crate) pats: Arena<PatId, PatData>,
+    pub(crate) statements: Arena<StmtId, StmtData>,
+    pub(crate) exprs: Arena<ExprId, ExprData>,
 }
 
 impl BodyData {
+    pub fn owner(&self) -> FunctionRef {
+        self.owner
+    }
+
+    pub fn owner_module(&self) -> rg_def_map::ModuleRef {
+        self.owner_module
+    }
+
+    pub fn source(&self) -> BodySource {
+        self.source
+    }
+
+    pub fn param_scope(&self) -> ScopeId {
+        self.param_scope
+    }
+
+    pub fn root_expr(&self) -> ExprId {
+        self.root_expr
+    }
+
+    pub fn params(&self) -> &[BindingId] {
+        &self.params
+    }
+
+    pub fn scopes(&self) -> &[ScopeData] {
+        self.scopes.as_slice()
+    }
+
+    pub fn local_items(&self) -> &[BodyItemData] {
+        self.local_items.as_slice()
+    }
+
+    pub fn local_impls(&self) -> &[BodyImplData] {
+        self.local_impls.as_slice()
+    }
+
+    pub fn local_functions(&self) -> &[BodyFunctionData] {
+        self.local_functions.as_slice()
+    }
+
+    pub fn bindings(&self) -> &[BindingData] {
+        self.bindings.as_slice()
+    }
+
+    pub fn pats(&self) -> &[PatData] {
+        self.pats.as_slice()
+    }
+
+    pub fn statements(&self) -> &[StmtData] {
+        self.statements.as_slice()
+    }
+
+    pub fn exprs(&self) -> &[ExprData] {
+        self.exprs.as_slice()
+    }
+
     pub fn binding(&self, binding: BindingId) -> Option<&BindingData> {
         self.bindings.get(binding)
     }

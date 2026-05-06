@@ -451,7 +451,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         };
 
         for body in target_bodies.bodies() {
-            if body.source.file_id != file_id {
+            if body.source().file_id != file_id {
                 continue;
             }
 
@@ -460,7 +460,7 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
                 continue;
             }
 
-            let Some(function) = self.0.semantic_ir.function_data(body.owner)? else {
+            let Some(function) = self.0.semantic_ir.function_data(body.owner())? else {
                 continue;
             };
             // Body-local structs and impls should appear under the function that contains them,
@@ -476,13 +476,13 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
     fn body_local_document_symbols(&self, body: &BodyData, file_id: FileId) -> Vec<DocumentSymbol> {
         let mut symbols = Vec::new();
 
-        for item in body.local_items.iter() {
+        for item in body.local_items() {
             if item.source.file_id == file_id {
                 symbols.push(self.body_item_document_symbol(file_id, item));
             }
         }
 
-        for impl_data in body.local_impls.iter() {
+        for impl_data in body.local_impls() {
             if impl_data.source.file_id == file_id {
                 symbols.push(self.body_impl_document_symbol(body, impl_data));
             }

@@ -4,7 +4,9 @@ use anyhow::Context as _;
 
 use rg_analysis::Analysis;
 use rg_def_map::{PackageSlot, TargetRef};
-use rg_parse::{FileId, ParseDb};
+#[cfg(test)]
+use rg_parse::ParseDb;
+use rg_parse::{FileId, LineIndex};
 
 use super::{
     FileContext, inventory::ProjectInventory, state::ProjectState, stats::ProjectStats, subset,
@@ -43,8 +45,23 @@ impl<'a> ProjectSnapshot<'a> {
         Ok(self.state.analysis(&txn))
     }
 
-    pub fn parse_db(&self) -> &'a ParseDb {
+    #[cfg(test)]
+    pub(crate) fn parse_db(&self) -> &'a ParseDb {
         self.state.parse_db()
+    }
+
+    /// Returns the source path for a package-local file id.
+    pub fn file_path(&self, package: PackageSlot, file: FileId) -> Option<&Path> {
+        self.state.parse_db().package(package.0)?.file_path(file)
+    }
+
+    /// Returns the line index used to convert offsets for a package-local file id.
+    pub fn file_line_index(&self, package: PackageSlot, file: FileId) -> Option<&LineIndex> {
+        self.state
+            .parse_db()
+            .package(package.0)?
+            .parsed_file(file)
+            .map(|file| file.line_index())
     }
 
     pub(crate) fn inventory(&self) -> ProjectInventory<'a> {

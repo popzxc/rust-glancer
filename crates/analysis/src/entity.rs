@@ -200,7 +200,7 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
         let Some(body) = self.0.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
-        self.entities_for_use_path(body.owner_module, path)
+        self.entities_for_use_path(body.owner_module(), path)
     }
 
     fn entities_for_body_value_path(
