@@ -162,6 +162,12 @@ enum PackageEntryState<T> {
 }
 
 /// Package storage keyed by the stable package slots of one workspace snapshot.
+// Dev note: we intentionally do not expose convenience methods like `resident_packages`,
+// since they would give an interface over `&T` or `&mut T`, they are prone for hard-to-find
+// bugs; instead, we expose verbose APIs to force caller to think about the state of the
+// package entry.
+// tl;dr: we don't want to make an illusion of "here are all the packages" while returning
+// _not_ all the packages.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PackageStore<T> {
     packages: Vec<PackageEntry<T>>,
@@ -186,11 +192,6 @@ impl<T> PackageStore<T> {
     /// Returns one raw package storage entry by package slot.
     pub fn raw_entry(&self, package: PackageSlot) -> Option<&PackageEntry<T>> {
         self.packages.get(package.0)
-    }
-
-    /// Returns one mutable raw package storage entry by package slot.
-    pub fn raw_entry_mut(&mut self, package: PackageSlot) -> Option<&mut PackageEntry<T>> {
-        self.packages.get_mut(package.0)
     }
 
     /// Iterates over all raw package storage entries, including offloaded slots.

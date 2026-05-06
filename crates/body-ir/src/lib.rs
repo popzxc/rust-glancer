@@ -1,11 +1,11 @@
 mod body;
+mod build;
 mod cache;
 mod cursor;
 mod db;
 mod expr;
 mod ids;
 mod item;
-mod lower;
 mod memsize;
 mod pat;
 mod path;

@@ -17,8 +17,8 @@ use rg_parse::{FileId, LineIndex, ParseDb, Span, TargetId};
 use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrReadTxn, TraitRef};
 use rg_text::{Name, NameInterner};
 
-use super::{
-    BodyIrBuildPolicy, BodyIrDb,
+use crate::{
+    BodyIrBuildPolicy,
     body::{BodyBuilder, BodyData, BodySource, PackageBodies, TargetBodies},
     expr::{ExprData, ExprKind, ExprWrapperKind, LiteralKind, MatchArmData},
     ids::{BindingId, BodyFunctionId, BodyImplId, BodyItemId, ExprId, PatId, ScopeId, StmtId},
@@ -30,13 +30,13 @@ use super::{
     ty::BodyTy,
 };
 
-pub(super) fn build_db(
+pub(super) fn build_packages(
     parse: &ParseDb,
     semantic_ir: &SemanticIrReadTxn<'_>,
     package_count: usize,
     policy: BodyIrBuildPolicy,
     interner: &mut NameInterner,
-) -> anyhow::Result<BodyIrDb> {
+) -> anyhow::Result<Vec<PackageBodies>> {
     let mut packages = Vec::with_capacity(package_count);
 
     for package_idx in 0..package_count {
@@ -58,7 +58,7 @@ pub(super) fn build_db(
         )?);
     }
 
-    Ok(BodyIrDb::new(packages))
+    Ok(packages)
 }
 
 pub(super) fn build_package(

@@ -186,7 +186,3 @@ pub(super) fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution
         BodyTypePathResolution::Unknown => BodyTy::Unknown,
     }
 }
-
-pub(super) fn type_defs_from_body_ty(ty: &BodyTy) -> Vec<TypeDefRef> {
-    ty.type_defs()
-}

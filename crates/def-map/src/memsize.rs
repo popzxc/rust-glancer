@@ -20,7 +20,7 @@ macro_rules! record_fields {
 impl MemorySize for DefMapDb {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         recorder.scope("packages", |recorder| {
-            self.packages.record_memory_children(recorder);
+            self.record_packages_memory_children(recorder);
         });
     }
 }

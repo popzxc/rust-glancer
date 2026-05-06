@@ -7,12 +7,9 @@
 use std::sync::{Arc, OnceLock};
 
 use anyhow::Context as _;
-use rg_analysis::AnalysisReadTxn;
 use rg_body_ir::{BodyIrPackageBundle, PackageBodies};
 use rg_def_map::{DefMapPackageBundle, Package as DefMapPackage, PackageSlot};
-use rg_package_store::{
-    LoadPackage, MalformedCacheError, PackageLoader, PackageStoreError, PackageSubset,
-};
+use rg_package_store::{LoadPackage, MalformedCacheError, PackageLoader, PackageStoreError};
 use rg_semantic_ir::{PackageIr, SemanticIrPackageBundle};
 
 use crate::{
@@ -21,7 +18,7 @@ use crate::{
         CachedWorkspace, PackageCacheArtifact, PackageCacheBodyIrState, PackageCachePayload,
         PackageCacheStore,
     },
-    project::{state::ProjectState, subset},
+    project::state::ProjectState,
 };
 
 /// Writes and offloads every package selected by the current residency policy.
@@ -186,30 +183,6 @@ pub(crate) fn recover_residency_after_cache_load_failure(
     apply_residency(project).context("while attempting to reapply package cache residency")?;
 
     Ok(())
-}
-
-/// Builds a request-scoped analysis transaction over logical package slots.
-pub(crate) fn logical_analysis_txn(project: &ProjectState) -> anyhow::Result<AnalysisReadTxn<'_>> {
-    let subset = subset::all(&project.workspace);
-    logical_analysis_txn_for_subset(project, &subset)
-}
-
-/// Builds a request-scoped analysis transaction over the requested package subset.
-pub(crate) fn logical_analysis_txn_for_subset<'a>(
-    project: &'a ProjectState,
-    subset: &PackageSubset,
-) -> anyhow::Result<AnalysisReadTxn<'a>> {
-    let loaders = package_read_loaders(project);
-
-    Ok(AnalysisReadTxn::from_phase_txns(
-        project
-            .def_map
-            .read_txn_for_subset(loaders.def_map.clone(), subset),
-        project
-            .semantic_ir
-            .read_txn_for_subset(loaders.semantic_ir.clone(), subset),
-        project.body_ir.read_txn_for_subset(loaders.body_ir, subset),
-    ))
 }
 
 /// Loader adapters that share one package-artifact read cache.

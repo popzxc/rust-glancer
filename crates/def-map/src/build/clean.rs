@@ -6,14 +6,13 @@
 use anyhow::Context as _;
 
 use rg_item_tree::ItemTreeDb;
-use rg_package_store::PackageStore;
 use rg_parse;
 use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
+    finalize::{FinalizeTargetStates, finalize_target_states, freeze_package_states},
     implicit_roots::build_implicit_roots,
-    scope::{FinalizeTargetStates, finalize_target_states, freeze_package_states},
 };
 use crate::{DefMapDb, PackageSlot, collect::collect_target_states};
 
@@ -62,7 +61,5 @@ pub(crate) fn build_db(
         })
         .collect::<Vec<_>>();
 
-    Ok(DefMapDb {
-        packages: PackageStore::from_vec(packages),
-    })
+    Ok(DefMapDb::from_packages(packages))
 }

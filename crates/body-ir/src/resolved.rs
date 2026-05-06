@@ -66,14 +66,3 @@ impl BodyResolution {
         }
     }
 }
-
-impl BodyTypePathResolution {
-    #[allow(dead_code)]
-    pub(crate) fn shrink_to_fit(&mut self) {
-        match self {
-            Self::SelfType(types) | Self::TypeDefs(types) => types.shrink_to_fit(),
-            Self::Traits(traits) => traits.shrink_to_fit(),
-            Self::BodyLocal(_) | Self::Unknown => {}
-        }
-    }
-}

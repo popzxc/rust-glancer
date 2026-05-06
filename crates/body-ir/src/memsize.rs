@@ -34,7 +34,7 @@ macro_rules! impl_leaf_memory_size {
 impl MemorySize for BodyIrDb {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         recorder.scope("packages", |recorder| {
-            self.packages.record_memory_children(recorder);
+            self.record_packages_memory_children(recorder);
         });
     }
 }

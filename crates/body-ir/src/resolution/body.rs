@@ -33,7 +33,7 @@ use super::{
     type_path::BodyTypePathResolver,
 };
 
-pub(super) struct BodyResolver<'query, 'db, 'body> {
+pub(crate) struct BodyResolver<'query, 'db, 'body> {
     def_map: &'query DefMapReadTxn<'db>,
     semantic_ir: &'query SemanticIrReadTxn<'db>,
     body_ref: BodyRef,
@@ -41,7 +41,7 @@ pub(super) struct BodyResolver<'query, 'db, 'body> {
 }
 
 impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
-    pub(super) fn new(
+    pub(crate) fn new(
         def_map: &'query DefMapReadTxn<'db>,
         semantic_ir: &'query SemanticIrReadTxn<'db>,
         body_ref: BodyRef,
@@ -59,7 +59,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
-    pub(super) fn resolve(&mut self) -> Result<(), PackageStoreError> {
+    pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
         self.resolve_bindings()?;
         self.resolve_local_impls()?;
 

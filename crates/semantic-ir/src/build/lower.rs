@@ -16,23 +16,26 @@ use rg_item_tree::{
 use rg_parse::{FileId, TargetId};
 use rg_text::Name;
 
-use super::{
-    ConstData, EnumData, FunctionData, ImplData, PackageIr, SemanticIrDb, StaticData, StructData,
-    TargetIr, TraitData, TypeAliasData, UnionData,
+use crate::{
+    ConstData, EnumData, FunctionData, ImplData, PackageIr, StaticData, StructData, TargetIr,
+    TraitData, TypeAliasData, UnionData,
     ids::{
         AssocItemId, ConstId, FunctionId, ImplId, ItemId, ItemOwner, StaticId, TraitId, TypeAliasId,
     },
     signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
 };
 
-pub(super) fn build_db(item_tree: &ItemTreeDb, def_map: &DefMapDb) -> anyhow::Result<SemanticIrDb> {
+pub(super) fn build_packages(
+    item_tree: &ItemTreeDb,
+    def_map: &DefMapDb,
+) -> anyhow::Result<Vec<PackageIr>> {
     let mut packages = Vec::with_capacity(def_map.package_count());
 
     for package_idx in 0..def_map.package_count() {
         packages.push(build_package(item_tree, def_map, PackageSlot(package_idx))?);
     }
 
-    Ok(SemanticIrDb::new(packages))
+    Ok(packages)
 }
 
 pub(super) fn build_package(
@@ -47,7 +50,7 @@ pub(super) fn build_package(
         .package(package.0)
         .with_context(|| format!("while attempting to fetch item tree package {}", package.0))?;
     let mut targets = Vec::with_capacity(def_map_package.targets().len());
-    let def_map_txn = def_map.read_txn(super::resolution::unexpected_package_loader());
+    let def_map_txn = def_map.read_txn(super::unexpected_package_loader());
 
     for (target_idx, _) in def_map_package.targets().iter().enumerate() {
         let target_ref = TargetRef {

@@ -1,17 +1,20 @@
-//! Resident def-map database and package-level query helpers.
+//! Def-map package store and transaction entry points.
 
 use rg_item_tree::ItemTreeDb;
+use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_parse::{self, TargetId};
 use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
-use crate::{DefMap, DefMapReadTxn, Package, PackageSlot, ids::ResidentTargetRef, resolve};
+use crate::{
+    DefMap, DefMapReadTxn, Package, PackageSlot, build::DefMapDbBuilder, ids::ResidentTargetRef,
+};
 
 /// Frozen def maps for all parsed packages and targets.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DefMapDb {
-    pub(crate) packages: PackageStore<Package>,
+    packages: PackageStore<Package>,
 }
 
 impl DefMapDb {
@@ -22,7 +25,7 @@ impl DefMapDb {
         item_tree: &ItemTreeDb,
     ) -> anyhow::Result<Self> {
         let mut interner = NameInterner::new();
-        Self::build_with_interner(workspace, parse, item_tree, &mut interner)
+        DefMapDbBuilder::build_with_interner(workspace, parse, item_tree, &mut interner)
     }
 
     /// Builds target-local def maps using a caller-retained name interner.
@@ -32,9 +35,7 @@ impl DefMapDb {
         item_tree: &ItemTreeDb,
         interner: &mut NameInterner,
     ) -> anyhow::Result<Self> {
-        let mut db = resolve::build_db(workspace, parse, item_tree, interner)?;
-        db.shrink_to_fit();
-        Ok(db)
+        DefMapDbBuilder::build_with_interner(workspace, parse, item_tree, interner)
     }
 
     /// Returns a new def-map snapshot with selected packages rebuilt against a logical old view.
@@ -47,13 +48,26 @@ impl DefMapDb {
         packages: &[PackageSlot],
         interner: &mut NameInterner,
     ) -> anyhow::Result<Self> {
-        let mut db = resolve::rebuild_packages(
+        DefMapDbBuilder::rebuild_packages_with_interner_and_read_txn(
             self, old_read, workspace, parse, item_tree, packages, interner,
-        )?;
-        db.shrink_packages(packages);
-        Ok(db)
+        )
     }
 
+    pub(crate) fn record_packages_memory_children(&self, recorder: &mut MemoryRecorder) {
+        self.packages.record_memory_children(recorder);
+    }
+
+    pub(crate) fn from_packages(packages: Vec<Package>) -> Self {
+        Self {
+            packages: PackageStore::from_vec(packages),
+        }
+    }
+
+    pub(crate) fn mutator(&mut self) -> DefMapDbMutator<'_> {
+        DefMapDbMutator { db: self }
+    }
+
+    /// Returns the number of package slots tracked by this snapshot.
     pub fn package_count(&self) -> usize {
         self.packages.len()
     }
@@ -119,26 +133,36 @@ impl DefMapDb {
         DefMapReadTxn::from_package_store(self.packages.read_txn_for_subset(loader, subset))
     }
 
-    pub fn replace_package(&mut self, package_slot: PackageSlot, package: Package) -> Option<()> {
-        self.packages.replace(package_slot, package)
-    }
-
     pub fn offload_package(&mut self, package_slot: PackageSlot) -> Option<()> {
         self.packages.offload(package_slot)
     }
+}
 
-    fn shrink_to_fit(&mut self) {
-        self.packages.shrink_to_fit();
-        for entry in self.packages.raw_entries_mut() {
+pub(crate) struct DefMapDbMutator<'db> {
+    db: &'db mut DefMapDb,
+}
+
+impl DefMapDbMutator<'_> {
+    pub(crate) fn replace_package(
+        &mut self,
+        package_slot: PackageSlot,
+        package: Package,
+    ) -> Option<()> {
+        self.db.packages.replace(package_slot, package)
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.db.packages.shrink_to_fit();
+        for entry in self.db.packages.raw_entries_mut() {
             if let Some(package) = entry.as_resident_unique_mut() {
                 package.shrink_to_fit();
             }
         }
     }
 
-    fn shrink_packages(&mut self, packages: &[PackageSlot]) {
+    pub(crate) fn shrink_packages(&mut self, packages: &[PackageSlot]) {
         for package in packages {
-            if let Some(package) = self.packages.get_unique_mut(*package) {
+            if let Some(package) = self.db.packages.get_unique_mut(*package) {
                 package.shrink_to_fit();
             }
         }

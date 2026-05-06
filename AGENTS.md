@@ -1,3 +1,24 @@
+## Design
+
+Lack of DTOs for cache and shallow error propagation are part of design: since the cache
+is basically a throwaway optimization (something wrong = rebuild), adding DTO layer
+and adding wide context on error propagation will just bloat the codebase without any
+visible benefit.
+
+`package-store` knowing about the layout of errors is also part of design, this module
+is an inherent non-generic part of the workspace, and erasing error types would make
+working with the module much more awkward.
+
+The ultimate value of this project is preserving low idle memory, bursts during rebuild
+are fine and not a primary optimization target, e.g. the list of priorities in order:
+- Idle memory usage
+- Maintainability
+- Functionality
+- Performance
+- Burst memory usage
+- Completeness
+
+
 ## Use `impl` blocks for scoping where it makes sense
 
 When adding functions that operate on structs/enums, prefer adding them as methods rather than pure functions.

@@ -1,9 +1,9 @@
+mod build;
 mod cache;
 mod cursor;
 mod db;
 mod ids;
 mod items;
-mod lower;
 mod memsize;
 mod package;
 mod resolution;

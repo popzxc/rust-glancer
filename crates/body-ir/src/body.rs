@@ -180,7 +180,6 @@ pub struct BodyData {
     pub exprs: Arena<ExprId, ExprData>,
 }
 
-#[allow(dead_code)]
 impl BodyData {
     pub fn binding(&self, binding: BindingId) -> Option<&BindingData> {
         self.bindings.get(binding)

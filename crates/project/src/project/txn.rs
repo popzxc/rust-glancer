@@ -5,7 +5,7 @@ use rg_package_store::PackageSubset;
 
 use crate::cache::integration;
 
-use super::state::ProjectState;
+use super::{state::ProjectState, subset};
 
 /// Read transaction for project-level query APIs.
 ///
@@ -18,17 +18,26 @@ pub(crate) struct ProjectReadTxn<'a> {
 
 impl<'a> ProjectReadTxn<'a> {
     pub(crate) fn new(project: &'a ProjectState) -> anyhow::Result<Self> {
-        Ok(Self {
-            analysis: integration::logical_analysis_txn(project)?,
-        })
+        let subset = subset::all(&project.workspace);
+        Self::for_subset(project, &subset)
     }
 
     pub(crate) fn for_subset(
         project: &'a ProjectState,
         subset: &PackageSubset,
     ) -> anyhow::Result<Self> {
+        let loaders = integration::package_read_loaders(project);
+
         Ok(Self {
-            analysis: integration::logical_analysis_txn_for_subset(project, subset)?,
+            analysis: AnalysisReadTxn::from_phase_txns(
+                project
+                    .def_map
+                    .read_txn_for_subset(loaders.def_map.clone(), subset),
+                project
+                    .semantic_ir
+                    .read_txn_for_subset(loaders.semantic_ir.clone(), subset),
+                project.body_ir.read_txn_for_subset(loaders.body_ir, subset),
+            ),
         })
     }
 

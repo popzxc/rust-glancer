@@ -1,3 +1,4 @@
+mod build;
 mod cache;
 mod collect;
 mod cursor;
@@ -8,7 +9,6 @@ mod import;
 mod memsize;
 mod path;
 mod path_resolution;
-mod resolve;
 mod scope;
 mod txn;
 

@@ -1,11 +1,12 @@
-//! Resident semantic IR database and item-query helpers.
-
-use anyhow::Context as _;
+//! Semantic IR package store and transaction entry points.
 
 use rg_def_map::{Package as DefMapPackage, PackageSlot};
+use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 
-use crate::{ImplData, ImplRef, PackageIr, SemanticIrReadTxn, SemanticIrStats, lower, resolution};
+use crate::{
+    ImplData, ImplRef, PackageIr, SemanticIrReadTxn, SemanticIrStats, build::SemanticIrDbBuilder,
+};
 
 /// Semantic item graph for all analyzed packages and targets.
 ///
@@ -14,7 +15,7 @@ use crate::{ImplData, ImplRef, PackageIr, SemanticIrReadTxn, SemanticIrStats, lo
 /// again. Bodies live in `rg_body_ir`; this layer intentionally stops at item/signature facts.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SemanticIrDb {
-    pub(crate) packages: PackageStore<PackageIr>,
+    packages: PackageStore<PackageIr>,
 }
 
 impl SemanticIrDb {
@@ -23,11 +24,7 @@ impl SemanticIrDb {
         item_tree: &rg_item_tree::ItemTreeDb,
         def_map: &rg_def_map::DefMapDb,
     ) -> anyhow::Result<Self> {
-        let mut db = lower::build_db(item_tree, def_map)?;
-        resolution::resolve_impl_headers(&mut db, def_map)
-            .context("while attempting to resolve semantic IR impl headers")?;
-        db.shrink_to_fit();
-        Ok(db)
+        SemanticIrDbBuilder::build(item_tree, def_map)
     }
 
     /// Returns a new semantic-IR snapshot with selected packages rebuilt against lazy read views.
@@ -40,55 +37,29 @@ impl SemanticIrDb {
         semantic_ir_loader: PackageLoader<'db, PackageIr>,
         subset: &PackageSubset,
     ) -> anyhow::Result<Self> {
-        let mut next = self.clone();
-        let packages = normalized_package_slots(packages);
-
-        for package in &packages {
-            let rebuilt = lower::build_package(item_tree, def_map, *package)?;
-            next.packages.replace(*package, rebuilt).with_context(|| {
-                format!(
-                    "while attempting to replace semantic IR package {}",
-                    package.0
-                )
-            })?;
-        }
-
-        let def_map_txn = def_map.read_txn_for_subset(def_map_loader, subset);
-        let semantic_ir_txn = next.read_txn_for_subset(semantic_ir_loader, subset);
-        let impl_resolutions = resolution::impl_header_resolutions_for_packages(
-            &semantic_ir_txn,
-            &def_map_txn,
-            &packages,
+        SemanticIrDbBuilder::rebuild_packages_with_loaders(
+            self,
+            item_tree,
+            def_map,
+            packages,
+            def_map_loader,
+            semantic_ir_loader,
+            subset,
         )
-        .context("while attempting to resolve rebuilt semantic IR impl headers")?;
-        drop(semantic_ir_txn);
-        resolution::apply_impl_header_resolutions(&mut next, impl_resolutions);
-
-        next.shrink_packages(&packages);
-        Ok(next)
     }
 
-    pub(crate) fn new(packages: Vec<PackageIr>) -> Self {
+    pub(crate) fn from_packages(packages: Vec<PackageIr>) -> Self {
         Self {
             packages: PackageStore::from_vec(packages),
         }
     }
 
-    fn shrink_to_fit(&mut self) {
-        self.packages.shrink_to_fit();
-        for entry in self.packages.raw_entries_mut() {
-            if let Some(package) = entry.as_resident_unique_mut() {
-                package.shrink_to_fit();
-            }
-        }
+    pub(crate) fn mutator(&mut self) -> SemanticIrDbMutator<'_> {
+        SemanticIrDbMutator { db: self }
     }
 
-    fn shrink_packages(&mut self, packages: &[PackageSlot]) {
-        for package in packages {
-            if let Some(package) = self.packages.get_unique_mut(*package) {
-                package.shrink_to_fit();
-            }
-        }
+    pub(crate) fn record_packages_memory_children(&self, recorder: &mut MemoryRecorder) {
+        self.packages.record_memory_children(recorder);
     }
 
     /// Returns coarse item counts for status output and smoke checks.
@@ -117,7 +88,7 @@ impl SemanticIrDb {
         stats
     }
 
-    /// Returns resident package-level semantic IR sets, skipping offloaded packages.
+    /// Returns the number of package slots tracked by this snapshot.
     pub fn package_count(&self) -> usize {
         self.packages.len()
     }
@@ -147,6 +118,31 @@ impl SemanticIrDb {
     pub fn offload_package(&mut self, package: PackageSlot) -> Option<()> {
         self.packages.offload(package)
     }
+}
+
+pub(crate) struct SemanticIrDbMutator<'db> {
+    db: &'db mut SemanticIrDb,
+}
+
+impl SemanticIrDbMutator<'_> {
+    pub(crate) fn package_count(&self) -> usize {
+        self.db.package_count()
+    }
+
+    pub(crate) fn read_txn<'a>(
+        &'a self,
+        loader: PackageLoader<'a, PackageIr>,
+    ) -> SemanticIrReadTxn<'a> {
+        self.db.read_txn(loader)
+    }
+
+    pub(crate) fn replace_package(
+        &mut self,
+        package: PackageSlot,
+        package_ir: PackageIr,
+    ) -> Option<()> {
+        self.db.packages.replace(package, package_ir)
+    }
 
     pub(crate) fn impl_data_mut(&mut self, impl_ref: ImplRef) -> Option<&mut ImplData> {
         self.package_mut(impl_ref.target.package)?
@@ -157,13 +153,23 @@ impl SemanticIrDb {
     }
 
     fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageIr> {
-        self.packages.make_mut(package)
+        self.db.packages.make_mut(package)
     }
-}
 
-fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
-    let mut slots = packages.to_vec();
-    slots.sort_by_key(|slot| slot.0);
-    slots.dedup();
-    slots
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.db.packages.shrink_to_fit();
+        for entry in self.db.packages.raw_entries_mut() {
+            if let Some(package) = entry.as_resident_unique_mut() {
+                package.shrink_to_fit();
+            }
+        }
+    }
+
+    pub(crate) fn shrink_packages(&mut self, packages: &[PackageSlot]) {
+        for package in packages {
+            if let Some(package) = self.db.packages.get_unique_mut(*package) {
+                package.shrink_to_fit();
+            }
+        }
+    }
 }

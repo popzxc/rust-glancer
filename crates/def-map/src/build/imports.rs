@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-use super::scope::{FinalizeTargetStates, ScopeMatrix};
+use super::finalize::{FinalizeTargetStates, ScopeMatrix};
 
 /// Unresolved import ids for one module.
 type ModuleUnresolvedImports = Vec<ImportId>;

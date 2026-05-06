@@ -1,7 +1,3 @@
-// The analysis layer is the intended LSP-facing query surface, but the LSP consumer is not wired
-// yet. Snapshot tests exercise it until that production entrypoint exists.
-#![allow(dead_code)]
-
 use rg_body_ir::{BodyIrReadTxn, BodyTy};
 use rg_def_map::{DefMapReadTxn, PackageSlot, TargetRef};
 use rg_parse::FileId;
@@ -29,11 +25,10 @@ pub use self::data::{
     CompletionApplicability, CompletionItem, DocumentSymbol, HoverBlock, HoverInfo,
     NavigationTarget, SymbolAt, TypeHint, WorkspaceSymbol,
 };
-#[allow(unused_imports)]
 pub use self::data::{CompletionKind, CompletionTarget, NavigationTargetKind, SymbolKind};
 pub use self::txn::AnalysisReadTxn;
 
-/// High-level query API over the frozen phase databases.
+/// High-level LSP-facing query API over one request-scoped project transaction.
 pub struct Analysis<'a> {
     def_map: DefMapReadTxn<'a>,
     semantic_ir: SemanticIrReadTxn<'a>,

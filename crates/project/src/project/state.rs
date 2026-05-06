@@ -372,7 +372,6 @@ impl ProjectState {
     }
 
     /// Returns the high-level query API for this frozen project analysis.
-    #[allow(dead_code)]
     pub(crate) fn analysis<'a>(&self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
         Analysis::new(txn.analysis())
     }

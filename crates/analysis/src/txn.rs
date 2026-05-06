@@ -6,8 +6,8 @@ use rg_semantic_ir::SemanticIrReadTxn;
 
 /// Read transaction shared by all analysis queries in one request.
 ///
-/// The resident implementation is deliberately small. Once packages can be offloaded, this object
-/// becomes the request-scoped owner of any packages loaded back from disk.
+/// Phase transactions own request-local handles to resident packages and lazily loaded offloaded
+/// packages, so all query helpers see one consistent logical project view.
 #[derive(Debug, Clone)]
 pub struct AnalysisReadTxn<'a> {
     def_map: DefMapReadTxn<'a>,

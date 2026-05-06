@@ -10,23 +10,21 @@ mod pat;
 mod ty;
 mod type_path;
 
-use rg_def_map::{DefMapReadTxn, PackageSlot, Path, TargetRef};
+use rg_def_map::{DefMapReadTxn, Path};
 use rg_package_store::PackageStoreError;
-use rg_parse::TargetId;
 use rg_semantic_ir::{
     FieldRef, FunctionRef, SemanticIrReadTxn, TraitApplicability, TypePathContext,
 };
 
 use crate::{
-    BodyData, BodyIrDb, BodyResolution,
-    body::TargetBodiesStatus,
-    ids::{BodyFunctionRef, BodyId, BodyRef, ScopeId},
+    BodyData, BodyResolution,
+    ids::{BodyFunctionRef, BodyRef, ScopeId},
     resolved::BodyTypePathResolution,
     ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
 use self::{
-    body::{BodyResolver, BodyValuePathResolver},
+    body::BodyValuePathResolver,
     method::{
         local_function_applies_to_receiver as local_function_applies_to_receiver_impl,
         semantic_function_applies_to_receiver as semantic_function_applies_to_receiver_impl,
@@ -36,56 +34,7 @@ use self::{
     type_path::BodyTypePathResolver,
 };
 
-pub(super) fn resolve_bodies(
-    db: &mut BodyIrDb,
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-) {
-    let packages = (0..db.package_count()).map(PackageSlot).collect::<Vec<_>>();
-    resolve_bodies_for_packages(db, def_map, semantic_ir, &packages)
-        .expect("resident body resolution should not fail");
-}
-
-pub(super) fn resolve_bodies_for_packages(
-    db: &mut BodyIrDb,
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    packages: &[PackageSlot],
-) -> Result<(), PackageStoreError> {
-    // Resolution is a mutation pass over already-lowered bodies. Skipped targets intentionally
-    // keep their body stores empty so dependency body internals stay cheap by default.
-    for package_slot in packages {
-        let Some(package) = db.package_mut(*package_slot) else {
-            continue;
-        };
-
-        for (target_idx, target) in package.targets_mut().iter_mut().enumerate() {
-            if matches!(target.status(), TargetBodiesStatus::Skipped) {
-                continue;
-            }
-
-            let target_ref = TargetRef {
-                package: *package_slot,
-                target: TargetId(target_idx),
-            };
-
-            for (body_idx, body) in target.bodies_mut().iter_mut().enumerate() {
-                BodyResolver::new(
-                    def_map,
-                    semantic_ir,
-                    BodyRef {
-                        target: target_ref,
-                        body: BodyId(body_idx),
-                    },
-                    body,
-                )
-                .resolve()?;
-            }
-        }
-    }
-
-    Ok(())
-}
+pub(crate) use self::body::BodyResolver;
 
 pub(super) fn resolve_type_path_in_scope(
     body: Option<&BodyData>,

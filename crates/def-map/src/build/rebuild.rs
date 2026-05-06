@@ -12,8 +12,8 @@ use rg_text::NameInterner;
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
+    finalize::{FinalizeTargetStates, finalize_target_states, freeze_package_states},
     implicit_roots::build_implicit_roots,
-    scope::{FinalizeTargetStates, finalize_target_states, freeze_package_states},
 };
 use crate::{DefMapDb, DefMapReadTxn, PackageSlot, collect::collect_package_target_states};
 
@@ -103,8 +103,8 @@ pub(crate) fn rebuild_packages(
             )
         })?;
         let rebuilt = freeze_package_states(parse_package, &package_states);
-        next.packages
-            .replace(package_slot, rebuilt)
+        next.mutator()
+            .replace_package(package_slot, rebuilt)
             .with_context(|| {
                 format!(
                     "while attempting to replace def-map package {}",

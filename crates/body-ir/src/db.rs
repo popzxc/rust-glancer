@@ -1,25 +1,20 @@
-//! Resident Body IR database and body-query helpers.
-
-use std::{fmt, marker::PhantomData, sync::Arc};
-
-use anyhow::Context as _;
+//! Body IR package store and transaction entry points.
 
 use rg_def_map::{Package as DefMapPackage, PackageSlot};
-use rg_package_store::{
-    LoadPackage, PackageLoader, PackageStore, PackageStoreError, PackageSubset,
-};
+use rg_memsize::{MemoryRecorder, MemorySize};
+use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_semantic_ir::PackageIr;
 use rg_text::NameInterner;
 
 use crate::{
-    BodyIrBuildPolicy, BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodiesStatus, lower,
-    resolution,
+    BodyIrBuildPolicy, BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodiesStatus,
+    build::BodyIrDbBuilder,
 };
 
 /// Body-level IR for all analyzed packages and targets.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BodyIrDb {
-    pub(crate) packages: PackageStore<PackageBodies>,
+    packages: PackageStore<PackageBodies>,
 }
 
 impl BodyIrDb {
@@ -34,7 +29,7 @@ impl BodyIrDb {
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
     ) -> anyhow::Result<Self> {
         let mut interner = NameInterner::new();
-        Self::build_with_policy_and_interner(
+        BodyIrDbBuilder::build_with_policy_and_interner(
             parse,
             def_map,
             semantic_ir,
@@ -51,7 +46,13 @@ impl BodyIrDb {
         policy: BodyIrBuildPolicy,
     ) -> anyhow::Result<Self> {
         let mut interner = NameInterner::new();
-        Self::build_with_policy_and_interner(parse, def_map, semantic_ir, policy, &mut interner)
+        BodyIrDbBuilder::build_with_policy_and_interner(
+            parse,
+            def_map,
+            semantic_ir,
+            policy,
+            &mut interner,
+        )
     }
 
     /// Builds Body IR using an explicit package selection policy and retained name interner.
@@ -62,18 +63,13 @@ impl BodyIrDb {
         policy: BodyIrBuildPolicy,
         interner: &mut NameInterner,
     ) -> anyhow::Result<Self> {
-        let def_map_txn = def_map.read_txn(unexpected_package_loader());
-        let semantic_ir_txn = semantic_ir.read_txn(unexpected_package_loader());
-        let mut db = lower::build_db(
+        BodyIrDbBuilder::build_with_policy_and_interner(
             parse,
-            &semantic_ir_txn,
-            semantic_ir.package_count(),
+            def_map,
+            semantic_ir,
             policy,
             interner,
-        )?;
-        resolution::resolve_bodies(&mut db, &def_map_txn, &semantic_ir_txn);
-        db.shrink_to_fit();
-        Ok(db)
+        )
     }
 
     /// Returns a new Body IR snapshot with selected packages rebuilt against lazy read views.
@@ -89,70 +85,32 @@ impl BodyIrDb {
         semantic_ir_loader: PackageLoader<'db, PackageIr>,
         subset: &PackageSubset,
     ) -> anyhow::Result<Self> {
-        let mut next = self.clone();
-        let packages = normalized_package_slots(packages);
-        let semantic_ir_txn = semantic_ir.read_txn_for_subset(semantic_ir_loader, subset);
-
-        for package in &packages {
-            let package_ir = semantic_ir_txn.package(*package).with_context(|| {
-                format!(
-                    "while attempting to fetch semantic IR package {}",
-                    package.0
-                )
-            })?;
-            let target_count = package_ir.into_ref().targets().len();
-            let rebuilt = lower::build_package(
-                parse,
-                &semantic_ir_txn,
-                policy,
-                *package,
-                target_count,
-                interner,
-            )
-            .with_context(|| {
-                format!(
-                    "while attempting to lower rebuilt body IR package {}",
-                    package.0
-                )
-            })?;
-            next.packages.replace(*package, rebuilt).with_context(|| {
-                format!("while attempting to replace body IR package {}", package.0)
-            })?;
-        }
-
-        let def_map_txn = def_map.read_txn_for_subset(def_map_loader, subset);
-        resolution::resolve_bodies_for_packages(
-            &mut next,
-            &def_map_txn,
-            &semantic_ir_txn,
-            &packages,
+        BodyIrDbBuilder::rebuild_packages_with_interner_and_loaders(
+            self,
+            parse,
+            def_map,
+            semantic_ir,
+            policy,
+            packages,
+            interner,
+            def_map_loader,
+            semantic_ir_loader,
+            subset,
         )
-        .context("while attempting to resolve rebuilt body IR packages")?;
-        next.shrink_packages(&packages);
-        Ok(next)
     }
 
-    pub(crate) fn new(packages: Vec<PackageBodies>) -> Self {
+    pub(crate) fn from_packages(packages: Vec<PackageBodies>) -> Self {
         Self {
             packages: PackageStore::from_vec(packages),
         }
     }
 
-    fn shrink_to_fit(&mut self) {
-        self.packages.shrink_to_fit();
-        for entry in self.packages.raw_entries_mut() {
-            if let Some(package) = entry.as_resident_unique_mut() {
-                package.shrink_to_fit();
-            }
-        }
+    pub(crate) fn mutator(&mut self) -> BodyIrDbMutator<'_> {
+        BodyIrDbMutator { db: self }
     }
 
-    fn shrink_packages(&mut self, packages: &[PackageSlot]) {
-        for package in packages {
-            if let Some(package) = self.packages.get_unique_mut(*package) {
-                package.shrink_to_fit();
-            }
-        }
+    pub(crate) fn record_packages_memory_children(&self, recorder: &mut MemoryRecorder) {
+        self.packages.record_memory_children(recorder);
     }
 
     pub fn stats(&self) -> BodyIrStats {
@@ -184,7 +142,7 @@ impl BodyIrDb {
         stats
     }
 
-    /// Returns resident package-level body IR sets, skipping offloaded packages.
+    /// Returns the number of package slots tracked by this snapshot.
     pub fn package_count(&self) -> usize {
         self.packages.len()
     }
@@ -214,36 +172,43 @@ impl BodyIrDb {
     pub fn offload_package(&mut self, package: PackageSlot) -> Option<()> {
         self.packages.offload(package)
     }
+}
+
+pub(crate) struct BodyIrDbMutator<'db> {
+    db: &'db mut BodyIrDb,
+}
+
+impl BodyIrDbMutator<'_> {
+    pub(crate) fn package_count(&self) -> usize {
+        self.db.package_count()
+    }
+
+    pub(crate) fn replace_package(
+        &mut self,
+        package: PackageSlot,
+        bodies: PackageBodies,
+    ) -> Option<()> {
+        self.db.packages.replace(package, bodies)
+    }
 
     pub(crate) fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageBodies> {
-        self.packages.make_mut(package)
+        self.db.packages.make_mut(package)
     }
-}
 
-fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
-    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
-}
-
-struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
-
-impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnexpectedPackageLoader").finish()
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.db.packages.shrink_to_fit();
+        for entry in self.db.packages.raw_entries_mut() {
+            if let Some(package) = entry.as_resident_unique_mut() {
+                package.shrink_to_fit();
+            }
+        }
     }
-}
 
-impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
-    fn load(&self, package: PackageSlot) -> Result<Arc<T>, PackageStoreError> {
-        panic!(
-            "resident body IR query should not load offloaded package {}",
-            package.0,
-        )
+    pub(crate) fn shrink_packages(&mut self, packages: &[PackageSlot]) {
+        for package in packages {
+            if let Some(package) = self.db.packages.get_unique_mut(*package) {
+                package.shrink_to_fit();
+            }
+        }
     }
-}
-
-fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
-    let mut slots = packages.to_vec();
-    slots.sort_by_key(|slot| slot.0);
-    slots.dedup();
-    slots
 }
