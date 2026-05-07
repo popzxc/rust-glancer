@@ -22,7 +22,12 @@ exclude = [
   "test_targets/complex_crate",
   "test_targets/moderate_workspace",
   "test_targets/complex_workspace",
-  "test_targets/bench_target",
+  "test_targets/bench_fixtures/small_app",
+  "test_targets/bench_fixtures/synthetic_parse_heavy",
+  "test_targets/bench_fixtures/synthetic_item_tree_heavy",
+  "test_targets/bench_fixtures/synthetic_def_map_heavy",
+  "test_targets/bench_fixtures/synthetic_body_heavy",
+  "test_targets/bench_fixtures/rust-analyzer",
 ]
 resolver = "3"
 

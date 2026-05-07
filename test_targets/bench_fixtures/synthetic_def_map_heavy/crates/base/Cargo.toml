@@ -1,0 +1,4 @@
+[package]
+name = "bench_def_base"
+version = "0.1.0"
+edition = "2024"

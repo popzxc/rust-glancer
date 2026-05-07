@@ -5,3 +5,6 @@ editors/code/node_modules
 
 # This folder is for extra repos I want to check out as a reference / local documentation only
 reference/
+
+# Local benchmark fixtures fetched on demand.
+test_targets/bench_fixtures/rust-analyzer/
