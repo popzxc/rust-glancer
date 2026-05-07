@@ -19,6 +19,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("rust-glancer.restartServer", async () => {
       await manager?.restart();
     }),
+    vscode.commands.registerCommand("rust-glancer.reindexWorkspace", async () => {
+      await manager?.reindexWorkspace();
+    }),
   );
 
   await manager.start();

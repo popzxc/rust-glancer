@@ -156,6 +156,10 @@ impl EngineWorker {
                         worker.workspace_symbol(&query)
                     });
                 }
+                EngineCommand::ReindexWorkspace { respond_to } => {
+                    tracing::trace!("engine command started: reindex_workspace");
+                    let _ = respond_to.send(self.reindex_workspace());
+                }
                 EngineCommand::Shutdown(respond_to) => {
                     tracing::info!("shutting down LSP engine worker");
                     let _ = respond_to.send(Ok(()));
@@ -234,6 +238,31 @@ impl EngineWorker {
             workspace_root = %workspace_root.display(),
             elapsed_ms = started.elapsed().as_millis(),
             "workspace indexing finished"
+        );
+
+        Ok(())
+    }
+
+    fn reindex_workspace(&mut self) -> anyhow::Result<()> {
+        let started = Instant::now();
+        let memory_control = Arc::clone(&self.memory_control);
+        let project = self
+            .project
+            .as_mut()
+            .context("LSP engine is not initialized")?;
+
+        tracing::info!("manual workspace reindex started");
+        project
+            .reindex_workspace()
+            .context("while attempting to manually reindex workspace")?;
+        Self::post_project_build(
+            memory_control.as_ref(),
+            project.snapshot(),
+            "manual reindex",
+        );
+        tracing::info!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "manual workspace reindex finished"
         );
 
         Ok(())

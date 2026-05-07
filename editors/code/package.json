@@ -15,7 +15,8 @@
   "activationEvents": [
     "onLanguage:rust",
     "workspaceContains:Cargo.toml",
-    "onCommand:rust-glancer.restartServer"
+    "onCommand:rust-glancer.restartServer",
+    "onCommand:rust-glancer.reindexWorkspace"
   ],
   "contributes": {
     "languages": [
@@ -35,6 +36,10 @@
       {
         "command": "rust-glancer.restartServer",
         "title": "Rust Glancer: Restart Server"
+      },
+      {
+        "command": "rust-glancer.reindexWorkspace",
+        "title": "Rust Glancer: Reindex Workspace"
       }
     ],
     "configuration": {

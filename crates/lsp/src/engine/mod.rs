@@ -141,6 +141,11 @@ impl EngineHandle {
             .await
     }
 
+    pub(crate) async fn reindex_workspace(&self) -> anyhow::Result<()> {
+        self.request(|respond_to| EngineCommand::ReindexWorkspace { respond_to })
+            .await
+    }
+
     pub(crate) async fn shutdown(&self) -> anyhow::Result<()> {
         self.request(EngineCommand::Shutdown).await
     }

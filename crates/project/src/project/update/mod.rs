@@ -12,6 +12,12 @@ use workspace_graph::WorkspaceGraphChanges;
 
 pub(crate) use package::rebuild_resident_from_source;
 
+pub(super) fn reindex_workspace(project: &mut Project) -> anyhow::Result<()> {
+    workspace::rebuild_workspace_graph(project, &[])
+        .context("while attempting to reindex analysis project from workspace root")?;
+    Ok(())
+}
+
 pub(super) fn apply_changes(
     project: &mut Project,
     changes: Vec<SavedFileChange>,

@@ -23,8 +23,20 @@ export class StatusView implements vscode.Disposable {
     }
 
     this.details = details;
-    this.item.text = "$(sync~spin) Rust Glancer";
+    this.item.text = "$(sync~spin) Rust Glancer: starting";
     this.item.tooltip = this.tooltip("Starting");
+    this.item.backgroundColor = undefined;
+    this.item.show();
+  }
+
+  public indexing(details: StatusDetails = this.details): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.details = details;
+    this.item.text = "$(sync~spin) Rust Glancer: indexing";
+    this.item.tooltip = this.tooltip("Indexing workspace");
     this.item.backgroundColor = undefined;
     this.item.show();
   }
@@ -35,7 +47,7 @@ export class StatusView implements vscode.Disposable {
     }
 
     this.details = details;
-    this.item.text = "$(check) Rust Glancer";
+    this.item.text = "$(check) Rust Glancer: ready";
     this.item.tooltip = this.tooltip("Ready");
     this.item.backgroundColor = undefined;
     this.item.show();
@@ -47,9 +59,35 @@ export class StatusView implements vscode.Disposable {
     }
 
     this.details = details;
-    this.item.text = "$(warning) Rust Glancer";
-    this.item.tooltip = this.tooltip("Stale: save to update");
+    this.item.text = "$(warning) Rust Glancer: stale until save";
+    this.item.tooltip = this.tooltip("Stale until save");
     this.item.backgroundColor = undefined;
+    this.item.show();
+  }
+
+  public checkRunning(command: string | undefined, details: StatusDetails = this.details): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.details = details;
+    this.item.text = "$(sync~spin) Rust Glancer: cargo check running";
+    this.item.tooltip = this.tooltip(
+      command === undefined ? "Cargo check running" : `Cargo check running: ${command}`,
+    );
+    this.item.backgroundColor = undefined;
+    this.item.show();
+  }
+
+  public checkFailed(details: StatusDetails = this.details): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.details = details;
+    this.item.text = "$(error) Rust Glancer: cargo check failed";
+    this.item.tooltip = this.tooltip("Cargo check failed");
+    this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
     this.item.show();
   }
 
@@ -59,7 +97,7 @@ export class StatusView implements vscode.Disposable {
     }
 
     this.details = details;
-    this.item.text = "$(circle-slash) Rust Glancer";
+    this.item.text = "$(circle-slash) Rust Glancer: stopped";
     this.item.tooltip = this.tooltip(`Stopped: ${reason}`);
     this.item.backgroundColor = undefined;
     this.item.show();
@@ -71,7 +109,7 @@ export class StatusView implements vscode.Disposable {
     }
 
     this.details = details;
-    this.item.text = "$(error) Rust Glancer";
+    this.item.text = "$(error) Rust Glancer: failed";
     this.item.tooltip = this.tooltip(`Failed: ${reason}`);
     this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
     this.item.show();

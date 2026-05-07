@@ -47,8 +47,13 @@ The first server startup may take longer because Cargo builds the release
 binary. Later restarts reuse Cargo's release artifacts.
 
 When the extension is active, VS Code shows a `Rust Glancer` status bar item.
-It displays startup, ready, stopped, and failed states; hover it to see the
-workspace root and server command, or click it to restart the server.
+It displays startup, ready, dirty-buffer, Cargo diagnostics, stopped, and
+failed states; hover it to see the workspace root and server command, or click
+it to restart the server.
+
+The command palette also exposes `Rust Glancer: Reindex Workspace`, which asks
+the language server to rebuild workspace analysis from the current saved files
+and Cargo metadata.
 
 If the Extension Development Host opens but `Rust Glancer` is missing from
 the Output panel and the command palette, VS Code probably launched the wrong

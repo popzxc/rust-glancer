@@ -74,6 +74,11 @@ impl Project {
             .context("while attempting to recover analysis project after package cache load failed")
     }
 
+    /// Rebuilds the whole project from the current workspace graph and saved source files.
+    pub fn reindex_workspace(&mut self) -> anyhow::Result<()> {
+        update::reindex_workspace(self)
+    }
+
     /// Applies one saved file replacement and refreshes derived analysis state.
     pub fn apply_change(
         &mut self,

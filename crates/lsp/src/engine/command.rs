@@ -53,5 +53,8 @@ pub(super) enum EngineCommand {
         query: String,
         respond_to: EngineResponse<Vec<ls_types::WorkspaceSymbol>>,
     },
+    ReindexWorkspace {
+        respond_to: EngineResponse<()>,
+    },
     Shutdown(EngineResponse<()>),
 }

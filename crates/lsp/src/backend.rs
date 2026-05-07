@@ -107,4 +107,8 @@ impl LanguageServer for Backend {
     ) -> Result<Option<WorkspaceSymbolResponse>> {
         methods::workspace::symbol::symbol(&self.ctx, params).await
     }
+
+    async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<LSPAny>> {
+        methods::workspace::execute_command::execute_command(&self.ctx, params).await
+    }
 }

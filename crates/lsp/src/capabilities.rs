@@ -1,5 +1,7 @@
 use tower_lsp_server::ls_types::*;
 
+use crate::commands;
+
 pub(crate) fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
         position_encoding: Some(PositionEncodingKind::UTF16),
@@ -22,6 +24,10 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             ..Default::default()
         }),
         document_symbol_provider: Some(OneOf::Left(true)),
+        execute_command_provider: Some(ExecuteCommandOptions {
+            commands: vec![commands::REINDEX_WORKSPACE.to_string()],
+            ..Default::default()
+        }),
         inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
             InlayHintOptions {
                 resolve_provider: Some(false),
@@ -43,6 +49,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
 #[cfg(test)]
 mod tests {
     use super::server_capabilities;
+    use crate::commands;
     use tower_lsp_server::ls_types::{TextDocumentSyncCapability, TextDocumentSyncKind};
 
     #[test]
@@ -66,6 +73,17 @@ mod tests {
     fn advertises_hover_support() {
         let capabilities = server_capabilities();
         assert!(capabilities.hover_provider.is_some());
+    }
+
+    #[test]
+    fn advertises_manual_reindex_command() {
+        let capabilities = server_capabilities();
+        let commands = capabilities
+            .execute_command_provider
+            .expect("execute command provider should be advertised")
+            .commands;
+
+        assert_eq!(commands, [commands::REINDEX_WORKSPACE]);
     }
 
     #[test]

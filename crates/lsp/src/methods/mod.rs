@@ -21,7 +21,8 @@ pub(crate) async fn initialize(
     };
 
     let check_config =
-        CheckConfig::from_initialization_options(params.initialization_options.as_ref());
+        CheckConfig::from_initialization_options(params.initialization_options.as_ref())
+            .map_err(|error| Error::invalid_params(error.to_string()))?;
     let analysis_config =
         AnalysisConfig::from_initialization_options(params.initialization_options.as_ref());
     ctx.check.configure(root.clone(), check_config).await;
