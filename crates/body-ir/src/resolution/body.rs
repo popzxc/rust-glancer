@@ -339,7 +339,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         }
 
         for nominal_ty in receiver_ty.nominal_tys() {
-            for function_ref in self.semantic_functions_for_type(nominal_ty)? {
+            for function_ref in self.semantic_functions_for_type(nominal_ty, method_name)? {
                 let Some(function_data) = self.semantic_ir.function_data(function_ref)? else {
                     continue;
                 };
@@ -434,11 +434,13 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
     fn semantic_functions_for_type(
         &self,
         ty: &BodyNominalTy,
+        method_name: &str,
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
         for function in self
             .semantic_index
-            .inherent_functions_for_type(self.semantic_ir, ty.def)?
+            .inherent_functions_for_type_and_name(ty.def, method_name)
+            .to_vec()
         {
             if semantic_function_applies_to_receiver(self.def_map, self.semantic_ir, function, ty)?
             {
@@ -451,6 +453,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             self.def_map,
             self.semantic_ir,
             ty,
+            Some(method_name),
         )? {
             push_unique(&mut functions, function);
         }
@@ -838,6 +841,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             self.def_map,
             self.semantic_ir,
             ty,
+            None,
         )? {
             push_unique(&mut functions, function);
         }

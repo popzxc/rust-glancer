@@ -107,6 +107,7 @@ pub(super) fn semantic_trait_function_candidates_for_receiver(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     receiver_ty: &BodyNominalTy,
+    method_name: Option<&str>,
 ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
     let mut functions = Vec::new();
     let trait_impls = match index {
@@ -115,18 +116,53 @@ pub(super) fn semantic_trait_function_candidates_for_receiver(
     };
 
     for trait_impl in trait_impls {
+        // For method calls, the name is known before we do any trait-impl compatibility work.
+        // If the indexed trait has no function with that name, this impl cannot contribute a
+        // candidate regardless of how well the impl header matches the receiver.
+        let mut indexed_trait_functions = None;
+        if let (Some(index), Some(method_name)) = (index, method_name)
+            && let Some(functions) =
+                index.trait_functions_by_name(trait_impl.trait_ref, method_name)
+        {
+            if functions.is_empty() {
+                continue;
+            }
+            indexed_trait_functions = Some(functions.to_vec());
+        }
+
         let applicability =
             semantic_trait_impl_applicability(def_map, semantic_ir, trait_impl, receiver_ty)?;
         if !applicability.is_applicable() {
             continue;
         }
 
-        let trait_functions = match index {
-            Some(index) => match index.trait_functions(trait_impl.trait_ref) {
-                Some(functions) => functions.to_vec(),
+        let trait_functions = if let Some(functions) = indexed_trait_functions {
+            functions
+        } else {
+            let trait_functions = match index {
+                Some(index) => match index.trait_functions(trait_impl.trait_ref) {
+                    Some(functions) => functions.to_vec(),
+                    None => semantic_ir.trait_functions(trait_impl.trait_ref)?,
+                },
                 None => semantic_ir.trait_functions(trait_impl.trait_ref)?,
-            },
-            None => semantic_ir.trait_functions(trait_impl.trait_ref)?,
+            };
+
+            // The direct Semantic IR fallback cannot skip the impl check up front, but it can
+            // still avoid returning unrelated trait functions to the later method-call filter.
+            if let Some(method_name) = method_name {
+                let mut retained = Vec::new();
+                for function in trait_functions {
+                    let Some(function_data) = semantic_ir.function_data(function)? else {
+                        continue;
+                    };
+                    if function_data.name == method_name {
+                        retained.push(function);
+                    }
+                }
+                retained
+            } else {
+                trait_functions
+            }
         };
         for function in trait_functions {
             push_function_candidate(&mut functions, function, applicability);

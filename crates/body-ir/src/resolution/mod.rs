@@ -103,7 +103,13 @@ pub(super) fn semantic_trait_function_candidates_for_receiver(
     semantic_ir: &SemanticIrReadTxn<'_>,
     receiver_ty: &BodyNominalTy,
 ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
-    semantic_trait_function_candidates_for_receiver_impl(None, def_map, semantic_ir, receiver_ty)
+    semantic_trait_function_candidates_for_receiver_impl(
+        None,
+        def_map,
+        semantic_ir,
+        receiver_ty,
+        None,
+    )
 }
 
 pub(super) fn local_function_applies_to_receiver(
