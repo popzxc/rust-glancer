@@ -32,5 +32,9 @@ build-client:
 
 check-client:
     npm --prefix editors/code run check
+    npm --prefix editors/code run check:test
+
+test-client:
+    npm --prefix editors/code run test
 
 pr-ready: test lint deny check-test-targets build-client check-client

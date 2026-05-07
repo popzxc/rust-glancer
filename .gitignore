@@ -2,6 +2,8 @@ target
 .DS_Store
 editors/code/dist
 editors/code/node_modules
+editors/code/out
+editors/code/.vscode-test
 
 # This folder is for extra repos I want to check out as a reference / local documentation only
 reference/

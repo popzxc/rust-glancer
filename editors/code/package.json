@@ -145,7 +145,10 @@
   },
   "scripts": {
     "check": "tsc --noEmit -p .",
+    "check:test": "tsc --noEmit -p tsconfig.test.json",
     "compile": "npm run check && esbuild ./src/extension.ts --bundle --external:vscode --format=cjs --platform=node --target=node18 --sourcemap --outfile=dist/extension.js",
+    "compile:test": "tsc -p tsconfig.test.json",
+    "test": "npm run compile && npm run compile:test && cargo build --release -p rust-glancer && RUST_GLANCER_EXTENSION_TEST=1 __RUST_GLANCER_SERVER=\"$(pwd)/../../target/release/rust-glancer\" vscode-test",
     "watch": "tsc --noEmit -watch -p .",
     "vscode:prepublish": "npm run compile"
   },
@@ -153,8 +156,11 @@
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.30",
     "@types/vscode": "^1.88.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.28.0",
     "typescript": "^5.4.5"
   }

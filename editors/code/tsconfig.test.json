@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "out",
+    "sourceMap": true,
+    "types": [
+      "mocha",
+      "node",
+      "vscode"
+    ]
+  },
+  "include": [
+    "test"
+  ]
+}

@@ -3,38 +3,33 @@ import {
   ExecuteCommandRequest,
   LanguageClient,
   State,
-  type ProgressToken,
   type LanguageClientOptions,
   Trace,
-  type WorkDoneProgressBegin,
-  type WorkDoneProgressEnd,
-  type WorkDoneProgressReport,
 } from "vscode-languageclient/node";
 
+import { SERVER_COMMANDS } from "./commands";
 import { ExtensionConfig, type TraceSetting } from "./config";
+import { ClientStatus, type ClientStatusSnapshot } from "./client_status";
 import { hoverMiddleware } from "./hover_actions";
 import { ResolvedServer } from "./server";
-import { StatusView, type StatusDetails } from "./status";
+import { StatusView } from "./status";
 
-const REINDEX_WORKSPACE_COMMAND = "rust-glancer.internal.reindexWorkspace";
-const CARGO_DIAGNOSTICS_PROGRESS_TITLE = "Cargo diagnostics";
+export interface ClientManagerSnapshot extends ClientStatusSnapshot {
+  readonly hasClient: boolean;
+}
 
 export class ClientManager implements vscode.Disposable {
   private client: LanguageClient | undefined;
   private clientState: vscode.Disposable | undefined;
-  private currentStatusDetails: StatusDetails | undefined;
-  private running = false;
-  private checkRunning = false;
-  private checkFailed = false;
-  private checkCommand: string | undefined;
-  private readonly checkProgressTokens = new Set<ProgressToken>();
+  private readonly clientStatus: ClientStatus;
   private readonly editorStateListeners: vscode.Disposable;
 
   public constructor(
     private readonly extensionPath: string,
     private readonly output: vscode.OutputChannel,
-    private readonly status: StatusView,
+    status: StatusView,
   ) {
+    this.clientStatus = new ClientStatus(status);
     this.editorStateListeners = vscode.Disposable.from(
       vscode.window.onDidChangeActiveTextEditor(() => this.updateDocumentFreshnessStatus()),
       vscode.workspace.onDidChangeTextDocument((event) => {
@@ -63,7 +58,7 @@ export class ClientManager implements vscode.Disposable {
     const workspaceFolder = await this.workspaceFolder();
     if (workspaceFolder === undefined) {
       this.output.appendLine("no Cargo workspace folder found; rust-glancer server was not started");
-      this.status.stopped("no Cargo workspace folder");
+      this.clientStatus.stopped("no Cargo workspace folder");
       return;
     }
 
@@ -74,12 +69,11 @@ export class ClientManager implements vscode.Disposable {
       serverCommand: ResolvedServer.commandLine(server),
       serverSource: server.source,
     };
-    this.currentStatusDetails = statusDetails;
 
     this.output.appendLine(`workspace root: ${workspaceFolder.uri.fsPath}`);
     this.output.appendLine(`server command: ${statusDetails.serverCommand}`);
     this.output.appendLine(`server source: ${statusDetails.serverSource}`);
-    this.status.starting(statusDetails);
+    this.clientStatus.starting(statusDetails);
 
     const clientOptions: LanguageClientOptions = {
       documentSelector: [
@@ -111,18 +105,15 @@ export class ClientManager implements vscode.Disposable {
     this.clientState = client.onDidChangeState((event) => {
       switch (event.newState) {
         case State.Starting:
-          this.running = false;
-          this.status.starting(statusDetails);
+          this.clientStatus.starting(statusDetails);
           break;
         case State.Running:
-          this.running = true;
-          this.status.ready(statusDetails);
+          this.clientStatus.ready(statusDetails);
           this.updateDocumentFreshnessStatus();
           break;
         case State.Stopped:
-          this.running = false;
           if (this.client === client) {
-            this.status.stopped("language client stopped", statusDetails);
+            this.clientStatus.stopped("language client stopped", statusDetails);
           }
           break;
       }
@@ -131,19 +122,14 @@ export class ClientManager implements vscode.Disposable {
     try {
       await client.start();
       await client.setTrace(trace(config.traceServer));
-      this.running = true;
-      this.status.ready(statusDetails);
+      this.clientStatus.ready(statusDetails);
       this.updateDocumentFreshnessStatus();
       this.output.appendLine("rust-glancer client started");
     } catch (error) {
       this.client = undefined;
       this.clientState?.dispose();
       this.clientState = undefined;
-      this.running = false;
-      this.checkRunning = false;
-      this.checkFailed = false;
-      this.checkCommand = undefined;
-      this.status.failed(String(error), statusDetails);
+      this.clientStatus.failed(String(error), statusDetails);
       this.output.appendLine(`rust-glancer client failed to start: ${String(error)}`);
       void vscode.window.showErrorMessage(
         "Rust Glancer failed to start. Check the Rust Glancer output for details.",
@@ -159,24 +145,24 @@ export class ClientManager implements vscode.Disposable {
 
   public async reindexWorkspace(): Promise<void> {
     const client = this.client;
-    if (!this.running || client === undefined || this.currentStatusDetails === undefined) {
+    if (!this.clientStatus.isRunning() || client === undefined) {
       void vscode.window.showWarningMessage("Rust Glancer is not running.");
       return;
     }
 
     this.output.appendLine("reindexing rust-glancer workspace");
-    this.status.indexing(this.currentStatusDetails);
+    this.clientStatus.indexing();
 
     try {
       await client.sendRequest(ExecuteCommandRequest.type, {
-        command: REINDEX_WORKSPACE_COMMAND,
+        command: SERVER_COMMANDS.reindexWorkspace,
         arguments: [],
       });
       this.output.appendLine("rust-glancer workspace reindex finished");
-      this.updateStatus();
+      this.updateDocumentFreshnessStatus();
     } catch (error) {
       this.output.appendLine(`rust-glancer workspace reindex failed: ${String(error)}`);
-      this.status.failed(`reindex failed: ${String(error)}`, this.currentStatusDetails);
+      this.clientStatus.operationFailed(`reindex failed: ${String(error)}`);
       void vscode.window.showErrorMessage(
         "Rust Glancer failed to reindex the workspace. Check the Rust Glancer output for details.",
       );
@@ -188,18 +174,21 @@ export class ClientManager implements vscode.Disposable {
     this.client = undefined;
     this.clientState?.dispose();
     this.clientState = undefined;
-    this.running = false;
-    this.checkRunning = false;
-    this.checkFailed = false;
-    this.checkCommand = undefined;
-    this.checkProgressTokens.clear();
 
     if (client !== undefined) {
       await client.stop();
       this.output.appendLine("rust-glancer client stopped");
     }
 
-    this.status.stopped("not running");
+    this.clientStatus.stopped("not running");
+  }
+
+  public snapshot(): ClientManagerSnapshot {
+    const status = this.clientStatus.snapshot();
+    return {
+      hasClient: this.client !== undefined,
+      ...status,
+    };
   }
 
   public dispose(): void {
@@ -208,66 +197,26 @@ export class ClientManager implements vscode.Disposable {
   }
 
   private updateDocumentFreshnessStatus(): void {
-    this.updateStatus();
-  }
-
-  private updateStatus(): void {
-    if (!this.running || this.currentStatusDetails === undefined) {
-      return;
-    }
-
-    const document = vscode.window.activeTextEditor?.document;
-    if (document !== undefined && this.isRustFile(document) && document.isDirty) {
-      this.status.stale(this.currentStatusDetails);
-    } else if (this.checkRunning) {
-      this.status.checkRunning(this.checkCommand, this.currentStatusDetails);
-    } else if (this.checkFailed) {
-      this.status.checkFailed(this.currentStatusDetails);
-    } else {
-      this.status.ready(this.currentStatusDetails);
-    }
+    this.clientStatus.refresh(this.isActiveRustDocumentDirty());
   }
 
   private middleware(): LanguageClientOptions["middleware"] {
     return {
       ...hoverMiddleware(() => this.client, this.output),
       handleWorkDoneProgress: (token, params, next) => {
-        this.handleWorkDoneProgress(token, params);
+        this.clientStatus.handleWorkDoneProgress(
+          token,
+          params,
+          this.isActiveRustDocumentDirty(),
+        );
         next(token, params);
       },
     };
   }
 
-  private handleWorkDoneProgress(
-    token: ProgressToken,
-    params: WorkDoneProgressBegin | WorkDoneProgressReport | WorkDoneProgressEnd,
-  ): void {
-    if (params.kind === "begin") {
-      if (params.title !== CARGO_DIAGNOSTICS_PROGRESS_TITLE) {
-        return;
-      }
-
-      this.checkProgressTokens.add(token);
-      this.checkRunning = true;
-      this.checkFailed = false;
-      this.checkCommand = params.message;
-      this.updateStatus();
-      return;
-    }
-
-    if (!this.checkProgressTokens.has(token)) {
-      return;
-    }
-
-    if (params.kind === "end") {
-      this.checkProgressTokens.delete(token);
-      this.checkRunning = this.checkProgressTokens.size > 0;
-      this.checkFailed = params.message === "Failed";
-      if (!this.checkRunning) {
-        this.checkCommand = undefined;
-      }
-      this.updateStatus();
-    }
+  private isActiveRustDocumentDirty(): boolean {
+    const document = vscode.window.activeTextEditor?.document;
+    return document !== undefined && this.isRustFile(document) && document.isDirty;
   }
 
   private isRustFile(document: vscode.TextDocument): boolean {

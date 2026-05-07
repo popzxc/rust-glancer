@@ -1,5 +1,9 @@
 node_modules/**
 src/**
+test/**
+out/**
 .vscode/**
+.vscode-test.mjs
 tsconfig.json
+tsconfig.test.json
 *.map
