@@ -12,7 +12,7 @@ use std::{
 use anyhow::Context as _;
 use ra_syntax::{
     AstNode as _,
-    ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
+    ast::{self, HasAttrs, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
 use rg_arena::Arena;
 
@@ -115,7 +115,7 @@ impl<'db> PackageLowering<'db> {
             })?;
             (
                 syntax.items().collect::<Vec<_>>(),
-                Documentation::inner_from_ast(syntax),
+                Documentation::inner_from_ast(&syntax),
                 parsed_file.line_index().clone(),
                 ModuleFileContext::from_definition_file(parsed_file.path()),
             )
@@ -400,8 +400,13 @@ impl<'db> PackageLowering<'db> {
                 },
             });
         };
-        // TODO: support `#[path = "..."]` and other advanced module-resolution rules when needed.
-        let Some(module_file_path) = module_file_context.resolve_child_file(&module_name) else {
+        let module_file_path = if let Some(path_attr) = module_path_attr(item) {
+            module_file_context.resolve_path_attr_file(&path_attr)
+        } else {
+            module_file_context.resolve_child_file(&module_name)
+        };
+
+        let Some(module_file_path) = module_file_path else {
             return Ok(ModuleItem {
                 inner_docs: None,
                 source: ModuleSource::OutOfLine {
@@ -658,6 +663,43 @@ impl ModuleFileContext {
 
         None
     }
+
+    /// Resolves the basic literal form of `#[path = "..."]` relative to the current module.
+    fn resolve_path_attr_file(&self, path_attr: &str) -> Option<PathBuf> {
+        let path_attr = Path::new(path_attr);
+        if path_attr.as_os_str().is_empty() || path_attr.is_absolute() {
+            return None;
+        }
+
+        let file = self.child_module_dir.join(path_attr);
+        file.exists().then_some(file)
+    }
+}
+
+/// Extracts the basic `#[path = "..."]` module override.
+///
+/// This intentionally handles only direct string-literal attributes. More advanced forms such as
+/// `cfg_attr` can be added later when the rest of the module system needs them.
+fn module_path_attr(item: &ast::Module) -> Option<String> {
+    for attr in item.attrs() {
+        if !attr.kind().is_outer() || attr.simple_name().as_deref() != Some("path") {
+            continue;
+        }
+
+        let Some(ast::Meta::KeyValueMeta(meta)) = attr.meta() else {
+            continue;
+        };
+        let Some(ast::Expr::Literal(literal)) = meta.expr() else {
+            continue;
+        };
+        let ast::LiteralKind::String(path) = literal.kind() else {
+            continue;
+        };
+
+        return path.value().ok().map(|path| path.into_owned());
+    }
+
+    None
 }
 
 /// Keeps the original `use ...` text in a compact, human-readable form for debugging and tests.

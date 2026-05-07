@@ -21,12 +21,17 @@ pub(crate) async fn initialize(
     };
 
     let check_config =
-        CheckConfig::from_initialization_options(params.initialization_options.as_ref());
+        CheckConfig::from_initialization_options(params.initialization_options.as_ref())
+            .map_err(|error| Error::invalid_params(error.to_string()))?;
     let analysis_config =
         AnalysisConfig::from_initialization_options(params.initialization_options.as_ref());
     ctx.check.configure(root.clone(), check_config).await;
     ctx.engine
-        .initialize(root, analysis_config.package_residency_policy)
+        .initialize(
+            root,
+            analysis_config.package_residency_policy,
+            analysis_config.cargo_metadata_config,
+        )
         .await
         .map_err(internal_error)?;
 
@@ -38,6 +43,13 @@ pub(crate) async fn initialize(
         }),
         offset_encoding: None,
     })
+}
+
+pub(crate) async fn initialized(ctx: &ServerContext, _: InitializedParams) {
+    ctx.client
+        .log_message(MessageType::INFO, "rust-glancer initialized")
+        .await;
+    ctx.check.launch_on_startup().await;
 }
 
 pub(crate) async fn shutdown(ctx: &ServerContext) -> Result<()> {

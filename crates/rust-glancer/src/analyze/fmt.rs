@@ -50,29 +50,77 @@ pub(super) fn print_project_summary(project: &Project) {
     );
 }
 
+pub(super) fn print_analysis_setup_profile(
+    metadata_elapsed: std::time::Duration,
+    workspace_elapsed: std::time::Duration,
+    sysroot_elapsed: std::time::Duration,
+) {
+    let mut elapsed = std::time::Duration::default();
+
+    println!();
+    println!("analysis setup profile:");
+    println!("  {:>10}  {:>10}  checkpoint", "phase", "elapsed");
+
+    for (label, phase_elapsed) in [
+        ("cargo metadata", metadata_elapsed),
+        ("workspace metadata", workspace_elapsed),
+        ("sysroot discovery", sysroot_elapsed),
+    ] {
+        elapsed += phase_elapsed;
+        print_build_profile_timing_row(
+            format_duration(phase_elapsed),
+            format_duration(elapsed),
+            label,
+        );
+    }
+}
+
 pub(super) fn print_build_profile(profile: &BuildProfile, purge: Option<&AllocatorPurgeReport>) {
     println!();
     println!("build profile:");
-    println!(
-        "  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  checkpoint",
-        "elapsed", "rg_sampled", "rg_total", "j_allocated", "j_active", "j_resident"
-    );
+    let includes_memory = purge.is_some()
+        || profile.checkpoints().iter().any(|checkpoint| {
+            checkpoint.retained_bytes.is_some()
+                || checkpoint.active_retained_bytes.is_some()
+                || checkpoint.allocated_bytes.is_some()
+                || checkpoint.active_bytes.is_some()
+                || checkpoint.resident_bytes.is_some()
+        });
+
+    if includes_memory {
+        println!(
+            "  {:>10}  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  checkpoint",
+            "phase", "elapsed", "rg_sampled", "rg_total", "j_allocated", "j_active", "j_resident"
+        );
+    } else {
+        println!("  {:>10}  {:>10}  checkpoint", "phase", "elapsed");
+    }
 
     for checkpoint in profile.checkpoints() {
-        print_build_profile_row(
-            format_duration(checkpoint.elapsed),
-            checkpoint.retained_bytes,
-            checkpoint.active_retained_bytes,
-            checkpoint.allocated_bytes,
-            checkpoint.active_bytes,
-            checkpoint.resident_bytes,
-            checkpoint.label,
-        );
+        if includes_memory {
+            print_build_profile_memory_row(
+                format_duration(checkpoint.phase_elapsed),
+                format_duration(checkpoint.elapsed),
+                checkpoint.retained_bytes,
+                checkpoint.active_retained_bytes,
+                checkpoint.allocated_bytes,
+                checkpoint.active_bytes,
+                checkpoint.resident_bytes,
+                checkpoint.label,
+            );
+        } else {
+            print_build_profile_timing_row(
+                format_duration(checkpoint.phase_elapsed),
+                format_duration(checkpoint.elapsed),
+                checkpoint.label,
+            );
+        }
     }
 
     if let Some(purge) = purge {
         let project_checkpoint = profile.checkpoints().last();
-        print_build_profile_row(
+        print_build_profile_memory_row(
+            "-".to_string(),
             "-".to_string(),
             project_checkpoint.and_then(|checkpoint| checkpoint.retained_bytes),
             project_checkpoint.and_then(|checkpoint| checkpoint.active_retained_bytes),
@@ -138,7 +186,13 @@ pub(super) fn print_allocator_purge_after_build(purge: &AllocatorPurgeReport) {
     }
 }
 
-fn print_build_profile_row(
+fn print_build_profile_timing_row(phase_elapsed: String, elapsed: String, label: &'static str) {
+    println!("  {phase_elapsed:>10}  {elapsed:>10}  {label}");
+}
+
+#[allow(clippy::too_many_arguments)]
+fn print_build_profile_memory_row(
+    phase_elapsed: String,
     elapsed: String,
     retained_bytes: Option<usize>,
     active_retained_bytes: Option<usize>,
@@ -148,7 +202,8 @@ fn print_build_profile_row(
     label: &'static str,
 ) {
     println!(
-        "  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  {}",
+        "  {:>10}  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  {}",
+        phase_elapsed,
         elapsed,
         retained_bytes
             .map(format_bytes)

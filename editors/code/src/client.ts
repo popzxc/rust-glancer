@@ -1,28 +1,35 @@
 import * as vscode from "vscode";
 import {
+  ExecuteCommandRequest,
   LanguageClient,
   State,
   type LanguageClientOptions,
   Trace,
 } from "vscode-languageclient/node";
 
+import { SERVER_COMMANDS } from "./commands";
 import { ExtensionConfig, type TraceSetting } from "./config";
+import { ClientStatus, type ClientStatusSnapshot } from "./client_status";
 import { hoverMiddleware } from "./hover_actions";
 import { ResolvedServer } from "./server";
-import { StatusView, type StatusDetails } from "./status";
+import { StatusView } from "./status";
+
+export interface ClientManagerSnapshot extends ClientStatusSnapshot {
+  readonly hasClient: boolean;
+}
 
 export class ClientManager implements vscode.Disposable {
   private client: LanguageClient | undefined;
   private clientState: vscode.Disposable | undefined;
-  private currentStatusDetails: StatusDetails | undefined;
-  private running = false;
+  private readonly clientStatus: ClientStatus;
   private readonly editorStateListeners: vscode.Disposable;
 
   public constructor(
     private readonly extensionPath: string,
     private readonly output: vscode.OutputChannel,
-    private readonly status: StatusView,
+    status: StatusView,
   ) {
+    this.clientStatus = new ClientStatus(status);
     this.editorStateListeners = vscode.Disposable.from(
       vscode.window.onDidChangeActiveTextEditor(() => this.updateDocumentFreshnessStatus()),
       vscode.workspace.onDidChangeTextDocument((event) => {
@@ -51,7 +58,7 @@ export class ClientManager implements vscode.Disposable {
     const workspaceFolder = await this.workspaceFolder();
     if (workspaceFolder === undefined) {
       this.output.appendLine("no Cargo workspace folder found; rust-glancer server was not started");
-      this.status.stopped("no Cargo workspace folder");
+      this.clientStatus.stopped("no Cargo workspace folder");
       return;
     }
 
@@ -62,12 +69,11 @@ export class ClientManager implements vscode.Disposable {
       serverCommand: ResolvedServer.commandLine(server),
       serverSource: server.source,
     };
-    this.currentStatusDetails = statusDetails;
 
     this.output.appendLine(`workspace root: ${workspaceFolder.uri.fsPath}`);
     this.output.appendLine(`server command: ${statusDetails.serverCommand}`);
     this.output.appendLine(`server source: ${statusDetails.serverSource}`);
-    this.status.starting(statusDetails);
+    this.clientStatus.starting(statusDetails);
 
     const clientOptions: LanguageClientOptions = {
       documentSelector: [
@@ -81,9 +87,10 @@ export class ClientManager implements vscode.Disposable {
       traceOutputChannel: this.output,
       initializationOptions: {
         check: config.check,
+        cargo: config.cargo,
         cache: config.cache,
       },
-      middleware: hoverMiddleware(() => this.client, this.output),
+      middleware: this.middleware(),
       workspaceFolder,
     };
 
@@ -98,18 +105,15 @@ export class ClientManager implements vscode.Disposable {
     this.clientState = client.onDidChangeState((event) => {
       switch (event.newState) {
         case State.Starting:
-          this.running = false;
-          this.status.starting(statusDetails);
+          this.clientStatus.starting(statusDetails);
           break;
         case State.Running:
-          this.running = true;
-          this.status.ready(statusDetails);
+          this.clientStatus.ready(statusDetails);
           this.updateDocumentFreshnessStatus();
           break;
         case State.Stopped:
-          this.running = false;
           if (this.client === client) {
-            this.status.stopped("language client stopped", statusDetails);
+            this.clientStatus.stopped("language client stopped", statusDetails);
           }
           break;
       }
@@ -118,16 +122,14 @@ export class ClientManager implements vscode.Disposable {
     try {
       await client.start();
       await client.setTrace(trace(config.traceServer));
-      this.running = true;
-      this.status.ready(statusDetails);
+      this.clientStatus.ready(statusDetails);
       this.updateDocumentFreshnessStatus();
       this.output.appendLine("rust-glancer client started");
     } catch (error) {
       this.client = undefined;
       this.clientState?.dispose();
       this.clientState = undefined;
-      this.running = false;
-      this.status.failed(String(error), statusDetails);
+      this.clientStatus.failed(String(error), statusDetails);
       this.output.appendLine(`rust-glancer client failed to start: ${String(error)}`);
       void vscode.window.showErrorMessage(
         "Rust Glancer failed to start. Check the Rust Glancer output for details.",
@@ -141,19 +143,52 @@ export class ClientManager implements vscode.Disposable {
     await this.start();
   }
 
+  public async reindexWorkspace(): Promise<void> {
+    const client = this.client;
+    if (!this.clientStatus.isRunning() || client === undefined) {
+      void vscode.window.showWarningMessage("Rust Glancer is not running.");
+      return;
+    }
+
+    this.output.appendLine("reindexing rust-glancer workspace");
+    this.clientStatus.indexing();
+
+    try {
+      await client.sendRequest(ExecuteCommandRequest.type, {
+        command: SERVER_COMMANDS.reindexWorkspace,
+        arguments: [],
+      });
+      this.output.appendLine("rust-glancer workspace reindex finished");
+      this.updateDocumentFreshnessStatus();
+    } catch (error) {
+      this.output.appendLine(`rust-glancer workspace reindex failed: ${String(error)}`);
+      this.clientStatus.operationFailed(`reindex failed: ${String(error)}`);
+      void vscode.window.showErrorMessage(
+        "Rust Glancer failed to reindex the workspace. Check the Rust Glancer output for details.",
+      );
+    }
+  }
+
   public async stop(): Promise<void> {
     const client = this.client;
     this.client = undefined;
     this.clientState?.dispose();
     this.clientState = undefined;
-    this.running = false;
 
     if (client !== undefined) {
       await client.stop();
       this.output.appendLine("rust-glancer client stopped");
     }
 
-    this.status.stopped("not running");
+    this.clientStatus.stopped("not running");
+  }
+
+  public snapshot(): ClientManagerSnapshot {
+    const status = this.clientStatus.snapshot();
+    return {
+      hasClient: this.client !== undefined,
+      ...status,
+    };
   }
 
   public dispose(): void {
@@ -162,16 +197,26 @@ export class ClientManager implements vscode.Disposable {
   }
 
   private updateDocumentFreshnessStatus(): void {
-    if (!this.running || this.currentStatusDetails === undefined) {
-      return;
-    }
+    this.clientStatus.refresh(this.isActiveRustDocumentDirty());
+  }
 
+  private middleware(): LanguageClientOptions["middleware"] {
+    return {
+      ...hoverMiddleware(() => this.client, this.output),
+      handleWorkDoneProgress: (token, params, next) => {
+        this.clientStatus.handleWorkDoneProgress(
+          token,
+          params,
+          this.isActiveRustDocumentDirty(),
+        );
+        next(token, params);
+      },
+    };
+  }
+
+  private isActiveRustDocumentDirty(): boolean {
     const document = vscode.window.activeTextEditor?.document;
-    if (document !== undefined && this.isRustFile(document) && document.isDirty) {
-      this.status.stale(this.currentStatusDetails);
-    } else {
-      this.status.ready(this.currentStatusDetails);
-    }
+    return document !== undefined && this.isRustFile(document) && document.isDirty;
   }
 
   private isRustFile(document: vscode.TextDocument): boolean {

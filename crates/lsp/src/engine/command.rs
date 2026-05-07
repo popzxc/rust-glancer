@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use rg_project::PackageResidencyPolicy;
+use rg_workspace::CargoMetadataConfig;
 use tokio::sync::oneshot;
 use tower_lsp_server::ls_types;
 
@@ -11,6 +12,7 @@ pub(super) enum EngineCommand {
     Initialize {
         root: PathBuf,
         package_residency_policy: PackageResidencyPolicy,
+        cargo_metadata_config: CargoMetadataConfig,
         respond_to: EngineResponse<()>,
     },
     DidSave {
@@ -50,6 +52,9 @@ pub(super) enum EngineCommand {
     WorkspaceSymbol {
         query: String,
         respond_to: EngineResponse<Vec<ls_types::WorkspaceSymbol>>,
+    },
+    ReindexWorkspace {
+        respond_to: EngineResponse<()>,
     },
     Shutdown(EngineResponse<()>),
 }

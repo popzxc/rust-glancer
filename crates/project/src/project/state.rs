@@ -4,8 +4,8 @@ use rg_def_map::DefMapDb;
 use rg_package_store::{PackageStoreError, PackageSubset};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
-use rg_text::NameInterner;
-use rg_workspace::WorkspaceMetadata;
+use rg_text::PackageNameInterners;
+use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
     PackageResidencyPlan, PackageResidencyPolicy,
@@ -18,12 +18,13 @@ use super::{inventory::ProjectInventory, stats::ProjectStats, txn::ProjectReadTx
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectState {
     pub(crate) workspace: WorkspaceMetadata,
+    pub(crate) cargo_metadata_config: CargoMetadataConfig,
     pub(crate) cached_workspace: CachedWorkspace,
     pub(crate) cache_store: PackageCacheStore,
     pub(crate) body_ir_policy: BodyIrBuildPolicy,
     pub(crate) package_residency_policy: PackageResidencyPolicy,
     pub(crate) package_residency: PackageResidencyPlan,
-    pub(crate) names: NameInterner,
+    pub(crate) names: PackageNameInterners,
     pub(crate) parse: ParseDb,
     pub(crate) def_map: DefMapDb,
     pub(crate) semantic_ir: SemanticIrDb,

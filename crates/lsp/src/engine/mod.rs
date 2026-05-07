@@ -12,6 +12,7 @@ use std::{
 
 use anyhow::Context as _;
 use rg_project::PackageResidencyPolicy;
+use rg_workspace::CargoMetadataConfig;
 use tokio::sync::oneshot;
 use tower_lsp_server::ls_types;
 
@@ -39,10 +40,12 @@ impl EngineHandle {
         &self,
         root: PathBuf,
         package_residency_policy: PackageResidencyPolicy,
+        cargo_metadata_config: CargoMetadataConfig,
     ) -> anyhow::Result<()> {
         self.request(|respond_to| EngineCommand::Initialize {
             root,
             package_residency_policy,
+            cargo_metadata_config,
             respond_to,
         })
         .await
@@ -135,6 +138,11 @@ impl EngineHandle {
         query: String,
     ) -> anyhow::Result<Vec<ls_types::WorkspaceSymbol>> {
         self.request(|respond_to| EngineCommand::WorkspaceSymbol { query, respond_to })
+            .await
+    }
+
+    pub(crate) async fn reindex_workspace(&self) -> anyhow::Result<()> {
+        self.request(|respond_to| EngineCommand::ReindexWorkspace { respond_to })
             .await
     }
 

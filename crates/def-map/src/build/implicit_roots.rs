@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 
 use rg_parse::Package;
-use rg_text::{Name, NameInterner};
+use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{ModuleId, ModuleRef, PackageSlot, TargetRef};
@@ -48,7 +48,7 @@ impl ImplicitRoots {
 pub(super) fn build_implicit_roots(
     workspace: &WorkspaceMetadata,
     packages: &[Package],
-    interner: &mut NameInterner,
+    interners: &mut PackageNameInterners,
 ) -> anyhow::Result<ImplicitRoots> {
     let lib_targets = packages
         .iter()
@@ -71,7 +71,10 @@ pub(super) fn build_implicit_roots(
         .collect::<HashMap<_, _>>();
     let mut roots = Vec::with_capacity(packages.len());
 
-    for package in packages {
+    for (package_slot, package) in packages.iter().enumerate() {
+        let interner = interners.package_mut(package_slot).with_context(|| {
+            format!("while attempting to fetch name interner for package {package_slot}")
+        })?;
         let mut package_roots = Vec::with_capacity(package.targets().len());
         let workspace_package = workspace.package(package.id()).with_context(|| {
             format!(

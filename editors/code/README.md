@@ -1,88 +1,73 @@
 # Rust Glancer VS Code Extension
 
-This extension starts `rust-glancer lsp` over stdio and wires VS Code to the
-current saved-file-only language server.
+VS Code client for `rust-glancer lsp`.
 
 ## Development
 
-From `editors/code`:
+Install dependencies and build the bundled extension:
 
 ```text
 npm install
 npm run compile
 ```
 
-Then launch the extension development host from VS Code.
+Launch `Run Rust Glancer Extension` from VS Code. The launch configuration
+opens the repository root in an Extension Development Host.
 
-The development fallback starts the server with:
+During development the extension starts the server through Cargo:
 
 ```text
 cargo run --release -p rust-glancer -- lsp
 ```
 
-When the extension is not running from this repository checkout, it falls back
-to an installed `rust-glancer` binary.
+To force a specific server binary, set:
 
-### Launching
+```json
+{
+  "rust-glancer.server.path": "/path/to/rust-glancer"
+}
+```
 
-There are two supported development launch flows.
+## Testing
 
-From the repository root:
+Run the extension-host smoke test:
 
-1. Open the repository root in VS Code.
-2. Run `npm install` once from `editors/code`.
-3. Start the `Run Rust Glancer Extension` launch configuration.
-4. The new Extension Development Host window opens the repository root as the
-   Rust workspace.
+```text
+npm run test
+```
 
-From the extension folder:
+This builds the real `rust-glancer` release binary, opens
+`test_targets/simple_crate`, activates the extension, waits for the server to
+be ready, and runs the reindex command.
 
-1. Open `editors/code` as the workspace folder in VS Code.
-2. Run `npm install` once.
-3. Start the `Run Rust Glancer Extension` launch configuration.
-4. The new Extension Development Host window opens the repository root as the
-   Rust workspace.
+The VS Code test runner uses a desktop Extension Development Host, so a short
+lived VS Code window is expected locally. For Linux CI/headless environments,
+run the same command under a virtual display such as `xvfb-run`.
 
-The first server startup may take longer because Cargo builds the release
-binary. Later restarts reuse Cargo's release artifacts.
+For faster CI checks that do not launch VS Code:
 
-When the extension is active, VS Code shows a `Rust Glancer` status bar item.
-It displays startup, ready, stopped, and failed states; hover it to see the
-workspace root and server command, or click it to restart the server.
+```text
+npm run check
+npm run check:test
+```
 
-If the Extension Development Host opens but `Rust Glancer` is missing from
-the Output panel and the command palette, VS Code probably launched the wrong
-extension development path. Use one of the launch configurations above rather
-than pressing F5 from `src/extension.ts` without an extension launch config.
-
-If VS Code reports `Cannot call write after a stream was destroyed`, the server
-process exited during startup. Open the `Rust Glancer` output channel; the
-extension logs the exact command, working directory, process exit, and server
-stderr there.
-
-## Settings
+## Useful Settings
 
 ```json
 {
   "rust-glancer.server.path": null,
   "rust-glancer.server.extraEnv": {},
-  "rust-glancer.server.purgeMemoryAfterBuild": true,
+  "rust-glancer.cargo.target": null,
+  "rust-glancer.cache.packageResidency": "workspace-and-path-deps",
   "rust-glancer.trace.server": "off",
+  "rust-glancer.checkOnStartup": false,
   "rust-glancer.checkOnSave": false,
   "rust-glancer.check.command": "check",
   "rust-glancer.check.arguments": ["--workspace", "--all-targets"]
 }
 ```
 
-`rust-glancer.server.path` should point to the `rust-glancer` executable
-itself; the extension adds the `lsp` subcommand.
-
-`rust-glancer.server.purgeMemoryAfterBuild` asks the server to return unused
-allocator pages to the OS after initial indexing and saved-file reindexing. It
-is enabled by default because indexing is allocation-heavy and the server is
-otherwise meant to sit idle in the background.
-
-Server logs are controlled through environment variables. For example:
+Use `rust-glancer.server.extraEnv` for server logs, for example:
 
 ```json
 {
@@ -92,6 +77,11 @@ Server logs are controlled through environment variables. For example:
 }
 ```
 
-`rust-glancer.check.command` is a Cargo subcommand, not an arbitrary shell
-command. For example, use `"check"` for `cargo check` or `"clippy"` for
-`cargo clippy`; rust-glancer adds `cargo` and `--message-format=json` itself.
+## Troubleshooting
+
+Open the `Rust Glancer` output channel first. It records the workspace root,
+server command, server source, process exit, and server stderr.
+
+If the command palette does not show Rust Glancer commands in the Extension
+Development Host, VS Code probably launched with the wrong
+`extensionDevelopmentPath`; use the checked-in launch configuration.

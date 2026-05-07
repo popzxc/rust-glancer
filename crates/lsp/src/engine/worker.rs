@@ -9,7 +9,7 @@ use rg_analysis::TypeHint;
 use rg_def_map::TargetRef;
 use rg_parse::TextSpan;
 use rg_project::{FileContext, PackageResidencyPolicy, Project, ProjectSnapshot, SavedFileChange};
-use rg_workspace::{SysrootSources, WorkspaceMetadata};
+use rg_workspace::{CargoMetadataConfig, CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 use tower_lsp_server::ls_types;
 
 use crate::{
@@ -41,10 +41,15 @@ impl EngineWorker {
                 EngineCommand::Initialize {
                     root,
                     package_residency_policy,
+                    cargo_metadata_config,
                     respond_to,
                 } => {
                     tracing::trace!(root = %root.display(), "engine command started: initialize");
-                    let _ = respond_to.send(self.initialize(root, package_residency_policy));
+                    let _ = respond_to.send(self.initialize(
+                        root,
+                        package_residency_policy,
+                        cargo_metadata_config,
+                    ));
                 }
                 EngineCommand::DidSave {
                     path,
@@ -151,6 +156,10 @@ impl EngineWorker {
                         worker.workspace_symbol(&query)
                     });
                 }
+                EngineCommand::ReindexWorkspace { respond_to } => {
+                    tracing::trace!("engine command started: reindex_workspace");
+                    let _ = respond_to.send(self.reindex_workspace());
+                }
                 EngineCommand::Shutdown(respond_to) => {
                     tracing::info!("shutting down LSP engine worker");
                     let _ = respond_to.send(Ok(()));
@@ -166,11 +175,17 @@ impl EngineWorker {
         &mut self,
         root: PathBuf,
         package_residency_policy: PackageResidencyPolicy,
+        cargo_metadata_config: CargoMetadataConfig,
     ) -> anyhow::Result<()> {
         let started = Instant::now();
+        let configured_target = match cargo_metadata_config.target() {
+            CargoMetadataTarget::Auto => "auto",
+            CargoMetadataTarget::Triple(target) => target.as_str(),
+        };
         tracing::info!(
             root = %root.display(),
             package_residency = package_residency_policy.config_name(),
+            cargo_target = configured_target,
             "starting workspace indexing"
         );
 
@@ -183,9 +198,8 @@ impl EngineWorker {
         }
 
         let metadata_started = Instant::now();
-        let metadata = cargo_metadata::MetadataCommand::new()
-            .manifest_path(&manifest_path)
-            .exec()
+        let metadata = cargo_metadata_config
+            .load_metadata(&manifest_path)
             .context("while attempting to run cargo metadata for LSP initialization")?;
         tracing::info!(
             package_count = metadata.packages.len(),
@@ -211,6 +225,7 @@ impl EngineWorker {
 
         let workspace = workspace.with_sysroot_sources(sysroot);
         let project = Project::builder(workspace)
+            .cargo_metadata_config(cargo_metadata_config)
             .package_residency_policy(package_residency_policy)
             .build()
             .context("while attempting to build LSP analysis project")?;
@@ -223,6 +238,31 @@ impl EngineWorker {
             workspace_root = %workspace_root.display(),
             elapsed_ms = started.elapsed().as_millis(),
             "workspace indexing finished"
+        );
+
+        Ok(())
+    }
+
+    fn reindex_workspace(&mut self) -> anyhow::Result<()> {
+        let started = Instant::now();
+        let memory_control = Arc::clone(&self.memory_control);
+        let project = self
+            .project
+            .as_mut()
+            .context("LSP engine is not initialized")?;
+
+        tracing::info!("manual workspace reindex started");
+        project
+            .reindex_workspace()
+            .context("while attempting to manually reindex workspace")?;
+        Self::post_project_build(
+            memory_control.as_ref(),
+            project.snapshot(),
+            "manual reindex",
+        );
+        tracing::info!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "manual workspace reindex finished"
         );
 
         Ok(())

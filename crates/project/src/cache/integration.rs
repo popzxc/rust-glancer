@@ -7,6 +7,7 @@
 use std::sync::{Arc, OnceLock};
 
 use anyhow::Context as _;
+use rayon::prelude::*;
 use rg_body_ir::{BodyIrPackageBundle, PackageBodies};
 use rg_def_map::{DefMapPackageBundle, Package as DefMapPackage, PackageSlot};
 use rg_package_store::{LoadPackage, MalformedCacheError, PackageLoader, PackageStoreError};
@@ -46,16 +47,19 @@ pub(crate) fn restore_residency_after_rebuild(
         }
     }
 
-    for (package_idx, was_rebuilt) in rebuilt.iter().copied().enumerate() {
-        let package = PackageSlot(package_idx);
-        if !was_rebuilt
-            || project.package_residency.package(package) != Some(PackageResidency::Offloadable)
-        {
-            continue;
-        }
-
-        write_package_artifact(project, package)?;
-    }
+    let packages_to_write = rebuilt
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(package_idx, was_rebuilt)| {
+            let package = PackageSlot(package_idx);
+            (was_rebuilt
+                && project.package_residency.package(package)
+                    == Some(PackageResidency::Offloadable))
+            .then_some(package)
+        })
+        .collect::<Vec<_>>();
+    write_package_artifacts(project, &packages_to_write)?;
 
     let mut offloaded_packages = Vec::new();
 
@@ -82,15 +86,18 @@ fn write_and_offload_packages(
     project: &mut ProjectState,
     packages: &[PackageSlot],
 ) -> anyhow::Result<()> {
+    let packages_to_offload = packages
+        .iter()
+        .copied()
+        .filter(|package| {
+            project.package_residency.package(*package) == Some(PackageResidency::Offloadable)
+        })
+        .collect::<Vec<_>>();
+    write_package_artifacts(project, &packages_to_offload)?;
+
     let mut offloaded_packages = Vec::new();
-
-    for package in packages {
-        if project.package_residency.package(*package) != Some(PackageResidency::Offloadable) {
-            continue;
-        }
-
-        write_package_artifact(project, *package)?;
-        offload_package(project, *package)?;
+    for package in packages_to_offload {
+        offload_package(project, package)?;
         offloaded_packages.push(package.0);
     }
 
@@ -105,6 +112,27 @@ fn write_and_offload_packages(
         .context("while attempting to clean stale package cache generations")?;
 
     Ok(())
+}
+
+fn write_package_artifacts(project: &ProjectState, packages: &[PackageSlot]) -> anyhow::Result<()> {
+    if packages.len() <= 1 {
+        for package in packages {
+            write_package_artifact(project, *package)?;
+        }
+        return Ok(());
+    }
+
+    let thread_pool = local_thread_pool("rg-cache-write")?;
+
+    // Artifact serialization is package-local and usually more expensive than the final state
+    // mutation. Write every durable artifact first; only then can callers safely drop residents.
+    thread_pool
+        .install(|| {
+            packages
+                .par_iter()
+                .try_for_each(|package| write_package_artifact(project, *package))
+        })
+        .context("while attempting to write package cache artifacts")
 }
 
 fn finish_offloading(
@@ -168,6 +196,13 @@ fn offload_package(project: &mut ProjectState, package: PackageSlot) -> anyhow::
         .with_context(|| format!("while attempting to offload body IR package {}", package.0))?;
 
     Ok(())
+}
+
+fn local_thread_pool(thread_name_prefix: &'static str) -> anyhow::Result<rayon::ThreadPool> {
+    rayon::ThreadPoolBuilder::new()
+        .thread_name(move |index| format!("{thread_name_prefix}-{index}"))
+        .build()
+        .with_context(|| format!("while attempting to create {thread_name_prefix} thread pool"))
 }
 
 pub(crate) fn recover_residency_after_cache_load_failure(

@@ -1,0 +1,40 @@
+test:
+    cargo nextest run --workspace
+
+lint:
+    cargo fmt --check
+    cargo clippy --workspace --all-targets -- -D warnings
+
+deny:
+    cargo deny check
+
+build:
+    cargo build --workspace --release
+
+bench:
+    cargo bench -p rg_project --bench analysis_pipeline
+
+check-test-targets:
+    cargo check --manifest-path test_targets/simple_crate/Cargo.toml --locked
+    cargo check --manifest-path test_targets/moderate_crate/Cargo.toml --locked
+    cargo check --manifest-path test_targets/complex_crate/Cargo.toml --locked
+    cargo check --manifest-path test_targets/moderate_workspace/Cargo.toml --workspace --locked
+    cargo check --manifest-path test_targets/complex_workspace/Cargo.toml --workspace --locked
+    cargo check --manifest-path test_targets/bench_fixtures/small_app/Cargo.toml --workspace --locked
+    cargo check --manifest-path test_targets/bench_fixtures/synthetic_parse_heavy/Cargo.toml --workspace --locked
+    cargo check --manifest-path test_targets/bench_fixtures/synthetic_item_tree_heavy/Cargo.toml --workspace --locked
+    cargo check --manifest-path test_targets/bench_fixtures/synthetic_def_map_heavy/Cargo.toml --workspace --locked
+    cargo check --manifest-path test_targets/bench_fixtures/synthetic_body_heavy/Cargo.toml --workspace --locked
+
+build-client:
+    npm --prefix editors/code ci
+    npm --prefix editors/code run compile
+
+check-client:
+    npm --prefix editors/code run check
+    npm --prefix editors/code run check:test
+
+test-client:
+    npm --prefix editors/code run test
+
+pr-ready: test lint deny check-test-targets build-client check-client

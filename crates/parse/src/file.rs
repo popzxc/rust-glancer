@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ra_syntax::{Edition, SourceFile};
+use ra_syntax::{Edition, Parse as SyntaxParse, SourceFile};
 use rg_arena::Arena;
 
 use crate::{
@@ -37,11 +37,15 @@ pub(crate) struct ParsedFileData {
     pub(crate) parse_errors: Vec<ParseError>,
     /// Line-start index used to convert byte offsets into line/column coordinates.
     pub(crate) line_index: LineIndex,
-    /// Parsed Rust syntax tree produced by `ra_syntax`.
+    /// Green-backed Rust parse result produced by `ra_syntax`.
     ///
     /// This is retained only while AST-consuming phases are lowering. Query-time state keeps
-    /// paths, parse errors, and line indexes, but can evict syntax trees to keep memory bounded.
-    pub(crate) syntax: Option<SourceFile>,
+    /// paths, parse errors, and line indexes, but can evict parse trees to keep memory bounded.
+    ///
+    /// `ra_syntax::SourceFile` is a traversal cursor over this immutable green tree. Keeping the
+    /// parse result lets each AST-consuming phase create a fresh local cursor instead of sharing
+    /// cursor internals across package or thread boundaries.
+    pub(crate) syntax: Option<SyntaxParse<SourceFile>>,
 }
 
 /// Borrowed view over one cached source file.
@@ -80,9 +84,12 @@ impl<'a> ParsedFile<'a> {
         &self.data.line_index
     }
 
-    /// Returns the parsed Rust syntax tree when it is currently retained.
-    pub fn syntax(&self) -> Option<&'a SourceFile> {
-        self.data.syntax.as_ref()
+    /// Returns a local syntax cursor over the retained parse tree.
+    ///
+    /// This does not reparse source text. It creates a fresh typed root over the immutable green
+    /// tree so callers can traverse AST without sharing `ra_syntax` cursor state.
+    pub fn syntax(&self) -> Option<SourceFile> {
+        self.data.syntax.as_ref().map(|syntax| syntax.tree())
     }
 
     /// Returns source text for a byte span by reading it from the saved source file.
@@ -223,7 +230,7 @@ impl FileDb {
             path,
             parse_errors,
             line_index,
-            syntax: Some(parsed_file.tree()),
+            syntax: Some(parsed_file),
         }
     }
 }
