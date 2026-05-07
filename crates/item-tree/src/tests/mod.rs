@@ -268,6 +268,59 @@ pub fn work() {}
 }
 
 #[test]
+fn resolves_path_attribute_modules() {
+    utils::check_project_item_tree(
+        r#"
+//- /Cargo.toml
+[package]
+name = "path_attr_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+#[path = "generated/api_file.rs"]
+pub mod api;
+
+pub mod outer {
+    #[path = "implementation.rs"]
+    pub mod implementation;
+}
+
+pub use api::Api;
+pub use outer::implementation::work;
+
+//- /src/generated/api_file.rs
+pub struct Api;
+
+//- /src/outer/implementation.rs
+pub fn work() {}
+"#,
+        expect![[r#"
+            package path_attr_fixture
+
+            targets
+            - path_attr_fixture [lib] -> lib.rs
+
+            files
+            file api_file.rs
+            - pub struct Api
+
+            file lib.rs
+            - pub module api [out_of_line api_file.rs]
+            - pub module outer [inline]
+              - pub module implementation [out_of_line implementation.rs]
+            - pub use api::Api
+              - import named api::Api
+            - pub use outer::implementation::work
+              - import named outer::implementation::work
+
+            file implementation.rs
+            - pub fn work
+        "#]],
+    );
+}
+
+#[test]
 fn dumps_import_payloads() {
     utils::check_project_item_tree(
         r#"
