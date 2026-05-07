@@ -133,20 +133,12 @@ pub(crate) struct BodyIrDbMutator<'db> {
 }
 
 impl BodyIrDbMutator<'_> {
-    pub(crate) fn package_count(&self) -> usize {
-        self.db.package_count()
-    }
-
     pub(crate) fn replace_package(
         &mut self,
         package: PackageSlot,
         bodies: PackageBodies,
     ) -> Option<()> {
         self.db.packages.replace(package, bodies)
-    }
-
-    pub(crate) fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageBodies> {
-        self.db.packages.make_mut(package)
     }
 
     pub(crate) fn shrink_to_fit(&mut self) {

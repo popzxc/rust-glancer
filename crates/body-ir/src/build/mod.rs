@@ -61,17 +61,18 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
     pub fn build(mut self) -> anyhow::Result<BodyIrDb> {
         let def_map_txn = self.def_map.read_txn(unexpected_package_loader());
         let semantic_ir_txn = self.semantic_ir.read_txn(unexpected_package_loader());
-        let packages = lower::build_packages(
+        let mut packages = lower::build_packages(
             self.parse,
             &semantic_ir_txn,
             self.semantic_ir.package_count(),
             self.policy,
             self.interners.as_mut(),
         )?;
+        resolve::resolve_packages(&mut packages, &def_map_txn, &semantic_ir_txn)
+            .context("while attempting to resolve body IR packages")?;
         let mut db = BodyIrDb::from_packages(packages);
         {
             let mut mutator = db.mutator();
-            resolve::resolve_bodies(&mut mutator, &def_map_txn, &semantic_ir_txn);
             mutator.shrink_to_fit();
         }
         Ok(db)
@@ -144,55 +145,42 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         let semantic_ir_txn = self
             .semantic_ir
             .read_txn_for_subset(self.semantic_ir_loader, self.subset);
-
-        {
-            let mut mutator = next.mutator();
-            for package in &packages {
-                let package_ir = semantic_ir_txn.package(*package).with_context(|| {
-                    format!(
-                        "while attempting to fetch semantic IR package {}",
-                        package.0
-                    )
-                })?;
-                let target_count = package_ir.into_ref().targets().len();
-                let rebuilt = lower::build_package(
-                    self.parse,
-                    &semantic_ir_txn,
-                    self.policy,
-                    *package,
-                    target_count,
-                    self.interners,
-                )
-                .with_context(|| {
-                    format!(
-                        "while attempting to lower rebuilt body IR package {}",
-                        package.0
-                    )
-                })?;
-                mutator
-                    .replace_package(*package, rebuilt)
-                    .with_context(|| {
-                        format!("while attempting to replace body IR package {}", package.0)
-                    })?;
-            }
-        }
-
         let def_map_txn = self
             .def_map
             .read_txn_for_subset(self.def_map_loader, self.subset);
+        let mut rebuilt_packages = lower::build_selected_packages(
+            self.parse,
+            &semantic_ir_txn,
+            self.policy,
+            &packages,
+            self.interners,
+        )
+        .context("while attempting to lower rebuilt body IR packages")?;
+        resolve::resolve_selected_packages(&mut rebuilt_packages, &def_map_txn, &semantic_ir_txn)
+            .context("while attempting to resolve rebuilt body IR packages")?;
+        let rebuilt_slots = rebuilt_packages
+            .iter()
+            .map(|(package, _)| *package)
+            .collect::<Vec<_>>();
+
         {
             let mut mutator = next.mutator();
-            resolve::resolve_bodies_for_packages(
-                &mut mutator,
-                &def_map_txn,
-                &semantic_ir_txn,
-                &packages,
-            )
-            .context("while attempting to resolve rebuilt body IR packages")?;
-            mutator.shrink_packages(&packages);
+            for (package, rebuilt) in rebuilt_packages {
+                mutator.replace_package(package, rebuilt).with_context(|| {
+                    format!("while attempting to replace body IR package {}", package.0)
+                })?;
+            }
+            mutator.shrink_packages(&rebuilt_slots);
         }
         Ok(next)
     }
+}
+
+fn local_thread_pool(thread_name_prefix: &'static str) -> anyhow::Result<rayon::ThreadPool> {
+    rayon::ThreadPoolBuilder::new()
+        .thread_name(move |index| format!("{thread_name_prefix}-{index}"))
+        .build()
+        .with_context(|| format!("while attempting to create {thread_name_prefix} thread pool"))
 }
 
 fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {

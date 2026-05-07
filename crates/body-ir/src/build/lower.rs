@@ -8,6 +8,7 @@ use ra_syntax::{
     AstNode as _,
     ast::{self, HasArgList as _, HasName as _},
 };
+use rayon::prelude::*;
 
 use rg_def_map::{ModuleRef, PackageSlot, Path, PathSegment, TargetRef};
 use rg_item_tree::{
@@ -30,6 +31,8 @@ use crate::{
     ty::BodyTy,
 };
 
+use super::local_thread_pool;
+
 pub(super) fn build_packages(
     parse: &ParseDb,
     semantic_ir: &SemanticIrReadTxn<'_>,
@@ -37,47 +40,169 @@ pub(super) fn build_packages(
     policy: BodyIrBuildPolicy,
     interners: &mut PackageNameInterners,
 ) -> anyhow::Result<Vec<PackageBodies>> {
-    let mut packages = Vec::with_capacity(package_count);
+    validate_package_inputs(parse, package_count, interners)?;
 
-    for package_idx in 0..package_count {
-        let package = PackageSlot(package_idx);
-        let package_ir = semantic_ir.package(package).with_context(|| {
-            format!(
-                "while attempting to fetch semantic IR package {} for body lowering",
-                package.0,
-            )
-        })?;
-        let target_count = package_ir.into_ref().targets().len();
-        packages.push(build_package(
-            parse,
-            semantic_ir,
-            policy,
-            package,
-            target_count,
-            interners,
-        )?);
-    }
+    let selected = vec![true; package_count];
+    let mut packages = Vec::new();
+    packages.resize_with(package_count, || None);
+    build_package_outputs(
+        parse,
+        semantic_ir,
+        policy,
+        interners,
+        &selected,
+        &mut packages,
+    )?;
 
-    Ok(packages)
+    Ok(packages
+        .into_iter()
+        .map(|package| package.expect("all body IR package slots should be lowered"))
+        .collect())
 }
 
-pub(super) fn build_package(
+pub(super) fn build_selected_packages(
     parse: &ParseDb,
     semantic_ir: &SemanticIrReadTxn<'_>,
     policy: BodyIrBuildPolicy,
-    package: PackageSlot,
-    target_count: usize,
+    package_slots: &[PackageSlot],
     interners: &mut PackageNameInterners,
+) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
+    validate_package_inputs(parse, parse.package_count(), interners)?;
+    validate_selected_packages(parse.package_count(), package_slots)?;
+
+    let mut selected = vec![false; parse.package_count()];
+    for package_slot in package_slots {
+        selected[package_slot.0] = true;
+    }
+
+    let mut packages = Vec::new();
+    packages.resize_with(parse.package_count(), || None);
+    build_package_outputs(
+        parse,
+        semantic_ir,
+        policy,
+        interners,
+        &selected,
+        &mut packages,
+    )?;
+
+    Ok(packages
+        .into_iter()
+        .enumerate()
+        .filter_map(|(package_idx, bodies)| bodies.map(|bodies| (PackageSlot(package_idx), bodies)))
+        .collect())
+}
+
+fn build_package_outputs(
+    parse: &ParseDb,
+    semantic_ir: &SemanticIrReadTxn<'_>,
+    policy: BodyIrBuildPolicy,
+    interners: &mut PackageNameInterners,
+    selected: &[bool],
+    packages: &mut [Option<PackageBodies>],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        selected.len() == parse.package_count(),
+        "body IR package selection count {} does not match parse package count {}",
+        selected.len(),
+        parse.package_count(),
+    );
+
+    let selected_count = selected.iter().filter(|selected| **selected).count();
+    if selected_count <= 1 {
+        build_package_outputs_serial(parse, semantic_ir, policy, interners, selected, packages)
+    } else {
+        build_package_outputs_parallel(parse, semantic_ir, policy, interners, selected, packages)
+    }
+}
+
+fn build_package_outputs_serial(
+    parse: &ParseDb,
+    semantic_ir: &SemanticIrReadTxn<'_>,
+    policy: BodyIrBuildPolicy,
+    interners: &mut PackageNameInterners,
+    selected: &[bool],
+    packages: &mut [Option<PackageBodies>],
+) -> anyhow::Result<()> {
+    for (package_idx, (((parse_package, interner), selected), output)) in parse
+        .packages()
+        .iter()
+        .zip(interners.packages_mut().iter_mut())
+        .zip(selected)
+        .zip(packages.iter_mut())
+        .enumerate()
+    {
+        if !*selected {
+            continue;
+        }
+
+        let package = PackageSlot(package_idx);
+        *output = Some(build_package_with_interner(
+            parse_package,
+            semantic_ir,
+            policy,
+            package,
+            interner,
+        )?);
+    }
+
+    Ok(())
+}
+
+fn build_package_outputs_parallel(
+    parse: &ParseDb,
+    semantic_ir: &SemanticIrReadTxn<'_>,
+    policy: BodyIrBuildPolicy,
+    interners: &mut PackageNameInterners,
+    selected: &[bool],
+    packages: &mut [Option<PackageBodies>],
+) -> anyhow::Result<()> {
+    let thread_pool = local_thread_pool("rg-body-lower")?;
+
+    // Body lowering is package-local: each worker receives one parse package, one name interner,
+    // and one output slot. Non-selected rebuild slots stay absent from this temporary output.
+    thread_pool.install(|| {
+        parse
+            .packages()
+            .par_iter()
+            .zip(interners.packages_mut().par_iter_mut())
+            .zip(selected.par_iter())
+            .zip(packages.par_iter_mut())
+            .enumerate()
+            .try_for_each(
+                |(package_idx, (((parse_package, interner), selected), output))| -> anyhow::Result<()> {
+                    if !*selected {
+                        return Ok(());
+                    }
+
+                    let package = PackageSlot(package_idx);
+                    *output = Some(build_package_with_interner(
+                        parse_package,
+                        semantic_ir,
+                        policy,
+                        package,
+                        interner,
+                    )?);
+                    Ok(())
+                },
+            )
+    })
+}
+
+fn build_package_with_interner(
+    parse_package: &rg_parse::Package,
+    semantic_ir: &SemanticIrReadTxn<'_>,
+    policy: BodyIrBuildPolicy,
+    package: PackageSlot,
+    interner: &mut NameInterner,
 ) -> anyhow::Result<PackageBodies> {
-    let parse_package = parse
-        .package(package.0)
-        .with_context(|| format!("while attempting to fetch parse package {}", package.0))?;
-    let interner = interners.package_mut(package.0).with_context(|| {
+    let package_ir = semantic_ir.package(package).with_context(|| {
         format!(
-            "while attempting to fetch body IR name interner for package {}",
+            "while attempting to fetch semantic IR package {} for body lowering",
             package.0,
         )
     })?;
+    let target_count = package_ir.into_ref().targets().len();
     let mut targets = Vec::with_capacity(target_count);
 
     for target_idx in 0..target_count {
@@ -115,6 +240,45 @@ pub(super) fn build_package(
     }
 
     Ok(PackageBodies::new(targets))
+}
+
+fn validate_package_inputs(
+    parse: &ParseDb,
+    package_count: usize,
+    interners: &PackageNameInterners,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        parse.package_count() == package_count,
+        "parse package count {} does not match body IR package count {}",
+        parse.package_count(),
+        package_count,
+    );
+    anyhow::ensure!(
+        interners.package_count() == package_count,
+        "name interner count {} does not match body IR package count {}",
+        interners.package_count(),
+        package_count,
+    );
+
+    Ok(())
+}
+
+fn validate_selected_packages(
+    package_count: usize,
+    package_slots: &[PackageSlot],
+) -> anyhow::Result<()> {
+    if let Some(package) = package_slots
+        .iter()
+        .copied()
+        .find(|package| package.0 >= package_count)
+    {
+        anyhow::bail!(
+            "body IR package slot {} is out of bounds for {package_count} parsed packages",
+            package.0,
+        );
+    }
+
+    Ok(())
 }
 
 struct TargetLowering<'a> {
