@@ -9,7 +9,7 @@ use crate::{
     body::TargetBodiesStatus,
     db::BodyIrDbMutator,
     ids::{BodyId, BodyRef},
-    resolution::BodyResolver,
+    resolution::{BodyResolver, SemanticResolutionIndex},
 };
 
 pub(super) fn resolve_bodies(
@@ -28,6 +28,8 @@ pub(super) fn resolve_bodies_for_packages(
     semantic_ir: &SemanticIrReadTxn<'_>,
     packages: &[PackageSlot],
 ) -> Result<(), PackageStoreError> {
+    let semantic_index = SemanticResolutionIndex::build(semantic_ir)?;
+
     // Resolution is a mutation pass over already-lowered bodies. Skipped targets intentionally
     // keep their body stores empty so dependency body internals stay cheap by default.
     for package_slot in packages {
@@ -49,6 +51,7 @@ pub(super) fn resolve_bodies_for_packages(
                 BodyResolver::new(
                     def_map,
                     semantic_ir,
+                    &semantic_index,
                     BodyRef {
                         target: target_ref,
                         body: BodyId(body_idx),

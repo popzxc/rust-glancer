@@ -19,6 +19,7 @@ use crate::{
 };
 
 use super::{
+    SemanticResolutionIndex,
     ty::{
         TypeSubst, body_generic_arg_ty, generic_arg_type_ref, ty_from_type_ref_in_context,
         type_param_name_from_type_ref,
@@ -102,20 +103,32 @@ pub(super) fn semantic_impl_self_subst(
 }
 
 pub(super) fn semantic_trait_function_candidates_for_receiver(
+    index: Option<&SemanticResolutionIndex>,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     receiver_ty: &BodyNominalTy,
 ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
     let mut functions = Vec::new();
+    let trait_impls = match index {
+        Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
+        None => semantic_ir.trait_impls_for_type(receiver_ty.def)?,
+    };
 
-    for trait_impl in semantic_ir.trait_impls_for_type(receiver_ty.def)? {
+    for trait_impl in trait_impls {
         let applicability =
             semantic_trait_impl_applicability(def_map, semantic_ir, trait_impl, receiver_ty)?;
         if !applicability.is_applicable() {
             continue;
         }
 
-        for function in semantic_ir.trait_functions(trait_impl.trait_ref)? {
+        let trait_functions = match index {
+            Some(index) => match index.trait_functions(trait_impl.trait_ref) {
+                Some(functions) => functions.to_vec(),
+                None => semantic_ir.trait_functions(trait_impl.trait_ref)?,
+            },
+            None => semantic_ir.trait_functions(trait_impl.trait_ref)?,
+        };
+        for function in trait_functions {
             push_function_candidate(&mut functions, function, applicability);
         }
     }

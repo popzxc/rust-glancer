@@ -21,6 +21,7 @@ use crate::{
 };
 
 use super::{
+    SemanticResolutionIndex,
     method::{
         local_function_applies_to_receiver, local_impl_self_subst,
         semantic_function_applies_to_receiver, semantic_impl_self_subst,
@@ -36,6 +37,7 @@ use super::{
 pub(crate) struct BodyResolver<'query, 'db, 'body> {
     def_map: &'query DefMapReadTxn<'db>,
     semantic_ir: &'query SemanticIrReadTxn<'db>,
+    semantic_index: &'query SemanticResolutionIndex,
     body_ref: BodyRef,
     body: &'body mut BodyData,
 }
@@ -44,12 +46,14 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
     pub(crate) fn new(
         def_map: &'query DefMapReadTxn<'db>,
         semantic_ir: &'query SemanticIrReadTxn<'db>,
+        semantic_index: &'query SemanticResolutionIndex,
         body_ref: BodyRef,
         body: &'body mut BodyData,
     ) -> Self {
         Self {
             def_map,
             semantic_ir,
+            semantic_index,
             body_ref,
             body,
         }
@@ -224,8 +228,14 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         scope: ScopeId,
         path: &Path,
     ) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
-        BodyValuePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
-            .resolve_nonlocal_path_expr(scope, path)
+        BodyValuePathResolver::new(
+            self.def_map,
+            self.semantic_ir,
+            Some(self.semantic_index),
+            self.body_ref,
+            self.body,
+        )
+        .resolve_nonlocal_path_expr(scope, path)
     }
 
     fn resolve_field_expr(
@@ -426,16 +436,22 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         ty: &BodyNominalTy,
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
-        for function in self.semantic_ir.inherent_functions_for_type(ty.def)? {
+        for function in self
+            .semantic_index
+            .inherent_functions_for_type(self.semantic_ir, ty.def)?
+        {
             if semantic_function_applies_to_receiver(self.def_map, self.semantic_ir, function, ty)?
             {
                 functions.push(function);
             }
         }
 
-        for (function, _) in
-            semantic_trait_function_candidates_for_receiver(self.def_map, self.semantic_ir, ty)?
-        {
+        for (function, _) in semantic_trait_function_candidates_for_receiver(
+            Some(self.semantic_index),
+            self.def_map,
+            self.semantic_ir,
+            ty,
+        )? {
             push_unique(&mut functions, function);
         }
         Ok(functions)
@@ -646,6 +662,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 pub(super) struct BodyValuePathResolver<'query, 'db, 'body> {
     def_map: &'query DefMapReadTxn<'db>,
     semantic_ir: &'query SemanticIrReadTxn<'db>,
+    semantic_index: Option<&'query SemanticResolutionIndex>,
     body_ref: BodyRef,
     body: &'body BodyData,
 }
@@ -654,12 +671,14 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
     pub(super) fn new(
         def_map: &'query DefMapReadTxn<'db>,
         semantic_ir: &'query SemanticIrReadTxn<'db>,
+        semantic_index: Option<&'query SemanticResolutionIndex>,
         body_ref: BodyRef,
         body: &'body BodyData,
     ) -> Self {
         Self {
             def_map,
             semantic_ir,
+            semantic_index,
             body_ref,
             body,
         }
@@ -802,16 +821,24 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         ty: &BodyNominalTy,
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
-        for function in self.semantic_ir.inherent_functions_for_type(ty.def)? {
+        let inherent_functions = match self.semantic_index {
+            Some(index) => index.inherent_functions_for_type(self.semantic_ir, ty.def)?,
+            None => self.semantic_ir.inherent_functions_for_type(ty.def)?,
+        };
+
+        for function in inherent_functions {
             if semantic_function_applies_to_receiver(self.def_map, self.semantic_ir, function, ty)?
             {
                 functions.push(function);
             }
         }
 
-        for (function, _) in
-            semantic_trait_function_candidates_for_receiver(self.def_map, self.semantic_ir, ty)?
-        {
+        for (function, _) in semantic_trait_function_candidates_for_receiver(
+            self.semantic_index,
+            self.def_map,
+            self.semantic_ir,
+            ty,
+        )? {
             push_unique(&mut functions, function);
         }
         Ok(functions)
