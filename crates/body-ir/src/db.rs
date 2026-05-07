@@ -4,7 +4,7 @@ use rg_def_map::{Package as DefMapPackage, PackageSlot};
 use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_semantic_ir::PackageIr;
-use rg_text::NameInterner;
+use rg_text::PackageNameInterners;
 
 use crate::{
     BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodiesStatus,
@@ -35,7 +35,7 @@ impl BodyIrDb {
         def_map: &'db rg_def_map::DefMapDb,
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
         packages: &'db [PackageSlot],
-        interner: &'names mut NameInterner,
+        interners: &'names mut PackageNameInterners,
         def_map_loader: PackageLoader<'db, DefMapPackage>,
         semantic_ir_loader: PackageLoader<'db, PackageIr>,
         subset: &'db PackageSubset,
@@ -46,7 +46,7 @@ impl BodyIrDb {
             def_map,
             semantic_ir,
             packages,
-            interner,
+            interners,
             def_map_loader,
             semantic_ir_loader,
             subset,

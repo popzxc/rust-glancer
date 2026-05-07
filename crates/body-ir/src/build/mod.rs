@@ -10,7 +10,7 @@ use anyhow::Context as _;
 use rg_def_map::{Package as DefMapPackage, PackageSlot};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError, PackageSubset};
 use rg_semantic_ir::PackageIr;
-use rg_text::NameInterner;
+use rg_text::PackageNameInterners;
 
 use crate::{BodyIrBuildPolicy, BodyIrDb};
 
@@ -20,7 +20,7 @@ pub struct BodyIrDbBuilder<'db, 'names> {
     def_map: &'db rg_def_map::DefMapDb,
     semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
     policy: BodyIrBuildPolicy,
-    interner: NameInternerSource<'names>,
+    interners: NameInternerSource<'names>,
 }
 
 impl<'db> BodyIrDbBuilder<'db, 'static> {
@@ -34,19 +34,22 @@ impl<'db> BodyIrDbBuilder<'db, 'static> {
             def_map,
             semantic_ir,
             policy: BodyIrBuildPolicy::default(),
-            interner: NameInternerSource::Owned(NameInterner::new()),
+            interners: NameInternerSource::Owned(PackageNameInterners::new(parse.package_count())),
         }
     }
 }
 
 impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
-    pub fn name_interner(self, interner: &'names mut NameInterner) -> BodyIrDbBuilder<'db, 'names> {
+    pub fn name_interners(
+        self,
+        interners: &'names mut PackageNameInterners,
+    ) -> BodyIrDbBuilder<'db, 'names> {
         BodyIrDbBuilder {
             parse: self.parse,
             def_map: self.def_map,
             semantic_ir: self.semantic_ir,
             policy: self.policy,
-            interner: NameInternerSource::Borrowed(interner),
+            interners: NameInternerSource::Borrowed(interners),
         }
     }
 
@@ -63,7 +66,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             &semantic_ir_txn,
             self.semantic_ir.package_count(),
             self.policy,
-            self.interner.as_mut(),
+            self.interners.as_mut(),
         )?;
         let mut db = BodyIrDb::from_packages(packages);
         {
@@ -76,15 +79,15 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
 }
 
 enum NameInternerSource<'names> {
-    Owned(NameInterner),
-    Borrowed(&'names mut NameInterner),
+    Owned(PackageNameInterners),
+    Borrowed(&'names mut PackageNameInterners),
 }
 
 impl NameInternerSource<'_> {
-    fn as_mut(&mut self) -> &mut NameInterner {
+    fn as_mut(&mut self) -> &mut PackageNameInterners {
         match self {
-            Self::Owned(interner) => interner,
-            Self::Borrowed(interner) => interner,
+            Self::Owned(interners) => interners,
+            Self::Borrowed(interners) => interners,
         }
     }
 }
@@ -97,7 +100,7 @@ pub struct BodyIrDbPackageRebuilder<'db, 'names> {
     semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
     policy: BodyIrBuildPolicy,
     packages: &'db [PackageSlot],
-    interner: &'names mut NameInterner,
+    interners: &'names mut PackageNameInterners,
     def_map_loader: PackageLoader<'db, DefMapPackage>,
     semantic_ir_loader: PackageLoader<'db, PackageIr>,
     subset: &'db PackageSubset,
@@ -111,7 +114,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         def_map: &'db rg_def_map::DefMapDb,
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
         packages: &'db [PackageSlot],
-        interner: &'names mut NameInterner,
+        interners: &'names mut PackageNameInterners,
         def_map_loader: PackageLoader<'db, DefMapPackage>,
         semantic_ir_loader: PackageLoader<'db, PackageIr>,
         subset: &'db PackageSubset,
@@ -123,7 +126,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             semantic_ir,
             policy: BodyIrBuildPolicy::default(),
             packages,
-            interner,
+            interners,
             def_map_loader,
             semantic_ir_loader,
             subset,
@@ -158,7 +161,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
                     self.policy,
                     *package,
                     target_count,
-                    self.interner,
+                    self.interners,
                 )
                 .with_context(|| {
                     format!(

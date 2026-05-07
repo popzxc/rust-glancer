@@ -12,7 +12,7 @@ use rg_def_map::DefMapDb;
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
-use rg_text::NameInterner;
+use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 static CARGO_FETCH_LOCK: OnceLock<Mutex<HashSet<BenchTarget>>> = OnceLock::new();
@@ -184,8 +184,8 @@ pub(crate) struct BenchFixture {
     pub(crate) workspace: WorkspaceMetadata,
     pub(crate) parse: ParseDb,
     pub(crate) item_tree: ItemTreeDb,
-    pub(crate) names_after_item_tree: NameInterner,
-    pub(crate) names_after_semantic_ir: NameInterner,
+    pub(crate) names_after_item_tree: PackageNameInterners,
+    pub(crate) names_after_semantic_ir: PackageNameInterners,
     pub(crate) def_map: DefMapDb,
     pub(crate) semantic_ir: SemanticIrDb,
     pub(crate) source_files: usize,
@@ -230,14 +230,14 @@ impl BenchFixture {
         let source_files = count_source_files(&parse);
         let source_bytes = count_source_bytes(&parse);
 
-        let mut names = NameInterner::new();
-        let item_tree = ItemTreeDb::build_with_interner(&mut parse, &mut names)
+        let mut names = PackageNameInterners::new(parse.package_count());
+        let item_tree = ItemTreeDb::build_with_interners(&mut parse, &mut names)
             .unwrap_or_else(|error| panic!("{target} item tree should build: {error}"));
         let item_tree_items = count_item_tree_items(&workspace, &item_tree);
         let names_after_item_tree = names.clone();
 
         let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
-            .name_interner(&mut names)
+            .name_interners(&mut names)
             .build()
             .unwrap_or_else(|error| panic!("{target} def map should build: {error}"));
         let def_map_imports = def_map.stats().import_count;
@@ -258,7 +258,7 @@ impl BenchFixture {
         let names_after_semantic_ir = names.clone();
 
         let body_ir = BodyIrDb::builder(&parse, &def_map, &semantic_ir)
-            .name_interner(&mut names)
+            .name_interners(&mut names)
             .policy(BodyIrBuildPolicy::workspace_packages())
             .build()
             .unwrap_or_else(|error| panic!("{target} body IR should build: {error}"));

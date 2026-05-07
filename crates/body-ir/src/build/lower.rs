@@ -15,7 +15,7 @@ use rg_item_tree::{
 };
 use rg_parse::{FileId, LineIndex, ParseDb, Span, TargetId};
 use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrReadTxn, TraitRef};
-use rg_text::{Name, NameInterner};
+use rg_text::{Name, NameInterner, PackageNameInterners};
 
 use crate::{
     BodyIrBuildPolicy,
@@ -35,7 +35,7 @@ pub(super) fn build_packages(
     semantic_ir: &SemanticIrReadTxn<'_>,
     package_count: usize,
     policy: BodyIrBuildPolicy,
-    interner: &mut NameInterner,
+    interners: &mut PackageNameInterners,
 ) -> anyhow::Result<Vec<PackageBodies>> {
     let mut packages = Vec::with_capacity(package_count);
 
@@ -54,7 +54,7 @@ pub(super) fn build_packages(
             policy,
             package,
             target_count,
-            interner,
+            interners,
         )?);
     }
 
@@ -67,11 +67,17 @@ pub(super) fn build_package(
     policy: BodyIrBuildPolicy,
     package: PackageSlot,
     target_count: usize,
-    interner: &mut NameInterner,
+    interners: &mut PackageNameInterners,
 ) -> anyhow::Result<PackageBodies> {
     let parse_package = parse
         .package(package.0)
         .with_context(|| format!("while attempting to fetch parse package {}", package.0))?;
+    let interner = interners.package_mut(package.0).with_context(|| {
+        format!(
+            "while attempting to fetch body IR name interner for package {}",
+            package.0,
+        )
+    })?;
     let mut targets = Vec::with_capacity(target_count);
 
     for target_idx in 0..target_count {

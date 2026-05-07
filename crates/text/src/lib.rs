@@ -130,6 +130,16 @@ pub struct NameInterner {
     buckets: HashMap<u64, Vec<Weak<str>>>,
 }
 
+/// Independent name reuse tables keyed by package slot.
+///
+/// Package-level interners preserve the cheap `Name` handles while avoiding a single mutable
+/// interner that would serialize package-level lowering. Equal names still compare by text, so
+/// sharing allocations across package boundaries is an optimization, not a correctness property.
+#[derive(Debug, Clone, Default)]
+pub struct PackageNameInterners {
+    packages: Vec<NameInterner>,
+}
+
 impl NameInterner {
     pub fn new() -> Self {
         Self::default()
@@ -189,13 +199,44 @@ impl NameInterner {
     }
 }
 
+impl PackageNameInterners {
+    pub fn new(package_count: usize) -> Self {
+        let mut packages = Vec::with_capacity(package_count);
+        packages.resize_with(package_count, NameInterner::new);
+        Self { packages }
+    }
+
+    pub fn package_count(&self) -> usize {
+        self.packages.len()
+    }
+
+    pub fn package_mut(&mut self, package_slot: usize) -> Option<&mut NameInterner> {
+        self.packages.get_mut(package_slot)
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.packages.shrink_to_fit();
+        for package in &mut self.packages {
+            package.shrink_to_fit();
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.packages.iter().map(NameInterner::len).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.packages.iter().all(NameInterner::is_empty)
+    }
+}
+
 #[cfg(feature = "memsize")]
 mod memsize {
     use std::{mem, sync::Weak};
 
     use rg_memsize::{MemoryRecorder, MemorySize};
 
-    use crate::{Name, NameInterner};
+    use crate::{Name, NameInterner, PackageNameInterners};
 
     impl MemorySize for Name {
         fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
@@ -252,11 +293,35 @@ mod memsize {
             });
         }
     }
+
+    impl MemorySize for PackageNameInterners {
+        fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+            recorder.scope("packages", |recorder| {
+                recorder.record_heap::<NameInterner>(
+                    self.packages
+                        .len()
+                        .saturating_mul(mem::size_of::<NameInterner>()),
+                );
+                recorder.record_spare_capacity::<NameInterner>(
+                    self.packages
+                        .capacity()
+                        .saturating_sub(self.packages.len())
+                        .saturating_mul(mem::size_of::<NameInterner>()),
+                );
+            });
+
+            for (package_slot, package) in self.packages.iter().enumerate() {
+                recorder.scope(format!("package_{package_slot}"), |recorder| {
+                    package.record_memory_children(recorder);
+                });
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Name, NameInterner};
+    use crate::{Name, NameInterner, PackageNameInterners};
 
     #[test]
     fn interner_reuses_existing_names() {
@@ -312,6 +377,24 @@ mod tests {
         assert_eq!(name.as_str(), "User");
         assert_eq!(name.to_string(), "User");
         assert_eq!(format!("{name:?}"), "\"User\"");
+    }
+
+    #[test]
+    fn package_interners_keep_allocations_package_local() {
+        let mut interners = PackageNameInterners::new(2);
+
+        let first = interners
+            .package_mut(0)
+            .expect("package zero interner should exist")
+            .intern("User");
+        let second = interners
+            .package_mut(1)
+            .expect("package one interner should exist")
+            .intern("User");
+
+        assert_eq!(first, second);
+        assert_ne!(first.as_str().as_ptr(), second.as_str().as_ptr());
+        assert_eq!(interners.len(), 2);
     }
 
     #[cfg(feature = "memsize")]

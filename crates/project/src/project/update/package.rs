@@ -43,7 +43,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
 
     let package_indices = packages.iter().map(|package| package.0).collect::<Vec<_>>();
-    let item_tree = ItemTreeDb::build_packages_with_interner(
+    let item_tree = ItemTreeDb::build_packages_with_interners(
         &mut state.parse,
         &package_indices,
         &mut state.names,

@@ -9,7 +9,7 @@ use rg_def_map::DefMapDb;
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
-use rg_text::NameInterner;
+use rg_text::PackageNameInterners;
 
 use self::shared::{BenchFixture, BenchTarget, bench_targets};
 
@@ -35,9 +35,14 @@ fn item_tree_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
     let fixture = BenchFixture::get(target);
     bencher
         .counter(ItemsCount::new(fixture.item_tree_items))
-        .with_inputs(|| (fixture.parse.clone(), NameInterner::new()))
+        .with_inputs(|| {
+            (
+                fixture.parse.clone(),
+                PackageNameInterners::new(fixture.parse.package_count()),
+            )
+        })
         .bench_local_values(|(mut parse, mut names)| {
-            let item_tree = ItemTreeDb::build_with_interner(&mut parse, &mut names)
+            let item_tree = ItemTreeDb::build_with_interners(&mut parse, &mut names)
                 .expect("item tree should build");
             black_box_drop(item_tree);
         });
@@ -57,7 +62,7 @@ fn def_map_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
         })
         .bench_local_values(|(parse, item_tree, mut names)| {
             let def_map = DefMapDb::builder(&fixture.workspace, &parse, &item_tree)
-                .name_interner(&mut names)
+                .name_interners(&mut names)
                 .build()
                 .expect("def map should build");
             black_box_drop(def_map);
@@ -91,7 +96,7 @@ fn body_ir_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
         })
         .bench_local_values(|(parse, mut names)| {
             let body_ir = BodyIrDb::builder(&parse, &fixture.def_map, &fixture.semantic_ir)
-                .name_interner(&mut names)
+                .name_interners(&mut names)
                 .policy(BodyIrBuildPolicy::workspace_packages())
                 .build()
                 .expect("body IR should build");

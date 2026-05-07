@@ -3,7 +3,7 @@ use std::sync::Arc;
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::ParseDb;
-use rg_text::NameInterner;
+use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
@@ -70,7 +70,7 @@ pub use dep::api::Api as Renamed;
     let app_slot = app_slot.expect("fixture app package should exist");
 
     let old_read = old.read_txn(PackageLoader::new(UnexpectedPackageLoader));
-    let mut interner = NameInterner::new();
+    let mut interner = PackageNameInterners::new(parse.package_count());
     let rebuilt = old
         .package_rebuilder(
             &old_read,
