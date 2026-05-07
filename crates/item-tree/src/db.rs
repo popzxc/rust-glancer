@@ -1,6 +1,7 @@
 //! Resident item-tree database and package-selection builders.
 
 use anyhow::Context as _;
+use rayon::prelude::*;
 
 use rg_parse::ParseDb;
 use rg_text::PackageNameInterners;
@@ -46,23 +47,22 @@ impl ItemTreeDb {
         packages: &[usize],
         interners: &mut PackageNameInterners,
     ) -> anyhow::Result<Self> {
+        let package_slots = normalized_package_slots(parse.package_count(), packages)?;
+        anyhow::ensure!(
+            interners.package_count() == parse.package_count(),
+            "name interner count {} does not match parse package count {}",
+            interners.package_count(),
+            parse.package_count(),
+        );
+
         let mut trees = Self {
             packages: vec![None; parse.package_count()],
         };
-        for package_slot in normalized_package_slots(packages) {
-            let interner = interners.package_mut(package_slot).with_context(|| {
-                format!("while attempting to fetch name interner for package {package_slot}")
-            })?;
-            let package = parse.package_mut(package_slot).with_context(|| {
-                format!("while attempting to fetch parsed package {package_slot}")
-            })?;
-            let lowered = lower::build_package(package, interner).with_context(|| {
-                format!(
-                    "while attempting to build item trees for package {}",
-                    package.package_name()
-                )
-            })?;
-            trees.packages[package_slot] = Some(lowered);
+
+        if package_slots.len() <= 1 {
+            Self::build_packages_serial(parse, &package_slots, interners, &mut trees)?;
+        } else {
+            Self::build_packages_parallel(parse, &package_slots, interners, &mut trees)?;
         }
 
         Ok(trees)
@@ -72,11 +72,93 @@ impl ItemTreeDb {
     pub fn package(&self, package_slot: usize) -> Option<&Package> {
         self.packages.get(package_slot)?.as_ref()
     }
+
+    fn build_packages_serial(
+        parse: &mut ParseDb,
+        package_slots: &[usize],
+        interners: &mut PackageNameInterners,
+        trees: &mut Self,
+    ) -> anyhow::Result<()> {
+        for &package_slot in package_slots {
+            let interner = interners.package_mut(package_slot).with_context(|| {
+                format!("while attempting to fetch name interner for package {package_slot}")
+            })?;
+            let package = parse.package_mut(package_slot).with_context(|| {
+                format!("while attempting to fetch parsed package {package_slot}")
+            })?;
+            let lowered = Self::lower_package(package_slot, package, interner)?;
+            trees.packages[package_slot] = Some(lowered);
+        }
+
+        Ok(())
+    }
+
+    fn build_packages_parallel(
+        parse: &mut ParseDb,
+        package_slots: &[usize],
+        interners: &mut PackageNameInterners,
+        trees: &mut Self,
+    ) -> anyhow::Result<()> {
+        let mut selected = vec![false; parse.package_count()];
+        for &package_slot in package_slots {
+            selected[package_slot] = true;
+        }
+
+        let thread_pool = rayon::ThreadPoolBuilder::new()
+            .thread_name(|index| format!("rg-item-tree-{index}"))
+            .build()
+            .context("while attempting to create item-tree lowering thread pool")?;
+
+        // Each package owns its parse cache, name interner, and output slot. Zipping mutable
+        // slices makes that independence visible to Rayon, while the selection bitmap preserves
+        // the sparse rebuild behavior where unrelated package slots stay absent.
+        thread_pool.install(|| {
+            parse
+                .packages_mut()
+                .par_iter_mut()
+                .zip(interners.packages_mut().par_iter_mut())
+                .zip(trees.packages.par_iter_mut())
+                .enumerate()
+                .try_for_each(
+                    |(package_slot, ((parse_package, interner), output))| -> anyhow::Result<()> {
+                        if !selected[package_slot] {
+                            return Ok(());
+                        }
+
+                        *output = Some(Self::lower_package(package_slot, parse_package, interner)?);
+                        Ok(())
+                    },
+                )
+        })
+    }
+
+    fn lower_package(
+        package_slot: usize,
+        package: &mut rg_parse::Package,
+        interner: &mut rg_text::NameInterner,
+    ) -> anyhow::Result<Package> {
+        let package_name = package.package_name().to_owned();
+        lower::build_package(package, interner)
+            .with_context(|| {
+                format!("while attempting to build item trees for package {package_name}")
+            })
+            .with_context(|| format!("while attempting to build item tree package {package_slot}"))
+    }
 }
 
-fn normalized_package_slots(packages: &[usize]) -> Vec<usize> {
+fn normalized_package_slots(
+    package_count: usize,
+    packages: &[usize],
+) -> anyhow::Result<Vec<usize>> {
     let mut packages = packages.to_vec();
     packages.sort_unstable();
     packages.dedup();
-    packages
+
+    if let Some(package_slot) = packages.iter().copied().find(|slot| *slot >= package_count) {
+        anyhow::bail!(
+            "package slot {package_slot} is out of bounds for {package_count} parsed packages"
+        );
+    }
+
+    Ok(packages)
 }

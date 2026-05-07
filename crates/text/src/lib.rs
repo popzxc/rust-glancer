@@ -214,6 +214,11 @@ impl PackageNameInterners {
         self.packages.get_mut(package_slot)
     }
 
+    /// Returns package-local interners as disjoint mutable slots for package-parallel lowering.
+    pub fn packages_mut(&mut self) -> &mut [NameInterner] {
+        &mut self.packages
+    }
+
     pub fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
         for package in &mut self.packages {

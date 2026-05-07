@@ -62,6 +62,15 @@ impl ParseDb {
         &self.packages
     }
 
+    /// Returns all parsed packages as disjoint mutable slots.
+    ///
+    /// Phase builders use this when they can process each package independently. Exposing the
+    /// slice keeps ownership explicit while allowing callers to split work without repeated
+    /// package-slot lookups.
+    pub fn packages_mut(&mut self) -> &mut [Package] {
+        &mut self.packages
+    }
+
     /// Returns one parsed package by slot.
     pub fn package(&self, package_slot: usize) -> Option<&Package> {
         self.packages.get(package_slot)
