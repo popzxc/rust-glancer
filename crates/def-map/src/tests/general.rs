@@ -157,6 +157,56 @@ pub fn work() {}
 }
 
 #[test]
+fn resolves_reexports_from_path_attribute_modules() {
+    utils::check_project_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "path_attr_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+#[path = "generated/api_file.rs"]
+pub mod api;
+
+pub mod outer {
+    #[path = "implementation.rs"]
+    pub mod implementation;
+}
+
+pub use api::Api;
+pub use outer::implementation::work;
+
+//- /src/generated/api_file.rs
+pub struct Api;
+
+//- /src/outer/implementation.rs
+pub fn work() {}
+"#,
+        expect![[r#"
+            package path_attr_fixture
+
+            path_attr_fixture [lib]
+            crate
+            - Api : type [pub struct path_attr_fixture[lib]::crate::api::Api]
+            - api : type [pub module path_attr_fixture[lib]::crate::api]
+            - outer : type [pub module path_attr_fixture[lib]::crate::outer]
+            - work : value [pub fn path_attr_fixture[lib]::crate::outer::implementation::work]
+
+            crate::api
+            - Api : type [pub struct path_attr_fixture[lib]::crate::api::Api]
+
+            crate::outer
+            - implementation : type [pub module path_attr_fixture[lib]::crate::outer::implementation]
+
+            crate::outer::implementation
+            - work : value [pub fn path_attr_fixture[lib]::crate::outer::implementation::work]
+        "#]],
+    );
+}
+
+#[test]
 fn exposes_shared_out_of_line_modules_from_lib_and_bin_roots() {
     utils::check_project_def_map(
         r#"

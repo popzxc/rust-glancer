@@ -1,3 +1,9 @@
+/**
+ * Adds rust-glancer-specific actions to VS Code hover results.
+ *
+ * The language server provides type-definition data through standard LSP requests; this feature
+ * turns that data into safe command links so users can jump from hover text to the underlying type.
+ */
 import * as vscode from "vscode";
 import {
   TypeDefinitionRequest,
@@ -9,7 +15,7 @@ import {
   type TypeDefinitionParams,
 } from "vscode-languageclient/node";
 
-const GO_TO_TYPE_COMMAND = "rust-glancer.gotoTypeFromHover";
+import { EXTENSION_COMMANDS } from "../commands";
 
 interface SerializedLocation {
   readonly uri: string;
@@ -63,7 +69,7 @@ export function hoverMiddleware(
 
 export function registerHoverActionCommands(output: vscode.OutputChannel): vscode.Disposable {
   return vscode.commands.registerCommand(
-    GO_TO_TYPE_COMMAND,
+    EXTENSION_COMMANDS.goToTypeFromHover,
     async (serializedLocations: unknown) => {
       const locations = deserializeLocations(serializedLocations);
       if (locations.length === 0) {
@@ -112,13 +118,16 @@ function appendGoToTypeAction(
   hover: vscode.Hover,
   locations: readonly SerializedLocation[],
 ): vscode.Hover {
-  const label = locations.length === 1 ? "Go to type" : `Go to ${locations.length} type definitions`;
+  const label =
+    locations.length === 1 ? "Go to type" : `Go to ${locations.length} type definitions`;
   const args = encodeURIComponent(JSON.stringify([locations]));
-  const action = new vscode.MarkdownString(`[${label}](command:${GO_TO_TYPE_COMMAND}?${args})`);
+  const action = new vscode.MarkdownString(
+    `[${label}](command:${EXTENSION_COMMANDS.goToTypeFromHover}?${args})`,
+  );
 
   // Only this locally generated command link is trusted. The server-rendered docs and signatures
   // keep VS Code's default untrusted Markdown behavior.
-  action.isTrusted = { enabledCommands: [GO_TO_TYPE_COMMAND] };
+  action.isTrusted = { enabledCommands: [EXTENSION_COMMANDS.goToTypeFromHover] };
 
   const contents = Array.isArray(hover.contents) ? [...hover.contents] : [hover.contents];
   contents.push(action);

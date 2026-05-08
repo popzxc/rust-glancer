@@ -43,7 +43,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
 
     let package_indices = packages.iter().map(|package| package.0).collect::<Vec<_>>();
-    let item_tree = ItemTreeDb::build_packages_with_interner(
+    let item_tree = ItemTreeDb::build_packages_with_interners(
         &mut state.parse,
         &package_indices,
         &mut state.names,
@@ -108,12 +108,14 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
 
 pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::Result<()> {
     let workspace = state.workspace.clone();
+    let cargo_metadata_config = state.cargo_metadata_config.clone();
     let body_ir_policy = state.body_ir_policy;
     let package_residency_policy = state.package_residency_policy;
     let cache_store = state.cache_store.clone();
     let mut profiler = BuildProfiler::disabled();
     let mut rebuilt = build::build_resident_state(
         workspace,
+        cargo_metadata_config,
         body_ir_policy,
         package_residency_policy,
         &mut profiler,

@@ -1,0 +1,8 @@
+[package]
+name = "bench_def_app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bench_def_base = { path = "../base" }
+bench_def_facade = { path = "../facade" }

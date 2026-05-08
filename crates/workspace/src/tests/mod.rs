@@ -5,7 +5,10 @@ use std::{collections::BTreeSet, fs};
 use expect_test::expect;
 use test_fixture::fixture_crate;
 
-use crate::{PackageSource, TargetKind, WorkspaceMetadata, WorkspaceMetadataError};
+use crate::{
+    CargoMetadataConfig, CargoMetadataTarget, PackageSource, TargetKind, WorkspaceMetadata,
+    WorkspaceMetadataError, parse_rustc_host_target,
+};
 
 #[test]
 fn dumps_normalized_workspace_metadata() {
@@ -558,5 +561,30 @@ pub struct Dep;
             .package_slots_containing_path(&generated_api)
             .is_empty(),
         "paths outside every package root should not force a package rebuild"
+    );
+}
+
+#[test]
+fn parses_rustc_host_target_from_verbose_version_output() {
+    let output = r#"
+rustc 1.94.1
+binary: rustc
+host: aarch64-apple-darwin
+release: 1.94.1
+"#;
+
+    assert_eq!(
+        parse_rustc_host_target(output),
+        Some("aarch64-apple-darwin".to_string()),
+    );
+}
+
+#[test]
+fn normalizes_explicit_cargo_metadata_target() {
+    let config = CargoMetadataConfig::default().target_triple("  x86_64-unknown-linux-gnu  ");
+
+    assert_eq!(
+        config.target(),
+        &CargoMetadataTarget::Triple("x86_64-unknown-linux-gnu".to_string()),
     );
 }

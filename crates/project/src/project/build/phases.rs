@@ -7,13 +7,13 @@ use rg_def_map::DefMapDb;
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
-use rg_text::NameInterner;
+use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::profile::BuildProfiler;
 
 pub(super) struct BuiltPhases {
-    pub(super) names: NameInterner,
+    pub(super) names: PackageNameInterners,
     pub(super) parse: ParseDb,
     pub(super) def_map: DefMapDb,
     pub(super) semantic_ir: SemanticIrDb,
@@ -25,13 +25,13 @@ pub(super) fn build(
     body_ir_policy: BodyIrBuildPolicy,
     profiler: &mut BuildProfiler,
 ) -> anyhow::Result<BuiltPhases> {
-    let mut names = NameInterner::new();
     let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
+    let mut names = PackageNameInterners::new(parse.package_count());
     let process_memory = profiler.sample_process_memory();
     let parse_bytes = profiler.measure(&parse);
     profiler.record("after parse", parse_bytes, parse_bytes, process_memory);
 
-    let item_tree = ItemTreeDb::build_with_interner(&mut parse, &mut names)
+    let item_tree = ItemTreeDb::build_with_interners(&mut parse, &mut names)
         .context("while attempting to build item tree db")?;
     let process_memory = profiler.sample_process_memory();
     let names_bytes = profiler.measure(&names);
@@ -45,7 +45,7 @@ pub(super) fn build(
     );
 
     let def_map = DefMapDb::builder(workspace, &parse, &item_tree)
-        .name_interner(&mut names)
+        .name_interners(&mut names)
         .build()
         .context("while attempting to build def map db")?;
     let process_memory = profiler.sample_process_memory();
@@ -91,7 +91,7 @@ pub(super) fn build(
     );
 
     let body_ir = BodyIrDb::builder(&parse, &def_map, &semantic_ir)
-        .name_interner(&mut names)
+        .name_interners(&mut names)
         .policy(body_ir_policy)
         .build()
         .context("while attempting to build body ir db")?;

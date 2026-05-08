@@ -31,6 +31,16 @@ impl MemorySize for ra_syntax::ast::SourceFile {
     }
 }
 
+impl<T> MemorySize for ra_syntax::Parse<T> {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        // `Parse` owns the immutable green tree; `syntax_node()` only creates a temporary cursor
+        // so we can reuse the same approximate tree accounting as `SourceFile`.
+        recorder.scope("syntax", |recorder| {
+            self.syntax_node().record_memory_children(recorder);
+        });
+    }
+}
+
 impl MemorySize for ra_syntax::SyntaxNode {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         let stats = SyntaxTreeStats::from_node(self);

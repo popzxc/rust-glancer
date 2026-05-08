@@ -15,7 +15,7 @@ mod imports;
 mod rebuild;
 
 use rg_item_tree::ItemTreeDb;
-use rg_text::NameInterner;
+use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
@@ -25,7 +25,7 @@ pub struct DefMapDbBuilder<'a, 'names> {
     workspace: &'a WorkspaceMetadata,
     parse: &'a rg_parse::ParseDb,
     item_tree: &'a ItemTreeDb,
-    interner: NameInternerSource<'names>,
+    interners: NameInternerSource<'names>,
 }
 
 impl<'a> DefMapDbBuilder<'a, 'static> {
@@ -38,18 +38,21 @@ impl<'a> DefMapDbBuilder<'a, 'static> {
             workspace,
             parse,
             item_tree,
-            interner: NameInternerSource::Owned(NameInterner::new()),
+            interners: NameInternerSource::Owned(PackageNameInterners::new(parse.package_count())),
         }
     }
 }
 
 impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
-    pub fn name_interner(self, interner: &'names mut NameInterner) -> DefMapDbBuilder<'a, 'names> {
+    pub fn name_interners(
+        self,
+        interners: &'names mut PackageNameInterners,
+    ) -> DefMapDbBuilder<'a, 'names> {
         DefMapDbBuilder {
             workspace: self.workspace,
             parse: self.parse,
             item_tree: self.item_tree,
-            interner: NameInternerSource::Borrowed(interner),
+            interners: NameInternerSource::Borrowed(interners),
         }
     }
 
@@ -58,7 +61,7 @@ impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
             self.workspace,
             self.parse,
             self.item_tree,
-            self.interner.as_mut(),
+            self.interners.as_mut(),
         )?;
         db.mutator().shrink_to_fit();
         Ok(db)
@@ -66,15 +69,15 @@ impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
 }
 
 enum NameInternerSource<'names> {
-    Owned(NameInterner),
-    Borrowed(&'names mut NameInterner),
+    Owned(PackageNameInterners),
+    Borrowed(&'names mut PackageNameInterners),
 }
 
 impl NameInternerSource<'_> {
-    fn as_mut(&mut self) -> &mut NameInterner {
+    fn as_mut(&mut self) -> &mut PackageNameInterners {
         match self {
-            Self::Owned(interner) => interner,
-            Self::Borrowed(interner) => interner,
+            Self::Owned(interners) => interners,
+            Self::Borrowed(interners) => interners,
         }
     }
 }
@@ -87,7 +90,7 @@ pub struct DefMapDbPackageRebuilder<'a, 'db> {
     parse: &'a rg_parse::ParseDb,
     item_tree: &'a ItemTreeDb,
     packages: &'a [PackageSlot],
-    interner: &'a mut NameInterner,
+    interners: &'a mut PackageNameInterners,
 }
 
 impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
@@ -98,7 +101,7 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
         parse: &'a rg_parse::ParseDb,
         item_tree: &'a ItemTreeDb,
         packages: &'a [PackageSlot],
-        interner: &'a mut NameInterner,
+        interners: &'a mut PackageNameInterners,
     ) -> Self {
         DefMapDbPackageRebuilder {
             old,
@@ -107,7 +110,7 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
             parse,
             item_tree,
             packages,
-            interner,
+            interners,
         }
     }
 
@@ -119,7 +122,7 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
             self.parse,
             self.item_tree,
             self.packages,
-            self.interner,
+            self.interners,
         )?;
         db.mutator().shrink_packages(self.packages);
         Ok(db)

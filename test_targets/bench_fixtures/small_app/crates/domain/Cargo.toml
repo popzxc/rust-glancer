@@ -1,0 +1,9 @@
+[package]
+name = "small_app_domain"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+tracing.workspace = true

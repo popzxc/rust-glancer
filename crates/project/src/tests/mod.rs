@@ -8,6 +8,53 @@ use self::utils::{HostFixture, HostObservation};
 use crate::{PackageResidencyPolicy, Project};
 
 #[test]
+fn timing_profile_reports_phase_checkpoints_without_memory_sampling() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "timing_profile_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+"#,
+    );
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should build");
+    let (_project, profile) = Project::builder(workspace)
+        .profile_build_timing(true)
+        .build()
+        .expect("timing-profiled project build should succeed")
+        .into_parts();
+    let profile = profile.expect("timing profiling should produce a profile");
+
+    assert_eq!(
+        profile.checkpoints().len(),
+        8,
+        "timing profile should report the same build checkpoints as memory profiling"
+    );
+    assert!(
+        profile
+            .checkpoints()
+            .iter()
+            .all(|checkpoint| checkpoint.phase_elapsed <= checkpoint.elapsed),
+        "phase durations should be bounded by cumulative elapsed time"
+    );
+    assert!(
+        profile.checkpoints().iter().all(|checkpoint| {
+            checkpoint.retained_bytes.is_none()
+                && checkpoint.active_retained_bytes.is_none()
+                && checkpoint.allocated_bytes.is_none()
+                && checkpoint.active_bytes.is_none()
+                && checkpoint.resident_bytes.is_none()
+        }),
+        "timing-only profiling should not run memory samplers"
+    );
+}
+
+#[test]
 fn profiled_build_reports_phase_checkpoints_without_exposing_phase_dbs() {
     let fixture = fixture_crate(
         r#"

@@ -29,6 +29,15 @@ jobs:
       - name: Run tests
         run: cargo nextest run --workspace
 
+  test-targets:
+    name: test-targets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@just
+      - name: Check test targets
+        run: just check-test-targets
+
   client:
     name: client
     runs-on: ubuntu-latest
@@ -44,8 +53,18 @@ jobs:
           cache-dependency-path: editors/code/package-lock.json
       - name: Install client dependencies
         run: npm ci
+      - name: Check client formatting
+        run: npm run fmt:check
+      - name: Lint client
+        run: npm run lint
       - name: Check client
         run: npm run check
+      - name: Check client tests
+        run: npm run check:test
+      - name: Check client unit tests
+        run: npm run check:unit
+      - name: Run client smoke test
+        run: xvfb-run -a npm run test
 
   cargo-deny:
     name: cargo-deny
@@ -62,6 +81,7 @@ jobs:
     needs:
       - lints
       - tests
+      - test-targets
       - client
     steps:
       - name: Decide on PR checks

@@ -22,6 +22,10 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             ..Default::default()
         }),
         document_symbol_provider: Some(OneOf::Left(true)),
+        // The VS Code extension sends this request directly. Advertising the internal command
+        // makes vscode-languageclient register it as a global VS Code command, which collides when
+        // the extension runs one language client per workspace folder.
+        execute_command_provider: None,
         inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
             InlayHintOptions {
                 resolve_provider: Some(false),
@@ -66,6 +70,13 @@ mod tests {
     fn advertises_hover_support() {
         let capabilities = server_capabilities();
         assert!(capabilities.hover_provider.is_some());
+    }
+
+    #[test]
+    fn does_not_advertise_internal_reindex_command() {
+        let capabilities = server_capabilities();
+
+        assert!(capabilities.execute_command_provider.is_none());
     }
 
     #[test]

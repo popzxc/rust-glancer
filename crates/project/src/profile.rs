@@ -25,6 +25,9 @@ impl BuildProfile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildCheckpoint {
     pub label: &'static str,
+    /// Time spent since the previous checkpoint, or since build start for the first checkpoint.
+    pub phase_elapsed: Duration,
+    /// Time spent since build start.
     pub elapsed: Duration,
     /// Retained size of the object sampled at this checkpoint.
     pub retained_bytes: Option<usize>,
@@ -50,6 +53,7 @@ pub type ProcessMemorySampler = Box<dyn FnMut() -> Option<BuildProcessMemory>>;
 
 pub(crate) struct BuildProfiler {
     started_at: Instant,
+    timing: bool,
     retained_memory: bool,
     process_memory_sampler: Option<ProcessMemorySampler>,
     checkpoints: Vec<BuildCheckpoint>,
@@ -59,6 +63,7 @@ impl BuildProfiler {
     pub(crate) fn disabled() -> Self {
         Self {
             started_at: Instant::now(),
+            timing: false,
             retained_memory: false,
             process_memory_sampler: None,
             checkpoints: Vec::new(),
@@ -66,11 +71,13 @@ impl BuildProfiler {
     }
 
     pub(crate) fn new(
+        timing: bool,
         retained_memory: bool,
         process_memory_sampler: Option<ProcessMemorySampler>,
     ) -> Self {
         Self {
             started_at: Instant::now(),
+            timing,
             retained_memory,
             process_memory_sampler,
             checkpoints: Vec::new(),
@@ -106,9 +113,17 @@ impl BuildProfiler {
             return;
         }
 
+        let elapsed = self.started_at.elapsed();
+        let previous_elapsed = self
+            .checkpoints
+            .last()
+            .map(|checkpoint| checkpoint.elapsed)
+            .unwrap_or_default();
+
         self.checkpoints.push(BuildCheckpoint {
             label,
-            elapsed: self.started_at.elapsed(),
+            phase_elapsed: elapsed.saturating_sub(previous_elapsed),
+            elapsed,
             retained_bytes,
             active_retained_bytes,
             allocated_bytes: process_memory.map(|memory| memory.allocated_bytes),
@@ -122,6 +137,6 @@ impl BuildProfiler {
     }
 
     fn is_enabled(&self) -> bool {
-        self.retained_memory || self.process_memory_sampler.is_some()
+        self.timing || self.retained_memory || self.process_memory_sampler.is_some()
     }
 }

@@ -4,7 +4,7 @@ use rg_item_tree::ItemTreeDb;
 use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_parse::{self, TargetId};
-use rg_text::NameInterner;
+use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
@@ -37,10 +37,10 @@ impl DefMapDb {
         parse: &'a rg_parse::ParseDb,
         item_tree: &'a ItemTreeDb,
         packages: &'a [PackageSlot],
-        interner: &'a mut NameInterner,
+        interners: &'a mut PackageNameInterners,
     ) -> DefMapDbPackageRebuilder<'a, 'db> {
         DefMapDbPackageRebuilder::new(
-            self, old_read, workspace, parse, item_tree, packages, interner,
+            self, old_read, workspace, parse, item_tree, packages, interners,
         )
     }
 

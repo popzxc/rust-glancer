@@ -7,7 +7,7 @@
 use anyhow::Context as _;
 
 use rg_item_tree::ItemTreeDb;
-use rg_text::NameInterner;
+use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
@@ -24,7 +24,7 @@ pub(crate) fn rebuild_packages(
     parse: &rg_parse::ParseDb,
     item_tree: &ItemTreeDb,
     packages: &[PackageSlot],
-    interner: &mut NameInterner,
+    interners: &mut PackageNameInterners,
 ) -> anyhow::Result<DefMapDb> {
     let packages = normalized_package_slots(packages);
     if packages.is_empty() {
@@ -33,7 +33,7 @@ pub(crate) fn rebuild_packages(
 
     // Implicit roots are still recomputed from metadata even for package-scoped source rebuilds,
     // because the rebuilt targets need the same cross-target root map shape as a clean build.
-    let implicit_roots = build_implicit_roots(workspace, parse.packages(), interner)
+    let implicit_roots = build_implicit_roots(workspace, parse.packages(), interners)
         .context("while attempting to rebuild implicit target roots")?;
 
     // Only affected packages get mutable state. Unaffected packages remain frozen in `old` and
@@ -81,7 +81,7 @@ pub(crate) fn rebuild_packages(
         workspace,
         parse.packages(),
         &mut target_states,
-        interner,
+        interners,
     )
     .context("while attempting to finish rebuilt target states")?;
 

@@ -6,7 +6,7 @@
 use anyhow::Context as _;
 
 use rg_item_tree::ItemTreeDb;
-use rg_text::NameInterner;
+use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
@@ -24,12 +24,12 @@ pub(crate) fn build_db(
     workspace: &WorkspaceMetadata,
     parse: &rg_parse::ParseDb,
     item_tree: &ItemTreeDb,
-    interner: &mut NameInterner,
+    interners: &mut PackageNameInterners,
 ) -> anyhow::Result<DefMapDb> {
     // First compute every implicit crate root from the complete package graph. These roots are
     // needed while collecting target states because extern prelude bindings can point across
     // packages and targets.
-    let implicit_roots = build_implicit_roots(workspace, parse.packages(), interner)
+    let implicit_roots = build_implicit_roots(workspace, parse.packages(), interners)
         .context("while attempting to build implicit target roots")?;
 
     // A fresh build collects every target from item trees. At this point scopes contain only
@@ -44,7 +44,7 @@ pub(crate) fn build_db(
         workspace,
         parse.packages(),
         &mut target_states,
-        interner,
+        interners,
     )
     .context("while attempting to finish target states")?;
 

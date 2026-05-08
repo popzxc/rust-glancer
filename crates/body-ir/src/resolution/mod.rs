@@ -4,6 +4,7 @@
 //! local-vs-item path resolution and simple types that are already present in signatures.
 
 mod body;
+mod index;
 mod method;
 mod normalize;
 mod pat;
@@ -35,6 +36,7 @@ use self::{
 };
 
 pub(crate) use self::body::BodyResolver;
+pub(crate) use self::index::SemanticResolutionIndex;
 
 pub(super) fn resolve_type_path_in_scope(
     body: Option<&BodyData>,
@@ -63,7 +65,7 @@ pub(super) fn resolve_value_path_in_scope(
         return Ok((BodyResolution::Unknown, BodyTy::Unknown));
     };
 
-    BodyValuePathResolver::new(def_map, semantic_ir, body_ref, body)
+    BodyValuePathResolver::new(def_map, semantic_ir, None, body_ref, body)
         .resolve_nonlocal_path_expr(scope, path)
 }
 
@@ -101,7 +103,13 @@ pub(super) fn semantic_trait_function_candidates_for_receiver(
     semantic_ir: &SemanticIrReadTxn<'_>,
     receiver_ty: &BodyNominalTy,
 ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
-    semantic_trait_function_candidates_for_receiver_impl(def_map, semantic_ir, receiver_ty)
+    semantic_trait_function_candidates_for_receiver_impl(
+        None,
+        def_map,
+        semantic_ir,
+        receiver_ty,
+        None,
+    )
 }
 
 pub(super) fn local_function_applies_to_receiver(

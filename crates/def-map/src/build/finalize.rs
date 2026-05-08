@@ -9,7 +9,7 @@
 use anyhow::Context as _;
 
 use rg_parse::Package;
-use rg_text::{Name, NameInterner};
+use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
@@ -306,9 +306,9 @@ pub(super) fn finalize_target_states(
     workspace: &WorkspaceMetadata,
     packages: &[Package],
     target_states: &mut FinalizeTargetStates,
-    interner: &mut NameInterner,
+    interners: &mut PackageNameInterners,
 ) -> anyhow::Result<()> {
-    select_preludes(old, workspace, packages, target_states, interner)
+    select_preludes(old, workspace, packages, target_states, interners)
         .context("while attempting to select target preludes")?;
     finalize_scopes(old, target_states).context("while attempting to resolve target scopes")
 }
@@ -339,7 +339,7 @@ fn select_preludes(
     workspace: &WorkspaceMetadata,
     packages: &[Package],
     states: &mut FinalizeTargetStates,
-    interner: &mut NameInterner,
+    interners: &mut PackageNameInterners,
 ) -> anyhow::Result<()> {
     let base_scopes = states.base_scopes();
     let env = FinalizeResolutionEnv::new(old, states, &base_scopes);
@@ -362,6 +362,9 @@ fn select_preludes(
                 "while attempting to fetch workspace metadata for package {}",
                 package.id()
             )
+        })?;
+        let interner = interners.package_mut(package_slot).with_context(|| {
+            format!("while attempting to fetch name interner for package {package_slot}")
         })?;
         let prelude_path = crate::ImportPath::standard_prelude(workspace_package.edition, interner);
 
