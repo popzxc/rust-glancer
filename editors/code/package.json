@@ -13,11 +13,7 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onLanguage:rust",
-    "workspaceContains:Cargo.toml",
-    "onCommand:rust-glancer.restartServer",
-    "onCommand:rust-glancer.stopServer",
-    "onCommand:rust-glancer.reindexWorkspace"
+    "workspaceContains:Cargo.toml"
   ],
   "contributes": {
     "languages": [
