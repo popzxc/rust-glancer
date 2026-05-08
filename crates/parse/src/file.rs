@@ -2,15 +2,13 @@ use anyhow::Context as _;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use ra_syntax::{Edition, Parse as SyntaxParse, SourceFile};
 use rg_arena::Arena;
 
-use crate::{
-    error::ParseError,
-    span::{LineIndex, Span},
-};
+use crate::span::{LineIndex, LineIndexSnapshot, Span};
 
 /// Stable identifier for a parsed source file inside `FileDb`.
 #[derive(
@@ -33,14 +31,12 @@ impl rg_arena::ArenaId for FileId {
 pub(crate) struct ParsedFileData {
     /// Canonical filesystem path for this source file.
     pub(crate) path: PathBuf,
-    /// Parse diagnostics produced while parsing the file.
-    pub(crate) parse_errors: Vec<ParseError>,
     /// Line-start index used to convert byte offsets into line/column coordinates.
-    pub(crate) line_index: LineIndex,
+    pub(crate) line_index: LineIndexState,
     /// Green-backed Rust parse result produced by `ra_syntax`.
     ///
     /// This is retained only while AST-consuming phases are lowering. Query-time state keeps
-    /// paths, parse errors, and line indexes, but can evict parse trees to keep memory bounded.
+    /// paths and line indexes, but can evict parse trees to keep memory bounded.
     ///
     /// `ra_syntax::SourceFile` is a traversal cursor over this immutable green tree. Keeping the
     /// parse result lets each AST-consuming phase create a fresh local cursor instead of sharing
@@ -59,6 +55,44 @@ pub struct ParsedFile<'a> {
     data: &'a ParsedFileData,
 }
 
+/// Serializable file metadata retained after syntax trees are evicted.
+///
+/// Cache-backed startup restores this data so later queries can still translate file ids into
+/// paths and source coordinates without rebuilding item trees first.
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct ParsedFileSnapshot {
+    pub(crate) path: ParsedFilePath,
+    pub(crate) line_index: LineIndexSnapshot,
+}
+
+impl ParsedFileSnapshot {
+    pub fn path(&self) -> &Path {
+        self.path.as_path()
+    }
+}
+
+/// Cache-friendly file path representation for parse snapshots.
+///
+/// `PathBuf` is the natural in-memory type, but cache artifacts are archived with `rkyv`, whose
+/// portable derives do not cover platform path buffers. The snapshot stores the canonical path as a
+/// string and converts back to `PathBuf` when restoring the parse database.
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub(crate) struct ParsedFilePath(pub(crate) String);
+
+impl ParsedFilePath {
+    fn from_path(path: &Path) -> Self {
+        Self(path.to_string_lossy().into_owned())
+    }
+
+    fn into_path_buf(self) -> PathBuf {
+        PathBuf::from(self.0)
+    }
+
+    fn as_path(&self) -> &Path {
+        Path::new(&self.0)
+    }
+}
+
 impl<'a> ParsedFile<'a> {
     fn new(file_id: FileId, data: &'a ParsedFileData) -> Self {
         Self { file_id, data }
@@ -74,14 +108,9 @@ impl<'a> ParsedFile<'a> {
         self.data.path.as_path()
     }
 
-    /// Returns parser diagnostics produced for this source file.
-    pub fn parse_errors(&self) -> &'a [ParseError] {
-        &self.data.parse_errors
-    }
-
     /// Returns the line index used for byte-offset to line/column conversion.
-    pub fn line_index(&self) -> &'a LineIndex {
-        &self.data.line_index
+    pub fn line_index(&self) -> anyhow::Result<&'a LineIndex> {
+        self.data.line_index.get(&self.data.path)
     }
 
     /// Returns a local syntax cursor over the retained parse tree.
@@ -126,12 +155,9 @@ impl FileDb {
 
         let source = Self::read_source(&canonical_file_path)?;
 
-        let file_id = self.parsed_files.next_id();
-        self.parsed_files.alloc(Self::parse_source(
-            file_id,
-            canonical_file_path.clone(),
-            &source,
-        ));
+        let file_id = self
+            .parsed_files
+            .alloc(Self::parse_source(canonical_file_path.clone(), &source));
         self.file_ids_by_path.insert(canonical_file_path, file_id);
 
         Ok(file_id)
@@ -147,7 +173,7 @@ impl FileDb {
         };
 
         let source = Self::read_source(file_path)?;
-        self.parsed_files[file_id] = Self::parse_source(file_id, file_path.to_path_buf(), &source);
+        self.parsed_files[file_id] = Self::parse_source(file_path.to_path_buf(), &source);
         Ok(Some(file_id))
     }
 
@@ -162,7 +188,7 @@ impl FileDb {
 
         let source = Self::read_source(&parsed_file.path)?;
         let path = parsed_file.path.clone();
-        self.parsed_files[file_id] = Self::parse_source(file_id, path, &source);
+        self.parsed_files[file_id] = Self::parse_source(path, &source);
         Ok(())
     }
 
@@ -183,7 +209,15 @@ impl FileDb {
 
     pub(super) fn collect_line_indexes<'a>(&'a mut self, indexes: &mut Vec<&'a mut LineIndex>) {
         for parsed_file in self.parsed_files.iter_mut() {
-            indexes.push(&mut parsed_file.line_index);
+            if let Ok(line_index) = parsed_file.line_index.get_mut(&parsed_file.path) {
+                indexes.push(line_index);
+            }
+        }
+    }
+
+    pub(super) fn offload_line_indexes(&mut self) {
+        for parsed_file in self.parsed_files.iter_mut() {
+            parsed_file.line_index.offload();
         }
     }
 
@@ -201,6 +235,31 @@ impl FileDb {
             .map(|(file_id, data)| ParsedFile::new(file_id, data))
     }
 
+    pub(super) fn parse_snapshot(&self) -> anyhow::Result<Vec<ParsedFileSnapshot>> {
+        self.parsed_files
+            .iter()
+            .map(ParsedFileData::parse_snapshot)
+            .collect()
+    }
+
+    pub(super) fn from_parse_snapshot(files: Vec<ParsedFileSnapshot>) -> Self {
+        let parsed_files = Arena::from_vec(
+            files
+                .into_iter()
+                .map(ParsedFileData::from_parse_snapshot)
+                .collect::<Vec<_>>(),
+        );
+        let file_ids_by_path = parsed_files
+            .iter_with_ids()
+            .map(|(file_id, file)| (file.path.clone(), file_id))
+            .collect::<HashMap<_, _>>();
+
+        Self {
+            parsed_files,
+            file_ids_by_path,
+        }
+    }
+
     /// Returns the canonical path associated with `file_id`.
     pub(super) fn file_path(&self, file_id: FileId) -> Option<&Path> {
         self.parsed_files
@@ -213,34 +272,113 @@ impl FileDb {
             .with_context(|| format!("while attempting to read {}", file_path.display()))
     }
 
-    fn parse_source(file_id: FileId, path: PathBuf, source: &str) -> ParsedFileData {
+    fn parse_source(path: PathBuf, source: &str) -> ParsedFileData {
         let line_index = LineIndex::new(source);
         let parsed_file = SourceFile::parse(source, Edition::CURRENT);
-        let parse_errors = parsed_file
-            .errors()
-            .into_iter()
-            .map(|error| ParseError {
-                file_id,
-                message: error.to_string(),
-                span: Span::from_text_range(error.range()),
-            })
-            .collect();
 
         ParsedFileData {
             path,
-            parse_errors,
-            line_index,
+            line_index: LineIndexState::resident(line_index),
             syntax: Some(parsed_file),
         }
     }
 }
 
 impl ParsedFileData {
-    fn shrink_to_fit(&mut self) {
-        self.parse_errors.shrink_to_fit();
-        for error in &mut self.parse_errors {
-            error.shrink_to_fit();
+    fn parse_snapshot(&self) -> anyhow::Result<ParsedFileSnapshot> {
+        Ok(ParsedFileSnapshot {
+            path: ParsedFilePath::from_path(&self.path),
+            line_index: self.line_index.get(&self.path)?.to_snapshot(),
+        })
+    }
+
+    fn from_parse_snapshot(snapshot: ParsedFileSnapshot) -> Self {
+        Self {
+            path: snapshot.path.into_path_buf(),
+            line_index: LineIndexState::resident(LineIndex::from_snapshot(snapshot.line_index)),
+            syntax: None,
         }
+    }
+
+    fn shrink_to_fit(&mut self) {
         self.line_index.shrink_to_fit();
+    }
+}
+
+/// Lazily resident source map for a parsed file.
+///
+/// File paths and file ids stay resident because they define package inventory. The heavier line
+/// tables can be dropped after package artifacts are durable and reconstructed from the saved source
+/// file when an LSP range conversion actually needs them.
+#[derive(Debug)]
+pub(crate) enum LineIndexState {
+    Resident(LineIndex),
+    Offloaded(OnceLock<LineIndex>),
+}
+
+impl LineIndexState {
+    fn resident(line_index: LineIndex) -> Self {
+        Self::Resident(line_index)
+    }
+
+    fn get(&self, path: &Path) -> anyhow::Result<&LineIndex> {
+        match self {
+            Self::Resident(line_index) => Ok(line_index),
+            Self::Offloaded(line_index) => {
+                if let Some(line_index) = line_index.get() {
+                    return Ok(line_index);
+                }
+
+                let source = FileDb::read_source(path)?;
+                let _ = line_index.set(LineIndex::new(&source));
+                Ok(line_index
+                    .get()
+                    .expect("offloaded line index should be initialized after successful load"))
+            }
+        }
+    }
+
+    fn get_mut(&mut self, path: &Path) -> anyhow::Result<&mut LineIndex> {
+        if matches!(self, Self::Offloaded(_)) {
+            let source = FileDb::read_source(path)?;
+            *self = Self::Resident(LineIndex::new(&source));
+        }
+
+        match self {
+            Self::Resident(line_index) => Ok(line_index),
+            Self::Offloaded(_) => unreachable!("offloaded line index was made resident above"),
+        }
+    }
+
+    fn offload(&mut self) {
+        *self = Self::Offloaded(OnceLock::new());
+    }
+
+    fn shrink_to_fit(&mut self) {
+        if let Ok(line_index) = self.get_mut_without_loading() {
+            line_index.shrink_to_fit();
+        }
+    }
+
+    fn get_mut_without_loading(&mut self) -> Result<&mut LineIndex, ()> {
+        match self {
+            Self::Resident(line_index) => Ok(line_index),
+            Self::Offloaded(line_index) => line_index.get_mut().ok_or(()),
+        }
+    }
+}
+
+impl Clone for LineIndexState {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Resident(line_index) => Self::Resident(line_index.clone()),
+            Self::Offloaded(line_index) => {
+                let cloned = OnceLock::new();
+                if let Some(line_index) = line_index.get() {
+                    let _ = cloned.set(line_index.clone());
+                }
+                Self::Offloaded(cloned)
+            }
+        }
     }
 }

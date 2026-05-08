@@ -1,11 +1,12 @@
-//! Cached workspace planning from normalized workspace and parse metadata.
+//! Workspace cache planning from normalized workspace metadata.
 //!
 //! This module is the conversion boundary into the cache schema. Cargo/workspace metadata supplies
-//! package identity and dependency edges, while parse metadata supplies the exact targets that were
-//! analyzed and therefore must be present in a package artifact.
+//! package identity and dependency edges. The parse crate supplies the target-selection rule so
+//! cache planning can predict the artifact graph before a `ParseDb` exists.
 
 use std::path::Path;
 
+use rg_parse::{PackageParseSnapshot, ParseDb};
 use rg_workspace::{PackageSlot, WorkspaceMetadata};
 
 use super::{
@@ -14,64 +15,49 @@ use super::{
     fingerprint,
 };
 
-/// Cache-schema view of one workspace metadata snapshot.
-// Note: It is `CachedWorkspace` as it currently represents a set of all the workspace
-// cached packages; but it is not going to be cached itself. Probably deserves a better
-// name.
+/// Cache-schema plan for the package artifacts belonging to one workspace graph.
+///
+/// This is the deterministic, in-memory view used to name package artifacts and reject artifacts
+/// whose package/target graph no longer matches the current Cargo metadata snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CachedWorkspace {
+pub struct WorkspaceCachePlan {
     pub(crate) packages: Vec<CachedPackage>,
 }
 
-impl CachedWorkspace {
-    /// Builds cache metadata for the package targets actually analyzed by the current project.
+impl WorkspaceCachePlan {
+    /// Builds cache metadata for the package targets analyzed by the current project.
     ///
     /// Cargo metadata can list dependency examples, tests, benches, and binaries that we do not
-    /// parse for non-workspace packages. Package artifacts must describe the retained analysis
-    /// payload, so their target list follows `ParseDb`, not raw Cargo metadata.
-    pub fn build(workspace: &WorkspaceMetadata, parse: &rg_parse::ParseDb) -> Self {
-        debug_assert_eq!(
-            workspace.packages().len(),
-            parse.packages().len(),
-            "workspace and parse package slots should stay aligned",
-        );
-
+    /// parse for non-workspace packages. The target list follows `rg_parse::Package` target
+    /// selection, which keeps package-artifact identities aligned with fresh builds and future
+    /// artifact-backed restores.
+    pub fn build(workspace: &WorkspaceMetadata) -> Self {
         let packages = workspace
             .packages()
             .iter()
-            .zip(parse.packages())
             .enumerate()
-            .map(|(package_slot, (package, parsed_package))| {
-                debug_assert_eq!(
-                    package.name,
-                    parsed_package.package_name(),
-                    "workspace and parse package slots should stay aligned",
-                );
-
-                CachedPackage {
-                    package: CachedPackageSlot::from_workspace(PackageSlot(package_slot)),
-                    package_id: CachedPackageId::from_workspace(&package.id),
-                    name: package.name.clone(),
-                    source: CachedPackageSource::from(package.source),
-                    edition: CachedRustEdition::from(package.edition),
-                    manifest_path: CachedPath::from_workspace_path(&package.manifest_path),
-                    targets: parsed_package
-                        .targets()
-                        .iter()
-                        .map(CachedTarget::from_parse_target)
-                        .collect(),
-                    dependencies: package
-                        .dependencies
-                        .iter()
-                        .map(|dependency| CachedDependency {
-                            package_id: CachedPackageId::from_workspace(dependency.package_id()),
-                            name: dependency.name().to_string(),
-                            is_normal: dependency.is_normal(),
-                            is_build: dependency.is_build(),
-                            is_dev: dependency.is_dev(),
-                        })
-                        .collect(),
-                }
+            .map(|(package_slot, package)| CachedPackage {
+                package: CachedPackageSlot::from_workspace(PackageSlot(package_slot)),
+                package_id: CachedPackageId::from_workspace(&package.id),
+                name: package.name.clone(),
+                source: CachedPackageSource::from(package.source),
+                edition: CachedRustEdition::from(package.edition),
+                manifest_path: CachedPath::from_workspace_path(&package.manifest_path),
+                targets: rg_parse::Package::analyzed_targets(package)
+                    .iter()
+                    .map(CachedTarget::from_workspace_target)
+                    .collect(),
+                dependencies: package
+                    .dependencies
+                    .iter()
+                    .map(|dependency| CachedDependency {
+                        package_id: CachedPackageId::from_workspace(dependency.package_id()),
+                        name: dependency.name().to_string(),
+                        is_normal: dependency.is_normal(),
+                        is_build: dependency.is_build(),
+                        is_dev: dependency.is_dev(),
+                    })
+                    .collect(),
             })
             .collect();
 
@@ -89,9 +75,79 @@ impl CachedWorkspace {
         self.packages.get(package.0)
     }
 
-    /// Builds an artifact header for one package bundle.
-    pub fn artifact_header(&self, package: PackageSlot) -> Option<PackageCacheHeader> {
-        Some(PackageCacheHeader::new(self.package(package)?.clone()))
+    /// Computes source fingerprints for all parsed packages in slot order.
+    ///
+    /// Package identities deliberately ignore source text so graph-equivalent saves reuse artifact
+    /// paths. These fingerprints are the second half of validation: a cache hit must match both
+    /// the Cargo graph and the current source snapshot.
+    pub fn source_fingerprints(
+        &self,
+        workspace_root: &Path,
+        parse: &ParseDb,
+    ) -> anyhow::Result<Vec<Option<Fingerprint>>> {
+        parse
+            .packages()
+            .iter()
+            .enumerate()
+            .map(|(package_idx, package)| {
+                if self.package(PackageSlot(package_idx)).is_none() {
+                    return Ok(None);
+                }
+
+                fingerprint::FingerprintBuilder::package_source(workspace_root, package).map(Some)
+            })
+            .collect()
+    }
+
+    /// Refreshes source fingerprints for selected parsed packages.
+    pub fn refresh_source_fingerprints(
+        &self,
+        workspace_root: &Path,
+        parse: &ParseDb,
+        fingerprints: &mut [Option<Fingerprint>],
+        packages: &[PackageSlot],
+    ) -> anyhow::Result<()> {
+        for package in packages {
+            let Some(slot) = fingerprints.get_mut(package.0) else {
+                continue;
+            };
+            let Some(parse_package) = parse.package(package.0) else {
+                *slot = None;
+                continue;
+            };
+            if self.package(*package).is_none() {
+                *slot = None;
+                continue;
+            }
+
+            *slot = Some(fingerprint::FingerprintBuilder::package_source(
+                workspace_root,
+                parse_package,
+            )?);
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn snapshot_source_fingerprint(
+        workspace_root: &Path,
+        package: &CachedPackage,
+        snapshot: &PackageParseSnapshot,
+    ) -> anyhow::Result<Fingerprint> {
+        fingerprint::FingerprintBuilder::package_source_snapshot(workspace_root, package, snapshot)
+    }
+
+    /// Builds an artifact header for one package bundle and source snapshot.
+    pub fn artifact_header(
+        &self,
+        package: PackageSlot,
+        source_fingerprints: &[Option<Fingerprint>],
+    ) -> Option<PackageCacheHeader> {
+        let source_fingerprint = source_fingerprints.get(package.0).copied().flatten()?;
+        Some(PackageCacheHeader::new(
+            self.package(package)?.clone(),
+            source_fingerprint,
+        ))
     }
 
     /// Returns the cache generation fingerprint for this workspace graph.
@@ -104,7 +160,7 @@ impl CachedWorkspace {
 }
 
 impl CachedTarget {
-    fn from_parse_target(target: &rg_parse::Target) -> Self {
+    fn from_workspace_target(target: &rg_workspace::Target) -> Self {
         Self {
             name: target.name.clone(),
             kind: CachedTargetKind::from_workspace(&target.kind),

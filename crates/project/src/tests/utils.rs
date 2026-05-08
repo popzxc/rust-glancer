@@ -140,8 +140,8 @@ impl HostFixture {
         let header = self
             .host
             .state
-            .cached_workspace
-            .artifact_header(package)
+            .cache_plan
+            .artifact_header(package, &self.host.state.package_source_fingerprints)
             .expect("fixture package should have a cache artifact header");
         self.host
             .state
