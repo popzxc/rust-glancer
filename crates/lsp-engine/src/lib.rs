@@ -8,7 +8,10 @@ mod proto;
 
 pub use self::{
     check::CheckConfig,
-    engine::EngineHandle,
+    engine::{
+        EngineNotifyFuture, EngineResultFuture, EngineService, EngineServiceHandle,
+        InProcessEngineService,
+    },
     events::{EngineEvent, EngineEventReceiver, EngineEventSink, EngineLogLevel},
     memory::{AllocatorPurgeResult, AllocatorStats, MemoryControl},
 };

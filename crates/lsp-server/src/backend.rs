@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use rg_lsp_engine::{
-    EngineEvent, EngineEventReceiver, EngineEventSink, EngineHandle, EngineLogLevel, MemoryControl,
+    EngineEvent, EngineEventReceiver, EngineEventSink, EngineLogLevel, EngineServiceHandle,
+    InProcessEngineService, MemoryControl,
 };
 use tower_lsp_server::{
     Client, LanguageServer,
@@ -23,12 +24,10 @@ impl Backend {
     pub(crate) fn new(client: Client, memory_control: Arc<dyn MemoryControl>) -> Self {
         let (events, event_receiver) = EngineEventSink::channel();
         tokio::spawn(forward_engine_events(client.clone(), event_receiver));
+        let engine = InProcessEngineService::spawn(memory_control, events);
 
         Self {
-            ctx: ServerContext {
-                client,
-                engine: EngineHandle::spawn(memory_control, events),
-            },
+            ctx: ServerContext { client, engine },
         }
     }
 }
@@ -36,7 +35,7 @@ impl Backend {
 #[derive(Clone, Debug)]
 pub(crate) struct ServerContext {
     pub(crate) client: Client,
-    pub(crate) engine: EngineHandle,
+    pub(crate) engine: EngineServiceHandle,
 }
 
 impl LanguageServer for Backend {

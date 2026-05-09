@@ -2,7 +2,9 @@ mod command;
 mod worker;
 
 use std::{
+    future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::{
         Arc,
         mpsc::{self, Sender},
@@ -27,43 +29,142 @@ use crate::{
     memory::MemoryControl,
 };
 
+pub type EngineServiceHandle = Arc<dyn EngineService>;
+
+pub type EngineResultFuture<'a, T> = Pin<Box<dyn Future<Output = anyhow::Result<T>> + Send + 'a>>;
+pub type EngineNotifyFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+
+/// Request/notification surface used by the LSP server to talk to an analysis engine.
+///
+/// The current implementation is still in-process, but the boxed-future shape makes the server
+/// independent from that detail. A future tarpc-backed engine can implement the same service while
+/// keeping diagnostics/progress events on their separate fire-and-forget channel.
+pub trait EngineService: std::fmt::Debug + Send + Sync {
+    fn initialize(
+        &self,
+        root: PathBuf,
+        package_residency_policy: PackageResidencyPolicy,
+        cargo_metadata_config: CargoMetadataConfig,
+        check_config: CheckConfig,
+    ) -> EngineResultFuture<'_, ()>;
+
+    fn initialized(&self) -> EngineNotifyFuture<'_>;
+
+    fn did_open(&self, path: PathBuf, version: Option<i32>, text: String)
+    -> EngineNotifyFuture<'_>;
+
+    fn did_change(
+        &self,
+        path: PathBuf,
+        version: Option<i32>,
+        full_text: Option<String>,
+        content_change_count: usize,
+    ) -> EngineNotifyFuture<'_>;
+
+    fn did_save(&self, path: PathBuf, text: Option<String>) -> EngineNotifyFuture<'_>;
+
+    fn did_close(&self, path: PathBuf) -> EngineNotifyFuture<'_>;
+
+    fn goto_definition(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResultFuture<'_, Vec<ls_types::Location>>;
+
+    fn goto_type_definition(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResultFuture<'_, Vec<ls_types::Location>>;
+
+    fn hover(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResultFuture<'_, Option<ls_types::Hover>>;
+
+    fn completion(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResultFuture<'_, Vec<ls_types::CompletionItem>>;
+
+    fn document_symbol(
+        &self,
+        path: PathBuf,
+    ) -> EngineResultFuture<'_, Vec<ls_types::DocumentSymbol>>;
+
+    fn inlay_hint(
+        &self,
+        path: PathBuf,
+        range: ls_types::Range,
+    ) -> EngineResultFuture<'_, Vec<ls_types::InlayHint>>;
+
+    fn workspace_symbol(
+        &self,
+        query: String,
+    ) -> EngineResultFuture<'_, Vec<ls_types::WorkspaceSymbol>>;
+
+    fn reindex_workspace(&self) -> EngineResultFuture<'_, ()>;
+
+    fn shutdown(&self) -> EngineResultFuture<'_, ()>;
+}
+
+/// In-process engine façade used by the current LSP server.
+///
+/// The façade hides the fact that analysis requests and cargo diagnostics currently use different
+/// internal mechanisms. The LSP server sees one engine service and a separate event stream.
 #[derive(Clone, Debug)]
-pub struct EngineHandle {
+pub struct InProcessEngineService {
+    analysis: InProcessAnalysisService,
+    check: CheckHandle,
+}
+
+impl InProcessEngineService {
+    pub fn spawn(
+        memory_control: Arc<dyn MemoryControl>,
+        events: EngineEventSink,
+    ) -> EngineServiceHandle {
+        let documents = Arc::new(Mutex::new(DocumentStore::default()));
+        let analysis =
+            InProcessAnalysisService::spawn(memory_control, events.clone(), Arc::clone(&documents));
+        let check = CheckHandle::new(events, documents);
+
+        Arc::new(Self { analysis, check })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct InProcessAnalysisService {
     sender: Sender<EngineCommand>,
     documents: Arc<Mutex<DocumentStore>>,
-    check: CheckHandle,
     events: EngineEventSink,
 }
 
-impl EngineHandle {
-    /// Starts the in-process workspace engine and wires it to the LSP event sink.
-    ///
-    /// The public handle already owns document freshness and cargo diagnostics state. Keeping that
-    /// state behind this boundary makes the future subprocess engine a transport swap rather than
-    /// a reshuffle of LSP-facing code.
-    pub fn spawn(memory_control: Arc<dyn MemoryControl>, events: EngineEventSink) -> Self {
+impl InProcessAnalysisService {
+    /// Starts the current in-process worker behind the engine-service abstraction.
+    fn spawn(
+        memory_control: Arc<dyn MemoryControl>,
+        events: EngineEventSink,
+        documents: Arc<Mutex<DocumentStore>>,
+    ) -> Self {
         let (sender, receiver) = mpsc::channel();
-        let documents = Arc::new(Mutex::new(DocumentStore::default()));
-        let check = CheckHandle::new(events.clone(), Arc::clone(&documents));
 
         thread::spawn(move || EngineWorker::new(memory_control).run(receiver));
 
         Self {
             sender,
             documents,
-            check,
             events,
         }
     }
 
-    pub async fn initialize(
+    async fn initialize(
         &self,
         root: PathBuf,
         package_residency_policy: PackageResidencyPolicy,
         cargo_metadata_config: CargoMetadataConfig,
-        check_config: CheckConfig,
     ) -> anyhow::Result<()> {
-        self.check.configure(root.clone(), check_config).await;
         self.request(|respond_to| EngineCommand::Initialize {
             root,
             package_residency_policy,
@@ -73,16 +174,12 @@ impl EngineHandle {
         .await
     }
 
-    pub async fn launch_check_on_startup(&self) {
-        self.check.launch_on_startup().await;
-    }
-
-    pub async fn did_open(&self, path: PathBuf, version: Option<i32>, text: &str) {
+    async fn did_open(&self, path: PathBuf, version: Option<i32>, text: String) {
         let text_len = text.len();
         self.documents
             .lock()
             .await
-            .did_open(path.clone(), version, text);
+            .did_open(path.clone(), version, &text);
 
         tracing::debug!(path = %path.display(), "opened clean document snapshot");
         tracing::trace!(
@@ -93,7 +190,7 @@ impl EngineHandle {
         );
     }
 
-    pub async fn did_change(
+    async fn did_change(
         &self,
         path: PathBuf,
         version: Option<i32>,
@@ -132,7 +229,7 @@ impl EngineHandle {
         }
     }
 
-    pub async fn did_save(&self, path: PathBuf, text: Option<String>) {
+    async fn did_save(&self, path: PathBuf, text: Option<String>) {
         let saved_text_len = text.as_ref().map(String::len);
         let mut documents = self.documents.lock().await;
         documents.did_save(path.clone(), text.as_deref());
@@ -153,8 +250,6 @@ impl EngineHandle {
             "document freshness before save reindex"
         );
 
-        self.check.launch_on_save(path.clone()).await;
-
         let saved_path = path.clone();
         if let Err(error) = self
             .request(|respond_to| EngineCommand::DidSave {
@@ -172,7 +267,7 @@ impl EngineHandle {
         self.events.send(EngineEvent::InlayHintRefresh);
     }
 
-    pub async fn did_close(&self, path: PathBuf) {
+    async fn did_close(&self, path: PathBuf) {
         let mut documents = self.documents.lock().await;
         let freshness = documents.freshness(&path);
         documents.did_close(&path);
@@ -192,7 +287,7 @@ impl EngineHandle {
         );
     }
 
-    pub async fn goto_definition(
+    async fn goto_definition(
         &self,
         path: PathBuf,
         position: ls_types::Position,
@@ -209,7 +304,7 @@ impl EngineHandle {
         .await
     }
 
-    pub async fn goto_type_definition(
+    async fn goto_type_definition(
         &self,
         path: PathBuf,
         position: ls_types::Position,
@@ -226,7 +321,7 @@ impl EngineHandle {
         .await
     }
 
-    pub async fn hover(
+    async fn hover(
         &self,
         path: PathBuf,
         position: ls_types::Position,
@@ -243,7 +338,7 @@ impl EngineHandle {
         .await
     }
 
-    pub async fn completion(
+    async fn completion(
         &self,
         path: PathBuf,
         position: ls_types::Position,
@@ -260,7 +355,7 @@ impl EngineHandle {
         .await
     }
 
-    pub async fn document_symbol(
+    async fn document_symbol(
         &self,
         path: PathBuf,
     ) -> anyhow::Result<Vec<ls_types::DocumentSymbol>> {
@@ -288,7 +383,7 @@ impl EngineHandle {
             .await
     }
 
-    pub async fn inlay_hint(
+    async fn inlay_hint(
         &self,
         path: PathBuf,
         range: ls_types::Range,
@@ -305,7 +400,7 @@ impl EngineHandle {
         .await
     }
 
-    pub async fn workspace_symbol(
+    async fn workspace_symbol(
         &self,
         query: String,
     ) -> anyhow::Result<Vec<ls_types::WorkspaceSymbol>> {
@@ -313,13 +408,12 @@ impl EngineHandle {
             .await
     }
 
-    pub async fn reindex_workspace(&self) -> anyhow::Result<()> {
+    async fn reindex_workspace(&self) -> anyhow::Result<()> {
         self.request(|respond_to| EngineCommand::ReindexWorkspace { respond_to })
             .await
     }
 
-    pub async fn shutdown(&self) -> anyhow::Result<()> {
-        self.check.shutdown().await;
+    async fn shutdown(&self) -> anyhow::Result<()> {
         self.request(EngineCommand::Shutdown).await
     }
 
@@ -402,5 +496,126 @@ impl EngineHandle {
             live_hash = ?freshness.live_hash(),
             "document freshness after save reindex"
         );
+    }
+}
+
+impl EngineService for InProcessEngineService {
+    fn initialize(
+        &self,
+        root: PathBuf,
+        package_residency_policy: PackageResidencyPolicy,
+        cargo_metadata_config: CargoMetadataConfig,
+        check_config: CheckConfig,
+    ) -> EngineResultFuture<'_, ()> {
+        Box::pin(async move {
+            self.check.configure(root.clone(), check_config).await;
+            self.analysis
+                .initialize(root, package_residency_policy, cargo_metadata_config)
+                .await
+        })
+    }
+
+    fn initialized(&self) -> EngineNotifyFuture<'_> {
+        Box::pin(async move {
+            self.check.launch_on_startup().await;
+        })
+    }
+
+    fn did_open(
+        &self,
+        path: PathBuf,
+        version: Option<i32>,
+        text: String,
+    ) -> EngineNotifyFuture<'_> {
+        Box::pin(self.analysis.did_open(path, version, text))
+    }
+
+    fn did_change(
+        &self,
+        path: PathBuf,
+        version: Option<i32>,
+        full_text: Option<String>,
+        content_change_count: usize,
+    ) -> EngineNotifyFuture<'_> {
+        Box::pin(
+            self.analysis
+                .did_change(path, version, full_text, content_change_count),
+        )
+    }
+
+    fn did_save(&self, path: PathBuf, text: Option<String>) -> EngineNotifyFuture<'_> {
+        Box::pin(async move {
+            self.check.launch_on_save(path.clone()).await;
+            self.analysis.did_save(path, text).await;
+        })
+    }
+
+    fn did_close(&self, path: PathBuf) -> EngineNotifyFuture<'_> {
+        Box::pin(self.analysis.did_close(path))
+    }
+
+    fn goto_definition(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResultFuture<'_, Vec<ls_types::Location>> {
+        Box::pin(self.analysis.goto_definition(path, position))
+    }
+
+    fn goto_type_definition(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResultFuture<'_, Vec<ls_types::Location>> {
+        Box::pin(self.analysis.goto_type_definition(path, position))
+    }
+
+    fn hover(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResultFuture<'_, Option<ls_types::Hover>> {
+        Box::pin(self.analysis.hover(path, position))
+    }
+
+    fn completion(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResultFuture<'_, Vec<ls_types::CompletionItem>> {
+        Box::pin(self.analysis.completion(path, position))
+    }
+
+    fn document_symbol(
+        &self,
+        path: PathBuf,
+    ) -> EngineResultFuture<'_, Vec<ls_types::DocumentSymbol>> {
+        Box::pin(self.analysis.document_symbol(path))
+    }
+
+    fn inlay_hint(
+        &self,
+        path: PathBuf,
+        range: ls_types::Range,
+    ) -> EngineResultFuture<'_, Vec<ls_types::InlayHint>> {
+        Box::pin(self.analysis.inlay_hint(path, range))
+    }
+
+    fn workspace_symbol(
+        &self,
+        query: String,
+    ) -> EngineResultFuture<'_, Vec<ls_types::WorkspaceSymbol>> {
+        Box::pin(self.analysis.workspace_symbol(query))
+    }
+
+    fn reindex_workspace(&self) -> EngineResultFuture<'_, ()> {
+        Box::pin(self.analysis.reindex_workspace())
+    }
+
+    fn shutdown(&self) -> EngineResultFuture<'_, ()> {
+        Box::pin(async move {
+            self.check.shutdown().await;
+            self.analysis.shutdown().await
+        })
     }
 }

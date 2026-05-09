@@ -51,7 +51,7 @@ pub(crate) async fn initialized(ctx: &ServerContext, _: InitializedParams) {
     ctx.client
         .log_message(MessageType::INFO, "rust-glancer initialized")
         .await;
-    ctx.engine.launch_check_on_startup().await;
+    ctx.engine.initialized().await;
 }
 
 pub(crate) async fn shutdown(ctx: &ServerContext) -> Result<()> {

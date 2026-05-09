@@ -11,7 +11,7 @@ pub(crate) async fn did_open(ctx: &ServerContext, params: DidOpenTextDocumentPar
         .did_open(
             path,
             Some(params.text_document.version),
-            &params.text_document.text,
+            params.text_document.text,
         )
         .await;
 }

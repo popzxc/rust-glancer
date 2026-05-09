@@ -2,9 +2,9 @@
 //!
 //! This module runs `cargo check`/`cargo clippy` outside the synchronous analysis engine.
 //!
-//! `CheckHandle` is owned by `EngineHandle`. It emits diagnostics and progress as engine events,
-//! so cargo diagnostics can later move into a subprocess without keeping a direct LSP-client
-//! dependency in this crate.
+//! `CheckHandle` is created next to the analysis engine and shares the same document freshness
+//! store. It emits diagnostics and progress as engine events, so cargo diagnostics can later move
+//! independently from query/indexing requests without keeping a direct LSP-client dependency here.
 
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
