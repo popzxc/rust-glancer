@@ -367,6 +367,31 @@ pub struct ProjectA;
         assert_eq!(cached_owner, None);
     }
 
+    #[tokio::test]
+    async fn outside_workspace_document_does_not_invoke_cargo_locate_project() {
+        let fixture = fixture_crate(&format!(
+            "{WORKSPACE_FIXTURE}\n{}",
+            r#"
+//- /external/Cargo.toml
+this is not a valid Cargo manifest
+
+//- /external/src/lib.rs
+pub struct External;
+"#,
+        ));
+        let (service, _socket) = initialized_service(&fixture);
+        let registry = &service.inner().registry;
+        let document = fixture.path("external/src/lib.rs");
+
+        let owner = {
+            let mut inner = registry.inner.lock().await;
+            DocumentOwner::new(&mut inner, &document, OpenFileCachePolicy::Ignore)
+                .expect("outside workspace document should not run cargo locate-project")
+        };
+
+        assert!(owner.is_none());
+    }
+
     fn initialized_service(fixture: &CrateFixture) -> (LspService<TestBackend>, ClientSocket) {
         let root = fixture.path("workspace");
         let workspace_folders = vec![root];

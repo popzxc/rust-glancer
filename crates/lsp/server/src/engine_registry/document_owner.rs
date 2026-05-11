@@ -34,7 +34,26 @@ impl DocumentOwner {
             return Ok(Some(Self::cached(id)));
         }
 
-        // This is an unknown file.
+        // Outside configured folders, files are usually dependencies or sysroot sources reached
+        // from an active project, so we assume that it's a part of the same engine.
+        //
+        // TODO: This is not a correct approach, this is a heuristic. It can fail in some cases
+        // where it shouldn't. However, it's good enough for 95% normal user flows and there
+        // is a ton of other things that are missing in this project, so implementing a perfect
+        // solution is not a priority for now. Additionally, implementing a _proper_ solution
+        // is going to be a tradeoff anyway, e.g.:
+        // - If we just open a random Rust file, do we start a new LSP for it? When do we shut
+        //   it down, if so?
+        // - If we open a local project that is dependency of another project in the same
+        //   workspace, do we start LSP for it? What if we first open a dependency, and then
+        //   "parent"?
+        // Answering these queestions is postponed until it _really_ becomes an issue and
+        // there will be real users affected by this heuristic.
+        if !inner.routing.can_discover_workspace_for(path) {
+            return Ok(Self::fallback(inner, path, cache_policy));
+        }
+
+        // This is an unknown workspace file.
         if cache_policy == OpenFileCachePolicy::Ignore {
             tracing::warn!(
                 path = %path.display(),
@@ -51,8 +70,8 @@ impl DocumentOwner {
             }
         }
 
-        // It's not a workspace file but something else, use last active engine as
-        // a fallback.
+        // Cargo could not associate the file with a routable workspace, so keep the request
+        // contextual and use the last active engine if one is available.
         Ok(Self::fallback(inner, path, cache_policy))
     }
 
