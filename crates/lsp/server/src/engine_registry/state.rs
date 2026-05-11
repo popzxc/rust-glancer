@@ -6,6 +6,8 @@ use std::{
 use rg_lsp_proto::EngineConfig;
 use tokio::sync::Notify;
 
+use crate::client_notifications::{ActiveWorkspaceState, ActiveWorkspaceStatus};
+
 use super::{
     routing::{EngineId, EngineRouting, WorkspaceEngineRoute},
     slot::EngineSlot,
@@ -20,7 +22,7 @@ pub(super) struct EngineRegistryInner {
     pub(super) routing: EngineRouting,
     pub(super) engines: Vec<EngineSlot>,
     config: EngineConfig,
-    last_published_workspace: Option<PathBuf>,
+    last_published_workspace_status: Option<ActiveWorkspaceStatus>,
 }
 
 impl EngineRegistryInner {
@@ -35,7 +37,7 @@ impl EngineRegistryInner {
             routing,
             engines: Vec::new(),
             config,
-            last_published_workspace: None,
+            last_published_workspace_status: None,
         }
     }
 
@@ -77,20 +79,39 @@ impl EngineRegistryInner {
         self.routing.set_active_id(id);
     }
 
-    /// Returns the active-workspace display root if the client has not seen it yet.
-    pub(super) fn active_workspace_to_publish(&mut self, id: EngineId) -> Option<PathBuf> {
+    /// Returns the active-workspace status if the client has not seen this exact state yet.
+    pub(super) fn workspace_status_update(&mut self) -> Option<ActiveWorkspaceStatus> {
+        let id = self.routing.active_id()?;
+        let status = self.workspace_status(id);
+
+        if self.last_published_workspace_status.as_ref() == Some(&status) {
+            return None;
+        }
+
+        self.last_published_workspace_status = Some(status.clone());
+        Some(status)
+    }
+
+    fn workspace_status(&self, id: EngineId) -> ActiveWorkspaceStatus {
         let root = self
             .routing
             .root_for_id(id)
             .map(Path::to_path_buf)
-            .expect("ready engine id should have a routing root");
+            .expect("engine id should have a routing root");
+        let slot = self.engine(id).expect("engine id should have a slot");
+        let (state, message) = match slot {
+            EngineSlot::Starting { .. } => (ActiveWorkspaceState::Indexing, None),
+            EngineSlot::Ready(_) => (ActiveWorkspaceState::Ready, None),
+            EngineSlot::Failed { error, .. } => {
+                (ActiveWorkspaceState::Failed, Some(error.to_string()))
+            }
+        };
 
-        if self.last_published_workspace.as_deref() == Some(root.as_path()) {
-            return None;
+        ActiveWorkspaceStatus {
+            root,
+            state,
+            message,
         }
-
-        self.last_published_workspace = Some(root.clone());
-        Some(root)
     }
 
     fn reserve_workspace_route(&mut self, route: WorkspaceEngineRoute) -> ReservedEngineRoute {

@@ -26,6 +26,8 @@ export interface ClientStatusSnapshot {
   readonly details: StatusDetails | undefined;
 }
 
+export type ActiveWorkspaceState = "indexing" | "ready" | "failed";
+
 /**
  * Tracks client-facing state and decides which status-bar state should win.
  *
@@ -39,6 +41,8 @@ export class ClientStatus {
   private diagnosticsFailed = false;
   private diagnosticsCommand: string | undefined;
   private failureReason: string | undefined;
+  private activeWorkspaceState: ActiveWorkspaceState | undefined;
+  private activeWorkspaceFailureReason: string | undefined;
   private currentStatus: StatusSnapshot = {
     state: "created",
     text: "",
@@ -63,6 +67,8 @@ export class ClientStatus {
     this.running = false;
     this.resetDiagnostics();
     this.failureReason = undefined;
+    this.activeWorkspaceState = undefined;
+    this.activeWorkspaceFailureReason = undefined;
     this.details = details;
     this.show("starting", "$(sync~spin) Rust Glancer: starting", () => this.view.starting(details));
   }
@@ -70,8 +76,11 @@ export class ClientStatus {
   public ready(details: StatusDetails): void {
     this.running = true;
     this.failureReason = undefined;
-    this.details = details;
-    this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(details));
+    const activeWorkspaceRoot = this.details?.activeWorkspaceRoot;
+    const nextDetails =
+      activeWorkspaceRoot === undefined ? details : { ...details, activeWorkspaceRoot };
+    this.details = nextDetails;
+    this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(nextDetails));
   }
 
   public indexing(): void {
@@ -84,11 +93,18 @@ export class ClientStatus {
     );
   }
 
-  public activeWorkspace(root: string, isActiveRustDocumentDirty: boolean): void {
+  public activeWorkspace(
+    root: string,
+    state: ActiveWorkspaceState,
+    message: string | undefined,
+    isActiveRustDocumentDirty: boolean,
+  ): void {
     if (this.details === undefined) {
       return;
     }
 
+    this.activeWorkspaceState = state;
+    this.activeWorkspaceFailureReason = state === "failed" ? message : undefined;
     this.details = {
       ...this.details,
       activeWorkspaceRoot: root,
@@ -133,9 +149,18 @@ export class ClientStatus {
       return;
     }
 
-    // Dirty buffers are shown first because the last published analysis no longer describes
-    // the file the user is looking at. Cargo diagnostics remain visible once the editor is clean.
-    if (isActiveRustDocumentDirty) {
+    // Engine lifecycle wins because the workspace may not have any analysis to serve yet.
+    // Once the active engine is ready, file freshness and diagnostics become the useful signals.
+    if (this.activeWorkspaceState === "indexing") {
+      this.show("indexing", "$(sync~spin) Rust Glancer: indexing", () =>
+        this.view.indexing(this.details),
+      );
+    } else if (this.activeWorkspaceState === "failed") {
+      const reason = this.activeWorkspaceFailureReason ?? "active workspace failed";
+      this.show("failed", "$(error) Rust Glancer: failed", () =>
+        this.view.failed(reason, this.details ?? {}),
+      );
+    } else if (isActiveRustDocumentDirty) {
       this.show("stale", "$(warning) Rust Glancer: stale until save", () =>
         this.view.stale(this.details),
       );

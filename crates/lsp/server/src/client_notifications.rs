@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::PathBuf;
 
 use tower_lsp_server::ls_types::{LSPAny, LSPObject, notification::Notification};
 
@@ -17,12 +17,45 @@ impl Notification for ActiveWorkspaceChanged {
 }
 
 impl ActiveWorkspaceChanged {
-    pub(crate) fn params(root: &Path) -> LSPAny {
+    pub(crate) fn params(status: &ActiveWorkspaceStatus) -> LSPAny {
         let mut params = LSPObject::new();
         params.insert(
             "root".to_string(),
-            LSPAny::String(root.display().to_string()),
+            LSPAny::String(status.root.display().to_string()),
         );
+        params.insert(
+            "state".to_string(),
+            LSPAny::String(status.state.as_str().to_string()),
+        );
+        if let Some(message) = &status.message {
+            params.insert("message".to_string(), LSPAny::String(message.clone()));
+        }
         LSPAny::Object(params)
+    }
+}
+
+/// Client-facing snapshot of the workspace currently selected by document routing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ActiveWorkspaceStatus {
+    pub(crate) root: PathBuf,
+    pub(crate) state: ActiveWorkspaceState,
+    pub(crate) message: Option<String>,
+}
+
+/// Small lifecycle vocabulary rendered by the VS Code status bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ActiveWorkspaceState {
+    Indexing,
+    Ready,
+    Failed,
+}
+
+impl ActiveWorkspaceState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Indexing => "indexing",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
     }
 }

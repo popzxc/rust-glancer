@@ -8,7 +8,8 @@ use tokio::sync::Mutex;
 use tower_lsp_server::Client as LspClient;
 
 use crate::{
-    client_notifications::ActiveWorkspaceChanged, engine_client::EngineClient,
+    client_notifications::{ActiveWorkspaceChanged, ActiveWorkspaceStatus},
+    engine_client::EngineClient,
     engine_process::EngineProcess,
 };
 
@@ -134,13 +135,13 @@ impl EngineRegistry {
             "resolved document owner"
         );
 
-        let engine_client = match owner.into_route() {
+        let route = owner.into_route();
+        self.activate_workspace(id).await;
+
+        let engine_client = match route {
             ReservedEngineRoute::Existing(id) => self.engine_for_existing_id(id).await?,
             ReservedEngineRoute::Spawn(start) => Some(self.start_reserved_engine(start).await?),
         };
-        if engine_client.is_some() {
-            self.activate_workspace(id).await;
-        }
         Ok(engine_client)
     }
 
@@ -150,15 +151,21 @@ impl EngineRegistry {
     }
 
     async fn activate_workspace(&self, id: EngineId) {
-        let root = {
+        let status = {
             let mut inner = self.inner.lock().await;
             inner.set_active_id(id);
-            inner.active_workspace_to_publish(id)
+            inner.workspace_status_update()
         };
 
-        if let Some(root) = root {
+        self.publish_active_workspace(status).await;
+    }
+
+    async fn publish_active_workspace(&self, status: Option<ActiveWorkspaceStatus>) {
+        if let Some(status) = status {
             self.lsp_client
-                .send_notification::<ActiveWorkspaceChanged>(ActiveWorkspaceChanged::params(&root))
+                .send_notification::<ActiveWorkspaceChanged>(ActiveWorkspaceChanged::params(
+                    &status,
+                ))
                 .await;
         }
     }
@@ -231,32 +238,36 @@ impl EngineRegistry {
 
     /// Replaces a starting slot with a ready process and wakes waiters.
     async fn mark_ready(&self, id: EngineId, process: EngineProcess) {
-        let notify = {
+        let (notify, status) = {
             let mut inner = self.inner.lock().await;
             let notify = inner
                 .engine(id)
                 .and_then(EngineSlot::notify)
                 .expect("reserved engine slot should be starting");
             inner.engines[id.index()] = EngineSlot::Ready(EngineEntry { process });
-            notify
+            let status = inner.workspace_status_update();
+            (notify, status)
         };
         notify.notify_waiters();
+        self.publish_active_workspace(status).await;
     }
 
     /// Replaces a starting slot with a failure and wakes waiters.
     async fn mark_failed(&self, id: EngineId, root: PathBuf, error: String) {
-        let notify = {
+        let (notify, status) = {
             let mut inner = self.inner.lock().await;
             let notify = inner.engine(id).and_then(EngineSlot::notify);
             inner.engines[id.index()] = EngineSlot::Failed {
                 root,
                 error: Arc::from(error),
             };
-            notify
+            let status = inner.workspace_status_update();
+            (notify, status)
         };
         if let Some(notify) = notify {
             notify.notify_waiters();
         }
+        self.publish_active_workspace(status).await;
     }
 
     /// Spawns the engine subprocess and sends its protocol initialize request.
@@ -286,6 +297,8 @@ impl EngineRegistry {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use rg_lsp_proto::EngineConfig;
     use test_fixture::{CrateFixture, fixture_crate};
     use tower_lsp_server::{
@@ -293,6 +306,8 @@ mod tests {
         jsonrpc::Result,
         ls_types::{InitializeParams, InitializeResult},
     };
+
+    use crate::client_notifications::ActiveWorkspaceState;
 
     use super::document_owner::DocumentOwnerSource;
     use super::*;
@@ -390,6 +405,53 @@ pub struct External;
         };
 
         assert!(owner.is_none());
+    }
+
+    #[tokio::test]
+    async fn active_workspace_status_tracks_reserved_engine_lifecycle() {
+        let fixture = fixture_crate(WORKSPACE_FIXTURE);
+        let (service, _socket) = initialized_service(&fixture);
+        let registry = &service.inner().registry;
+        let document = fixture.path("workspace/project_a/src/lib.rs");
+        let workspace_root = normalize_path(fixture.path("workspace"));
+
+        let owner = {
+            let mut inner = registry.inner.lock().await;
+            DocumentOwner::new(&mut inner, &document, OpenFileCachePolicy::Record)
+                .expect("open document should route through Cargo workspace")
+                .expect("workspace document should have an owner")
+        };
+        let id = owner.id();
+
+        let indexing = {
+            let mut inner = registry.inner.lock().await;
+            inner.set_active_id(id);
+            inner.workspace_status_update()
+        }
+        .expect("new active workspace status should be published");
+        assert_eq!(indexing.root, workspace_root);
+        assert_eq!(indexing.state, ActiveWorkspaceState::Indexing);
+        assert_eq!(indexing.message, None);
+
+        let duplicate = {
+            let mut inner = registry.inner.lock().await;
+            inner.set_active_id(id);
+            inner.workspace_status_update()
+        };
+        assert_eq!(duplicate, None);
+
+        let failed = {
+            let mut inner = registry.inner.lock().await;
+            inner.engines[id.index()] = EngineSlot::Failed {
+                root: workspace_root.clone(),
+                error: Arc::from("startup failed"),
+            };
+            inner.workspace_status_update()
+        }
+        .expect("changed active workspace status should be published");
+        assert_eq!(failed.root, workspace_root);
+        assert_eq!(failed.state, ActiveWorkspaceState::Failed);
+        assert_eq!(failed.message.as_deref(), Some("startup failed"));
     }
 
     fn initialized_service(fixture: &CrateFixture) -> (LspService<TestBackend>, ClientSocket) {

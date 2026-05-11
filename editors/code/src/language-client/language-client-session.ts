@@ -16,7 +16,11 @@ import {
 import { SERVER_COMMANDS, SERVER_NOTIFICATIONS } from "../commands";
 import { ExtensionConfig, type TraceSetting } from "../config";
 import { hoverMiddleware } from "../features/hover-actions";
-import { ClientStatus, type ClientStatusSnapshot } from "../status/client-status";
+import {
+  ClientStatus,
+  type ActiveWorkspaceState,
+  type ClientStatusSnapshot,
+} from "../status/client-status";
 import { StatusView } from "../status/status-view";
 import { isRustFile } from "../utils/lsp-utils";
 import { ResolvedServer } from "./server";
@@ -109,11 +113,14 @@ export class LanguageClientSession implements vscode.Disposable {
             break;
         }
       }),
-      client.onNotification(SERVER_NOTIFICATIONS.activeWorkspaceChanged, (params: unknown) => {
-        const root = activeWorkspaceRoot(params);
-        if (root !== undefined) {
-          this.clientStatus.activeWorkspace(root, this.isActiveRustDocumentDirty());
-        }
+      client.onNotification(SERVER_NOTIFICATIONS.activeWorkspaceChanged, (params) => {
+        const status = params as ActiveWorkspaceChangedParams;
+        this.clientStatus.activeWorkspace(
+          status.root,
+          status.state,
+          status.message,
+          this.isActiveRustDocumentDirty(),
+        );
       }),
     );
 
@@ -212,13 +219,10 @@ export class LanguageClientSession implements vscode.Disposable {
   }
 }
 
-function activeWorkspaceRoot(params: unknown): string | undefined {
-  if (typeof params !== "object" || params === null) {
-    return undefined;
-  }
-
-  const root = (params as { root?: unknown }).root;
-  return typeof root === "string" && root.length > 0 ? root : undefined;
+interface ActiveWorkspaceChangedParams {
+  readonly root: string;
+  readonly state: ActiveWorkspaceState;
+  readonly message?: string;
 }
 
 function trace(setting: TraceSetting): Trace {
