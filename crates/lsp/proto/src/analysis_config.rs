@@ -1,9 +1,10 @@
 use ls_types::LSPAny;
 use rg_project::PackageResidencyPolicy;
 use rg_workspace::CargoMetadataConfig;
+use serde::{Deserialize, Serialize};
 
 /// Analysis configuration sent by the LSP client during initialization.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalysisConfig {
     pub package_residency_policy: PackageResidencyPolicy,
     pub cargo_metadata_config: CargoMetadataConfig,

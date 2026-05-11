@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 
-use rg_project::PackageResidencyPolicy;
-use rg_workspace::CargoMetadataConfig;
-
-use crate::{DiagnosticsConfig, EngineError, ServiceNotification};
+use crate::{EngineConfig, EngineError, ServiceNotification};
 
 pub type EngineResult<T> = Result<T, EngineError>;
 
@@ -14,12 +11,7 @@ pub type EngineResult<T> = Result<T, EngineError>;
 /// those two domains.
 #[tarpc::service]
 pub trait EngineService {
-    async fn initialize(
-        root: PathBuf,
-        package_residency_policy: PackageResidencyPolicy,
-        cargo_metadata_config: CargoMetadataConfig,
-        diagnostics_config: DiagnosticsConfig,
-    ) -> EngineResult<()>;
+    async fn initialize(root: PathBuf, config: EngineConfig) -> EngineResult<()>;
 
     async fn initialized() -> EngineResult<()>;
 

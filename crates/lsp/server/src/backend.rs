@@ -6,7 +6,7 @@ use tower_lsp_server::{
     ls_types::{request::*, *},
 };
 
-use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
+use rg_lsp_proto::EngineConfig;
 use tokio::sync::OnceCell;
 
 use crate::{
@@ -78,19 +78,11 @@ impl LanguageServer for Backend {
             ));
         };
 
-        let diagnostics_config =
-            DiagnosticsConfig::from_initialization_options(params.initialization_options.as_ref())
+        let config =
+            EngineConfig::from_initialization_options(params.initialization_options.as_ref())
                 .map_err(|error| Error::invalid_params(error.to_string()))?;
-        let analysis_config =
-            AnalysisConfig::from_initialization_options(params.initialization_options.as_ref());
         let workspace_folders = workspace_folders(&params);
-        let engines = EngineRegistry::new(
-            self.lsp_client.clone(),
-            root,
-            workspace_folders,
-            analysis_config,
-            diagnostics_config,
-        );
+        let engines = EngineRegistry::new(self.lsp_client.clone(), root, workspace_folders, config);
 
         self.engines.set(engines).map_err(|_| Error {
             code: ErrorCode::InvalidRequest,

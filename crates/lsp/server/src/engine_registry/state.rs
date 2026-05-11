@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
+use rg_lsp_proto::EngineConfig;
 use tokio::sync::Notify;
 
 use super::{
@@ -19,16 +19,14 @@ use super::{
 pub(super) struct EngineRegistryInner {
     pub(super) routing: EngineRouting,
     pub(super) engines: Vec<EngineSlot>,
-    analysis_config: AnalysisConfig,
-    diagnostics_config: DiagnosticsConfig,
+    config: EngineConfig,
     last_published_workspace: Option<PathBuf>,
 }
 
 impl EngineRegistryInner {
     pub(super) fn new(
         workspace_folders: impl IntoIterator<Item = PathBuf>,
-        analysis_config: AnalysisConfig,
-        diagnostics_config: DiagnosticsConfig,
+        config: EngineConfig,
     ) -> Self {
         let mut routing = EngineRouting::default();
         routing.set_workspace_folders(workspace_folders);
@@ -36,8 +34,7 @@ impl EngineRegistryInner {
         Self {
             routing,
             engines: Vec::new(),
-            analysis_config,
-            diagnostics_config,
+            config,
             last_published_workspace: None,
         }
     }
@@ -100,8 +97,6 @@ impl EngineRegistryInner {
         match route {
             WorkspaceEngineRoute::Existing(id) => ReservedEngineRoute::Existing(id),
             WorkspaceEngineRoute::Spawn { new_id, root } => {
-                let config = self.spawn_config();
-
                 // The slot is visible before the process exists. Concurrent routes for the same
                 // root will now receive `Existing(new_id)` and wait on this notification.
                 self.push_slot(
@@ -114,16 +109,9 @@ impl EngineRegistryInner {
                 ReservedEngineRoute::Spawn(ReservedEngineStart {
                     id: new_id,
                     root,
-                    config,
+                    config: self.config.clone(),
                 })
             }
-        }
-    }
-
-    fn spawn_config(&self) -> EngineSpawnConfig {
-        EngineSpawnConfig {
-            analysis: self.analysis_config.clone(),
-            diagnostics: self.diagnostics_config.clone(),
         }
     }
 
@@ -135,12 +123,6 @@ impl EngineRegistryInner {
         );
         self.engines.push(slot);
     }
-}
-
-#[derive(Debug)]
-pub(super) struct EngineSpawnConfig {
-    pub(super) analysis: AnalysisConfig,
-    pub(super) diagnostics: DiagnosticsConfig,
 }
 
 /// Registry action after routing has been resolved under the state lock.
@@ -164,5 +146,5 @@ impl ReservedEngineRoute {
 pub(super) struct ReservedEngineStart {
     pub(super) id: EngineId,
     pub(super) root: PathBuf,
-    pub(super) config: EngineSpawnConfig,
+    pub(super) config: EngineConfig,
 }

@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
-use rg_project::PackageResidencyPolicy;
-use rg_workspace::CargoMetadataConfig;
+use rg_lsp_proto::AnalysisConfig;
 use tokio::sync::oneshot;
 
 pub(crate) type EngineResponse<T> = oneshot::Sender<anyhow::Result<T>>;
@@ -10,8 +9,7 @@ pub(crate) type EngineResponse<T> = oneshot::Sender<anyhow::Result<T>>;
 pub(crate) enum EngineCommand {
     Initialize {
         root: PathBuf,
-        package_residency_policy: PackageResidencyPolicy,
-        cargo_metadata_config: CargoMetadataConfig,
+        analysis: AnalysisConfig,
         respond_to: EngineResponse<()>,
     },
     DidSave {

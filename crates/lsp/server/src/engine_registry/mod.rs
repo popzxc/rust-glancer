@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
+use rg_lsp_proto::EngineConfig;
 use tokio::sync::Mutex;
 use tower_lsp_server::Client as LspClient;
 
@@ -21,7 +21,7 @@ use self::{
     document_owner::{DocumentOwner, OpenFileCachePolicy},
     routing::{EngineId, normalize_path},
     slot::{EngineEntry, EngineSlot},
-    state::{EngineRegistryInner, EngineSpawnConfig, ReservedEngineRoute, ReservedEngineStart},
+    state::{EngineRegistryInner, ReservedEngineRoute, ReservedEngineStart},
 };
 
 /// Routes LSP requests to the engine process that owns the requested file.
@@ -40,18 +40,13 @@ impl EngineRegistry {
         lsp_client: LspClient,
         root: PathBuf,
         workspace_folders: Vec<PathBuf>,
-        analysis_config: AnalysisConfig,
-        diagnostics_config: DiagnosticsConfig,
+        config: EngineConfig,
     ) -> Self {
         let mut workspace_folders = workspace_folders;
         workspace_folders.push(root);
         Self {
             lsp_client,
-            inner: Mutex::new(EngineRegistryInner::new(
-                workspace_folders,
-                analysis_config,
-                diagnostics_config,
-            )),
+            inner: Mutex::new(EngineRegistryInner::new(workspace_folders, config)),
         }
     }
 
@@ -271,25 +266,17 @@ impl EngineRegistry {
     async fn spawn_engine(
         &self,
         root: PathBuf,
-        config: EngineSpawnConfig,
+        config: EngineConfig,
     ) -> anyhow::Result<EngineProcess> {
         let engine = EngineProcess::spawn(self.lsp_client.clone()).await?;
         let engine_client = engine.engine_client().clone();
         let initialize_root = root.clone();
-        let analysis = config.analysis;
-        let diagnostics = config.diagnostics;
         engine_client
             .call(
                 "initialize",
                 move |engine_client, request_context| async move {
                     engine_client
-                        .initialize(
-                            request_context,
-                            initialize_root,
-                            analysis.package_residency_policy,
-                            analysis.cargo_metadata_config,
-                            diagnostics,
-                        )
+                        .initialize(request_context, initialize_root, config)
                         .await
                 },
             )
@@ -302,7 +289,7 @@ impl EngineRegistry {
 
 #[cfg(test)]
 mod tests {
-    use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
+    use rg_lsp_proto::EngineConfig;
     use test_fixture::{CrateFixture, fixture_crate};
     use tower_lsp_server::{
         ClientSocket, LanguageServer, LspService,
@@ -391,8 +378,7 @@ pub struct ProjectA;
                 client,
                 root.clone(),
                 workspace_folders.clone(),
-                AnalysisConfig::default(),
-                DiagnosticsConfig::default(),
+                EngineConfig::default(),
             ),
         });
 

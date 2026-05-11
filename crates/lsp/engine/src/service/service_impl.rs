@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-use rg_lsp_proto::{DiagnosticsConfig, EngineError, EngineResult, EngineService};
-use rg_project::PackageResidencyPolicy;
-use rg_workspace::CargoMetadataConfig;
+use rg_lsp_proto::{EngineConfig, EngineError, EngineResult, EngineService};
 use tarpc::context;
 
 use crate::engine::EngineCommand;
@@ -19,18 +17,15 @@ impl EngineService for Service {
         self,
         _: context::Context,
         root: PathBuf,
-        package_residency_policy: PackageResidencyPolicy,
-        cargo_metadata_config: CargoMetadataConfig,
-        diagnostics_config: DiagnosticsConfig,
+        config: EngineConfig,
     ) -> EngineResult<()> {
         self.diagnostics
-            .configure(root.clone(), diagnostics_config)
+            .configure(root.clone(), config.diagnostics)
             .await;
         self.engine
             .request(|respond_to| EngineCommand::Initialize {
                 root,
-                package_residency_policy,
-                cargo_metadata_config,
+                analysis: config.analysis,
                 respond_to,
             })
             .await

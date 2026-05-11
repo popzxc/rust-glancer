@@ -7,6 +7,7 @@
 
 mod analysis_config;
 mod diagnostics_config;
+mod engine_config;
 mod error;
 mod notifications;
 mod service;
@@ -14,6 +15,7 @@ mod service;
 pub use self::{
     analysis_config::AnalysisConfig,
     diagnostics_config::DiagnosticsConfig,
+    engine_config::EngineConfig,
     error::EngineError,
     notifications::{ServiceLogLevel, ServiceNotification},
     service::{

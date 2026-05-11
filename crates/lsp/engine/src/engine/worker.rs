@@ -7,12 +7,10 @@ use std::{
 use anyhow::Context as _;
 use rg_analysis::TypeHint;
 use rg_def_map::TargetRef;
+use rg_lsp_proto::AnalysisConfig;
 use rg_parse::TextSpan;
-use rg_project::{
-    CacheProbeProfile, FileContext, PackageResidencyPolicy, Project, ProjectSnapshot,
-    SavedFileChange,
-};
-use rg_workspace::{CargoMetadataConfig, CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
+use rg_project::{CacheProbeProfile, FileContext, Project, ProjectSnapshot, SavedFileChange};
+use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
 use crate::{
     engine::command::{EngineCommand, EngineResponse},
@@ -42,16 +40,11 @@ impl EngineWorker {
             match command {
                 EngineCommand::Initialize {
                     root,
-                    package_residency_policy,
-                    cargo_metadata_config,
+                    analysis,
                     respond_to,
                 } => {
                     tracing::trace!(root = %root.display(), "engine command started: initialize");
-                    let _ = respond_to.send(self.initialize(
-                        root,
-                        package_residency_policy,
-                        cargo_metadata_config,
-                    ));
+                    let _ = respond_to.send(self.initialize(root, analysis));
                 }
                 EngineCommand::DidSave {
                     path,
@@ -173,12 +166,9 @@ impl EngineWorker {
         tracing::debug!("LSP engine worker stopped");
     }
 
-    fn initialize(
-        &mut self,
-        root: PathBuf,
-        package_residency_policy: PackageResidencyPolicy,
-        cargo_metadata_config: CargoMetadataConfig,
-    ) -> anyhow::Result<()> {
+    fn initialize(&mut self, root: PathBuf, analysis: AnalysisConfig) -> anyhow::Result<()> {
+        let package_residency_policy = analysis.package_residency_policy;
+        let cargo_metadata_config = analysis.cargo_metadata_config;
         let started = Instant::now();
         let configured_target = match cargo_metadata_config.target() {
             CargoMetadataTarget::Auto => "auto",
