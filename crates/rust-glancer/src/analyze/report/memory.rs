@@ -12,7 +12,7 @@ const TOP_MEMORY_ROWS: usize = 12;
 pub(crate) struct MemoryReport {
     pub(crate) retained_bytes: usize,
     pub(crate) aggregate_bucket_count: usize,
-    pub(crate) by_phase: Vec<MemoryRow>,
+    pub(crate) by_component: Vec<MemoryRow>,
     pub(crate) by_kind: Vec<MemoryRow>,
     pub(crate) top_paths: Vec<MemoryRow>,
     pub(crate) top_types: Vec<MemoryRow>,
@@ -29,7 +29,7 @@ impl MemoryReport {
         Self {
             retained_bytes: recorder.total_bytes(),
             aggregate_bucket_count: records.len(),
-            by_phase: memory_rows(top_level_totals(&records), usize::MAX),
+            by_component: memory_rows(top_level_totals(&records), usize::MAX),
             by_kind: memory_rows(kind_totals(&records), usize::MAX),
             top_paths: memory_rows(
                 string_totals(
@@ -66,7 +66,7 @@ impl fmt::Display for MemoryReport {
             self.aggregate_bucket_count,
         )?;
 
-        render_memory_section(f, "memory by phase", &self.by_phase)?;
+        render_memory_section(f, "memory by component", &self.by_component)?;
         render_memory_section(f, "memory by kind", &self.by_kind)?;
         render_memory_section(f, "top memory paths", &self.top_paths)?;
         render_memory_section(f, "top memory types", &self.top_types)

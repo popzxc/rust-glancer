@@ -45,7 +45,9 @@ def render_comment(current: dict[str, Any], base: Optional[dict[str, Any]]) -> s
         "",
         render_metric_table(current, base),
         "",
-        render_phase_table(current, base),
+        render_checkpoint_table(current, base),
+        "",
+        render_component_table(current, base),
         "",
     ]
     return "\n".join(lines)
@@ -116,17 +118,74 @@ def render_metric_table(current: dict[str, Any], base: Optional[dict[str, Any]])
     return "\n".join(rows)
 
 
-def render_phase_table(current: dict[str, Any], base: Optional[dict[str, Any]]) -> str:
-    current_rows = current.get("memory", {}).get("by_phase", [])
+def render_checkpoint_table(current: dict[str, Any], base: Optional[dict[str, Any]]) -> str:
+    current_rows = checkpoints_for(current)
+    if not current_rows:
+        return ""
+
     base_rows = {
-        row.get("label"): row.get("bytes")
-        for row in (base or {}).get("memory", {}).get("by_phase", [])
+        row.get("label"): row
+        for row in checkpoints_for(base)
+        if isinstance(row.get("label"), str)
     }
 
     rows = [
-        "### Retained Memory By Phase",
+        "### Build Checkpoints",
         "",
-        "| Phase | Current | Base | Delta |",
+        "| Checkpoint | Phase | Delta | RG sampled | Delta | RG total | Delta | Allocator resident | Delta |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in current_rows:
+        label = row_label(row)
+        base_row = base_rows.get(label)
+        table_row = (
+            "| {label} | {phase} | {phase_delta} | "
+            "{rg_sampled} | {rg_sampled_delta} | "
+            "{rg_total} | {rg_total_delta} | "
+            "{resident} | {resident_delta} |"
+        )
+        rows.append(
+            table_row.format(
+                label=label,
+                phase=format_optional(row_number(row, "phase_elapsed_ms"), format_duration_ms),
+                phase_delta=format_duration_delta_ms(
+                    row_number(row, "phase_elapsed_ms"),
+                    row_number(base_row, "phase_elapsed_ms"),
+                ),
+                rg_sampled=format_optional(row_number(row, "retained_bytes"), format_bytes),
+                rg_sampled_delta=format_byte_delta(
+                    row_number(row, "retained_bytes"),
+                    row_number(base_row, "retained_bytes"),
+                ),
+                rg_total=format_optional(
+                    row_number(row, "active_retained_bytes"),
+                    format_bytes,
+                ),
+                rg_total_delta=format_byte_delta(
+                    row_number(row, "active_retained_bytes"),
+                    row_number(base_row, "active_retained_bytes"),
+                ),
+                resident=format_optional(row_number(row, "resident_bytes"), format_bytes),
+                resident_delta=format_byte_delta(
+                    row_number(row, "resident_bytes"),
+                    row_number(base_row, "resident_bytes"),
+                ),
+            )
+        )
+    return "\n".join(rows)
+
+
+def render_component_table(current: dict[str, Any], base: Optional[dict[str, Any]]) -> str:
+    current_rows = component_rows_for(current)
+    base_rows = {
+        row.get("label"): row.get("bytes")
+        for row in component_rows_for(base)
+    }
+
+    rows = [
+        "### Retained Memory By Component",
+        "",
+        "| Component | Current | Base | Delta |",
         "| --- | ---: | ---: | ---: |",
     ]
     for row in current_rows:
@@ -142,6 +201,18 @@ def render_phase_table(current: dict[str, Any], base: Optional[dict[str, Any]]) 
             )
         )
     return "\n".join(rows)
+
+
+def component_rows_for(report: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
+    if report is None:
+        return []
+    memory = report.get("memory", {})
+    if not isinstance(memory, dict):
+        return []
+
+    # Older cached CI results used the less precise `by_phase` name for this component grouping.
+    rows = memory.get("by_component", memory.get("by_phase", []))
+    return [row for row in rows if isinstance(row, dict)]
 
 
 def workspace_name(report: dict[str, Any]) -> str:
@@ -189,6 +260,20 @@ def checkpoints_for(report: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
     return [checkpoint for checkpoint in checkpoints if isinstance(checkpoint, dict)]
 
 
+def row_label(row: dict[str, Any]) -> str:
+    label = row.get("label")
+    return label if isinstance(label, str) else "?"
+
+
+def row_number(row: Optional[dict[str, Any]], key: str) -> Optional[float]:
+    if row is None:
+        return None
+    value = row.get(key)
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, (int, float)) else None
+
+
 def nested_int(report: Optional[dict[str, Any]], path: list[str]) -> Optional[int]:
     value: Any = report
     for key in path:
@@ -219,6 +304,10 @@ def format_bytes(value: Union[int, float]) -> str:
 
 
 def format_duration_ms(value: Union[int, float]) -> str:
+    if value < 1.0:
+        return f"{value:.2f} ms"
+    if value < 10.0:
+        return f"{value:.1f} ms"
     if value < 1000.0:
         return f"{value:.0f} ms"
     return f"{value / 1000.0:.2f} s"
