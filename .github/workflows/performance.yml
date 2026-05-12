@@ -99,10 +99,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Valgrind
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes valgrind
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: valgrind
+          version: valgrind-cache-v1
 
       - name: Install Gungraun runner
         uses: taiki-e/install-action@v2
