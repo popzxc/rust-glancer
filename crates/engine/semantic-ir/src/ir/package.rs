@@ -1,7 +1,7 @@
 use rg_arena::Arena;
 use rg_parse::TargetId;
 
-use crate::TargetIr;
+use super::target::TargetIr;
 
 /// Semantic IR for one Cargo package.
 ///

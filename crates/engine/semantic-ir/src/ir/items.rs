@@ -7,7 +7,7 @@ use rg_item_tree::{
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
-use crate::{
+use super::{
     ids::{
         AssocItemId, ConstId, EnumId, FunctionId, ImplId, ItemOwner, StaticId, StructId, TraitId,
         TraitRef, TypeAliasId, TypeDefRef, UnionId,

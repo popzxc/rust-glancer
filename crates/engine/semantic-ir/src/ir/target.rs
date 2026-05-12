@@ -1,7 +1,10 @@
 use rg_arena::Arena;
 use rg_def_map::LocalDefId;
 
-use crate::{ImplId, ItemId, ItemStore};
+use super::{
+    ids::{ImplId, ItemId},
+    items::ItemStore,
+};
 
 /// Semantic IR for one target root.
 ///

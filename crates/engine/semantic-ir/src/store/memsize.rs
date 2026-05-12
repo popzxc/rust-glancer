@@ -5,7 +5,7 @@ use crate::{
     SemanticIrStats, SemanticTypePathResolution, StaticData, StaticId, StaticRef, StructData,
     StructId, TargetIr, TraitApplicability, TraitId, TraitImplRef, TraitRef, TypeAliasData,
     TypeAliasId, TypeAliasRef, TypeAliasSignature, TypeDefId, TypeDefRef, TypePathContext,
-    UnionData, UnionId, signature::SignatureGenerics,
+    UnionData, UnionId, ir::SignatureGenerics,
 };
 use rg_memsize::{MemoryRecorder, MemorySize};
 

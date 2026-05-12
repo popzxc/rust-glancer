@@ -2,7 +2,7 @@
 
 use rg_def_map::ModuleRef;
 
-use crate::ids::{ImplRef, TraitRef, TypeDefRef};
+use super::ids::{ImplRef, TraitRef, TypeDefRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TypePathContext {
