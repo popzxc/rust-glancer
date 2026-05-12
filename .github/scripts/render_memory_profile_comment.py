@@ -11,7 +11,10 @@ def main() -> None:
     args = parse_args()
     current = read_json(args.current)
     base = read_optional_json(args.base)
-    markdown = render_comment(current, base)
+    title = args.section_title
+    if title is None and not args.body_only:
+        title = "Rust Glancer Memory Profile"
+    markdown = render_comment(current, base, title)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(markdown, encoding="utf-8")
 
@@ -21,6 +24,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--current", type=Path, required=True)
     parser.add_argument("--base", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--body-only", action="store_true")
+    parser.add_argument("--section-title")
     return parser.parse_args()
 
 
@@ -35,21 +40,29 @@ def read_optional_json(path: Optional[Path]) -> Optional[dict[str, Any]]:
     return read_json(path)
 
 
-def render_comment(current: dict[str, Any], base: Optional[dict[str, Any]]) -> str:
-    lines = [
-        "## Rust Glancer Memory Profile",
-        "",
-        render_context(current, base),
-        "",
-        "Values come from one GitHub runner run, so treat deltas as directional signal rather than a hard threshold.",
-        "",
-        render_metric_table(current, base),
-        "",
-        render_checkpoint_table(current, base),
-        "",
-        render_component_table(current, base),
-        "",
-    ]
+def render_comment(
+    current: dict[str, Any],
+    base: Optional[dict[str, Any]],
+    title: Optional[str] = "Rust Glancer Memory Profile",
+) -> str:
+    lines = []
+    if title is not None:
+        lines.extend([f"## {title}", ""])
+
+    lines.extend(
+        [
+            render_context(current, base),
+            "",
+            "Values come from one GitHub runner run, so treat deltas as directional signal rather than a hard threshold.",
+            "",
+            render_metric_table(current, base),
+            "",
+            render_checkpoint_table(current, base),
+            "",
+            render_component_table(current, base),
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 

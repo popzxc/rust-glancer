@@ -27,7 +27,10 @@ def main() -> None:
     args = parse_args()
     summaries = read_json_objects(args.input)
     results = BenchmarkSummary.collect(summaries)
-    markdown = BenchmarkComment(results).render()
+    title = args.section_title
+    if title is None and not args.body_only:
+        title = "Rust Glancer Benchmark"
+    markdown = BenchmarkComment(results).render(title)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(markdown, encoding="utf-8")
 
@@ -36,6 +39,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--body-only", action="store_true")
+    parser.add_argument("--section-title")
     return parser.parse_args()
 
 
@@ -133,9 +138,14 @@ class BenchmarkSummary:
         metrics = value.get("metrics")
         if isinstance(metrics, dict):
             return self.either_or_both(metrics)
-        current = self.metric_number(value.get("current") or value.get("new"))
-        base = self.metric_number(value.get("base") or value.get("old"))
+        current = self.metric_number(self.first_present(value, "current", "new"))
+        base = self.metric_number(self.first_present(value, "base", "old"))
         return current, base
+
+    def first_present(self, value: dict[str, Any], primary: str, fallback: str) -> Any:
+        if primary in value:
+            return value[primary]
+        return value.get(fallback)
 
     def either_or_both(self, value: dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
         if "Both" in value and isinstance(value["Both"], list):
@@ -192,19 +202,23 @@ class BenchmarkComment:
     def __init__(self, results: list[MetricResult]) -> None:
         self.results = results
 
-    def render(self) -> str:
-        lines = [
-            "## Rust Glancer Benchmark",
-            "",
-            "- Fixture: `test_targets/moderate_workspace`",
-            "- Tool: `Gungraun / Callgrind`",
-            f"- Base result: {self.base_note()}",
-            "",
-            "Values are Callgrind instruction-style measurements from one CI runner run. Treat deltas as directional signal rather than a hard threshold.",
-            "",
-            self.render_table(),
-            "",
-        ]
+    def render(self, title: Optional[str] = "Rust Glancer Benchmark") -> str:
+        lines = []
+        if title is not None:
+            lines.extend([f"## {title}", ""])
+
+        lines.extend(
+            [
+                "- Fixture: `test_targets/moderate_workspace`",
+                "- Tool: `Gungraun / Callgrind`",
+                f"- Base result: {self.base_note()}",
+                "",
+                "Values are Callgrind instruction-style measurements from one CI runner run. Treat deltas as directional signal rather than a hard threshold.",
+                "",
+                self.render_table(),
+                "",
+            ]
+        )
         return "\n".join(lines)
 
     def base_note(self) -> str:
