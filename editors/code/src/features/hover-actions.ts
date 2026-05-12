@@ -127,28 +127,25 @@ function registerGoToLocationsCommand(
   logLabel: string,
   notFoundMessage: string,
 ): vscode.Disposable {
-  return vscode.commands.registerCommand(
-    command,
-    async (serializedLocations: unknown) => {
-      const locations = deserializeLocations(serializedLocations);
-      if (locations.length === 0) {
-        output.warn(`${logLabel} command ignored empty or malformed locations`);
-        return;
-      }
+  return vscode.commands.registerCommand(command, async (serializedLocations: unknown) => {
+    const locations = deserializeLocations(serializedLocations);
+    if (locations.length === 0) {
+      output.warn(`${logLabel} command ignored empty or malformed locations`);
+      return;
+    }
 
-      const activeEditor = vscode.window.activeTextEditor;
-      const originUri = activeEditor?.document.uri ?? locations[0].uri;
-      const originPosition = activeEditor?.selection.active ?? locations[0].range.start;
-      await vscode.commands.executeCommand(
-        "editor.action.goToLocations",
-        originUri,
-        originPosition,
-        locations,
-        "peek",
-        notFoundMessage,
-      );
-    },
-  );
+    const activeEditor = vscode.window.activeTextEditor;
+    const originUri = activeEditor?.document.uri ?? locations[0].uri;
+    const originPosition = activeEditor?.selection.active ?? locations[0].range.start;
+    await vscode.commands.executeCommand(
+      "editor.action.goToLocations",
+      originUri,
+      originPosition,
+      locations,
+      "peek",
+      notFoundMessage,
+    );
+  });
 }
 
 async function typeDefinitionLocations(
@@ -192,10 +189,7 @@ async function navigationLocationsOrEmpty(
   }
 }
 
-function appendHoverActions(
-  hover: vscode.Hover,
-  actions: readonly HoverAction[],
-): vscode.Hover {
+function appendHoverActions(hover: vscode.Hover, actions: readonly HoverAction[]): vscode.Hover {
   if (actions.length === 0) {
     return hover;
   }
