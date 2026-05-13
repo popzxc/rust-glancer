@@ -16,7 +16,7 @@ use crate::{
     engine::command::{EngineCommand, EngineResponse},
     memory::{MemoryControl, MemoryReporter},
     project_stats::{ProjectStats, log_retained_memory},
-    proto::{completion, hover, inlay_hint, navigation, position, symbols},
+    proto::{completion, hover, inlay_hint, navigation, position, references, symbols},
 };
 
 #[derive(Debug)]
@@ -102,6 +102,38 @@ impl EngineWorker {
                     );
                     self.respond_to_query("goto_implementation", respond_to, |worker| {
                         worker.goto_implementation(path, position)
+                    });
+                }
+                EngineCommand::References {
+                    path,
+                    position,
+                    include_declaration,
+                    respond_to,
+                } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        line = position.line,
+                        character = position.character,
+                        include_declaration,
+                        "engine command started: references"
+                    );
+                    self.respond_to_query("references", respond_to, |worker| {
+                        worker.references(path, position, include_declaration)
+                    });
+                }
+                EngineCommand::DocumentHighlight {
+                    path,
+                    position,
+                    respond_to,
+                } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        line = position.line,
+                        character = position.character,
+                        "engine command started: document_highlight"
+                    );
+                    self.respond_to_query("document_highlight", respond_to, |worker| {
+                        worker.document_highlight(path, position)
                     });
                 }
                 EngineCommand::Hover {
@@ -334,6 +366,87 @@ impl EngineWorker {
         position: ls_types::Position,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
         self.navigation_query(path, position, NavigationQuery::Implementation)
+    }
+
+    fn references(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+        include_declaration: bool,
+    ) -> anyhow::Result<Vec<ls_types::Location>> {
+        let started = Instant::now();
+        let snapshot = self.snapshot()?;
+        let target_offsets = self.target_offsets(snapshot, &path, position)?;
+        let analysis = snapshot.full_analysis()?;
+        let mut locations = Vec::new();
+
+        for (context, target, offset) in target_offsets {
+            for reference in
+                analysis.references(target, context.file, offset, include_declaration)?
+            {
+                let Some(location) = references::location_for_reference(snapshot, &reference)?
+                else {
+                    continue;
+                };
+                if !locations.contains(&location) {
+                    locations.push(location);
+                }
+            }
+        }
+
+        tracing::debug!(
+            path = %path.display(),
+            line = position.line,
+            character = position.character,
+            include_declaration,
+            result_count = locations.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "references query finished"
+        );
+
+        Ok(locations)
+    }
+
+    fn document_highlight(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> anyhow::Result<Vec<ls_types::DocumentHighlight>> {
+        let started = Instant::now();
+        let snapshot = self.snapshot()?;
+        let target_offsets = self.target_offsets(snapshot, &path, position)?;
+        let analysis = snapshot.full_analysis()?;
+        let mut highlights = Vec::new();
+
+        for (context, target, offset) in target_offsets {
+            for reference in analysis.references(target, context.file, offset, true)? {
+                if reference.target.package != context.package || reference.file_id != context.file
+                {
+                    continue;
+                }
+
+                let highlight = references::document_highlight_for_reference(
+                    snapshot,
+                    context.package,
+                    context.file,
+                    reference.span,
+                )?;
+                if !highlights.contains(&highlight) {
+                    highlights.push(highlight);
+                }
+            }
+        }
+
+        tracing::debug!(
+            path = %path.display(),
+            line = position.line,
+            character = position.character,
+            result_count = highlights.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "document highlight query finished"
+        );
+
+        Ok(highlights)
     }
 
     fn completion(

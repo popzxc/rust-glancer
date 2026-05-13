@@ -103,6 +103,7 @@ impl CursorScanner<'_, '_> {
                     context,
                     path,
                     span,
+                    ..
                 } => {
                     self.candidates.push(SymbolCandidate {
                         symbol: SymbolAt::TypePath {

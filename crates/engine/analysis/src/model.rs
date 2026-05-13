@@ -1,6 +1,6 @@
 use rg_body_ir::{
-    BindingData, BindingId, BodyItemKind, BodyItemRef, BodyRef, ExprId, ResolvedFieldRef,
-    ResolvedFunctionRef, ScopeId,
+    BindingData, BindingId, BodyFieldRef, BodyFunctionRef, BodyItemKind, BodyItemRef, BodyRef,
+    ExprId, ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
@@ -57,6 +57,14 @@ pub enum SymbolAt {
         item: BodyItemRef,
         span: Span,
     },
+    LocalField {
+        field: BodyFieldRef,
+        span: Span,
+    },
+    LocalFunction {
+        function: BodyFunctionRef,
+        span: Span,
+    },
     TypePath {
         context: TypePathContext,
         path: Path,
@@ -67,6 +75,14 @@ pub enum SymbolAt {
         path: Path,
         span: Span,
     },
+}
+
+/// One source occurrence of the declaration-like subject selected by a references query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceLocation {
+    pub target: TargetRef,
+    pub file_id: FileId,
+    pub span: Span,
 }
 
 /// One goto-definition destination.

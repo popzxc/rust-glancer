@@ -4,7 +4,7 @@ use expect_test::Expect;
 
 use crate::{
     Analysis, AnalysisReadTxn, CompletionApplicability, CompletionItem, DocumentSymbol, HoverInfo,
-    NavigationTarget, SymbolAt, TypeHint, WorkspaceSymbol,
+    NavigationTarget, ReferenceLocation, SymbolAt, TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{
     BodyGenericArg, BodyIrDb, BodyIrReadTxn, BodyItemRef, BodyLocalNominalTy, BodyNominalTy,
@@ -121,6 +121,29 @@ impl AnalysisQuery {
         Self::new(title, marker, AnalysisQueryKind::Hover)
     }
 
+    pub(super) fn references(title: &'static str, marker: &'static str) -> Self {
+        Self::new(
+            title,
+            marker,
+            AnalysisQueryKind::References {
+                include_declaration: true,
+            },
+        )
+    }
+
+    pub(super) fn references_without_declaration(
+        title: &'static str,
+        marker: &'static str,
+    ) -> Self {
+        Self::new(
+            title,
+            marker,
+            AnalysisQueryKind::References {
+                include_declaration: false,
+            },
+        )
+    }
+
     pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
         self.target = AnalysisTarget::bin(package_name);
         self
@@ -224,6 +247,7 @@ enum AnalysisQueryKind {
     GotoDefinition,
     GotoTypeDefinition,
     GotoImplementation,
+    References { include_declaration: bool },
     TypeAt,
     CompletionsAtDot,
     Hover,
@@ -441,6 +465,17 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                         .analysis()
                         .goto_implementation(target, file_id, offset)
                         .expect("fixture goto implementation query should resolve"),
+                    &mut dump,
+                );
+            }
+            AnalysisQueryKind::References {
+                include_declaration,
+            } => {
+                self.render_references(
+                    self.db
+                        .analysis()
+                        .references(target, file_id, offset, include_declaration)
+                        .expect("fixture references query should resolve"),
                     &mut dump,
                 );
             }
@@ -664,6 +699,40 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
+            SymbolAt::LocalField { field, span } => {
+                let targets = self
+                    .db
+                    .analysis()
+                    .resolve_symbol(SymbolAt::LocalField { field, span })
+                    .expect("fixture symbol resolution should resolve");
+                let label = targets
+                    .first()
+                    .map(|target| format!("{} {}", target.kind, target.name))
+                    .unwrap_or_else(|| "field <unresolved>".to_string());
+                writeln!(
+                    dump,
+                    "\n- {label} @ {}",
+                    self.render_source_span(field.item.body.target.package, file_id, span)
+                )
+                .expect("string writes should not fail");
+            }
+            SymbolAt::LocalFunction { function, span } => {
+                let targets = self
+                    .db
+                    .analysis()
+                    .resolve_symbol(SymbolAt::LocalFunction { function, span })
+                    .expect("fixture symbol resolution should resolve");
+                let label = targets
+                    .first()
+                    .map(|target| format!("{} {}", target.kind, target.name))
+                    .unwrap_or_else(|| "fn <unresolved>".to_string());
+                writeln!(
+                    dump,
+                    "\n- {label} @ {}",
+                    self.render_source_span(function.body.target.package, file_id, span)
+                )
+                .expect("string writes should not fail");
+            }
             SymbolAt::TypePath { ref path, span, .. }
             | SymbolAt::UsePath { ref path, span, .. } => {
                 writeln!(
@@ -770,6 +839,28 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
+        }
+    }
+
+    fn render_references(&self, references: Vec<ReferenceLocation>, dump: &mut String) {
+        if references.is_empty() {
+            writeln!(dump, "\n- <none>").expect("string writes should not fail");
+            return;
+        }
+
+        writeln!(dump).expect("string writes should not fail");
+        for reference in references {
+            writeln!(
+                dump,
+                "- `{}` @ {}",
+                self.render_source_text_for_span(
+                    reference.target.package,
+                    reference.file_id,
+                    reference.span,
+                ),
+                self.render_file_span(reference.target.package, reference.file_id, reference.span,)
+            )
+            .expect("string writes should not fail");
         }
     }
 
@@ -1059,20 +1150,59 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn render_source_text(&self, package: PackageSlot, source: rg_body_ir::BodySource) -> String {
+        self.render_source_text_for_span(package, source.file_id, source.span)
+    }
+
+    fn render_source_text_for_span(
+        &self,
+        package: PackageSlot,
+        file_id: FileId,
+        span: Span,
+    ) -> String {
         let parsed_file = self
             .db
             .parse
             .package(package.0)
             .expect("span package should exist while rendering analysis query text")
-            .parsed_file(source.file_id)
+            .parsed_file(file_id)
             .expect("span file should exist while rendering analysis query text");
 
         parsed_file
-            .text_for_span(source.span)
+            .text_for_span(span)
             .unwrap_or_else(|| "<invalid>".to_string())
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    fn render_file_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {
+        format!(
+            "{}:{}",
+            self.render_file_path(package, file_id),
+            self.render_source_span(package, file_id, span)
+        )
+    }
+
+    fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
+        let package = self
+            .db
+            .parse
+            .packages()
+            .get(package.0)
+            .expect("reference package should exist while rendering file path");
+        let path = package
+            .file_path(file_id)
+            .expect("reference file should exist while rendering file path");
+        let path = path.to_string_lossy();
+
+        path.rfind("/src/")
+            .map(|idx| path[idx + 1..].to_string())
+            .unwrap_or_else(|| {
+                path.rsplit('/')
+                    .next()
+                    .expect("path string should contain a file name")
+                    .to_string()
+            })
     }
 }
 
