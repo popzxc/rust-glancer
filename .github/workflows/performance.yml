@@ -72,7 +72,7 @@ jobs:
 
       - name: Upload memory profile section
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: memory-profile-comment
           path: .ci/memory/comment.md
@@ -153,7 +153,7 @@ jobs:
 
       - name: Upload benchmark section
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: benchmark-comment
           path: .ci/benchmark/comment.md
@@ -177,13 +177,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download memory profile section
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: memory-profile-comment
           path: .ci/performance/memory
 
       - name: Download benchmark section
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: benchmark-comment
           path: .ci/performance/benchmark
