@@ -426,10 +426,15 @@ impl EngineWorker {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
         let target_offsets = self.target_offsets(snapshot, &path, position)?;
+
+        let analysis_targets = target_offsets
+            .iter()
+            .map(|(_, target, _)| *target)
+            .collect::<Vec<_>>();
+        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
         let mut highlights = Vec::new();
 
         for (context, target, offset) in target_offsets {
-            let analysis = snapshot.analysis_for_targets(&[target])?;
             for reference in analysis.references(
                 target,
                 context.file,
