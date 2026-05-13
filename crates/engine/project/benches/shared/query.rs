@@ -1,7 +1,7 @@
 use std::{cell::RefCell, fmt, path::PathBuf};
 
 use anyhow::Context as _;
-use rg_analysis::{ReferenceLocation, ReferenceQuery, TypeHint};
+use rg_analysis::{Analysis, ReferenceLocation, ReferenceQuery, TypeHint};
 use rg_def_map::TargetRef;
 use rg_project::{FileContext, PackageResidencyPolicy, Project, StartupCacheLoad};
 use rg_workspace::WorkspaceMetadata;
@@ -167,6 +167,28 @@ enum QueryKind {
     WorkspaceSymbols(&'static str),
 }
 
+impl QueryKind {
+    fn analysis_scope(self) -> QueryAnalysisScope {
+        match self {
+            Self::References | Self::WorkspaceSymbols(_) => QueryAnalysisScope::FullProject,
+            Self::Hover
+            | Self::GotoDefinition
+            | Self::GotoTypeDefinition
+            | Self::GotoImplementation
+            | Self::DocumentHighlight
+            | Self::Completion
+            | Self::DocumentSymbols
+            | Self::InlayHints => QueryAnalysisScope::TargetScoped,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum QueryAnalysisScope {
+    TargetScoped,
+    FullProject,
+}
+
 /// Minimal correctness guard for benchmark cases.
 ///
 /// Benchmarks should fail when a query silently turns into "nothing found"; otherwise a broken
@@ -263,15 +285,18 @@ impl BenchProjectFixture {
 
 /// Fully resolved benchmark input for one query case.
 ///
-/// Preparing a query resolves filesystem paths, source markers, file contexts, and target contexts.
-/// That mirrors the LSP worker's request setup, but it is intentionally outside the timed closure
-/// so the reported number is about analysis query execution rather than test harness plumbing.
-#[derive(Debug, Clone)]
+/// Preparing a query resolves filesystem paths, source markers, file contexts, target contexts, and
+/// the analysis view used by the timed body.
+///
+/// Offloaded packages are lazy inside an analysis transaction, so setup also runs the query once to
+/// materialize the packages this case needs. The benchmark then measures a warm query over a frozen
+/// workspace instead of repeatedly charging every case for cache decoding.
 pub struct PreparedQuery {
     pub query: BenchQuery,
     pub fixture: &'static BenchProjectFixture,
     pub sites: Vec<QuerySite>,
     pub analysis_targets: Vec<TargetRef>,
+    analysis: Analysis<'static>,
 }
 
 impl PreparedQuery {
@@ -322,12 +347,29 @@ impl PreparedQuery {
             );
         }
 
-        Ok(Self {
+        // The analysis view is request-scoped. Keeping one view inside PreparedQuery lets setup
+        // warm its lazy package entries once, then lets the timed body run the same query without
+        // repeatedly measuring cache decoding.
+        let snapshot = fixture.project.snapshot();
+        let analysis = match case.kind.analysis_scope() {
+            QueryAnalysisScope::TargetScoped => snapshot
+                .analysis_for_targets(&analysis_targets)
+                .context("while attempting to create target-scoped benchmark analysis")?,
+            QueryAnalysisScope::FullProject => snapshot
+                .full_analysis()
+                .context("while attempting to create full benchmark analysis")?,
+        };
+
+        let prepared = Self {
             query,
             fixture,
             sites,
             analysis_targets,
-        })
+            analysis,
+        };
+        prepared.warm()?;
+
+        Ok(prepared)
     }
 
     pub fn run(&self) -> usize {
@@ -339,6 +381,10 @@ impl PreparedQuery {
         let count = self.try_run()?;
         self.query.case().expected.check(self.query, count)?;
         Ok(count)
+    }
+
+    fn warm(&self) -> anyhow::Result<()> {
+        self.try_run_and_validate().map(drop)
     }
 
     fn try_run(&self) -> anyhow::Result<usize> {
@@ -357,14 +403,11 @@ impl PreparedQuery {
     }
 
     fn run_hover(&self) -> anyhow::Result<usize> {
-        let snapshot = self.fixture.project.snapshot();
-        let analysis = snapshot
-            .analysis_for_targets(&self.analysis_targets)
-            .context("while attempting to create target-scoped analysis")?;
         let mut count = 0;
 
         for site in &self.sites {
-            if analysis
+            if self
+                .analysis
                 .hover(site.target, site.context.file, site.offset)
                 .context("while attempting to run hover query")?
                 .is_some()
@@ -377,21 +420,20 @@ impl PreparedQuery {
     }
 
     fn run_navigation(&self, kind: NavigationKind) -> anyhow::Result<usize> {
-        let snapshot = self.fixture.project.snapshot();
-        let analysis = snapshot
-            .analysis_for_targets(&self.analysis_targets)
-            .context("while attempting to create target-scoped analysis")?;
         let mut count = 0;
 
         for site in &self.sites {
             let targets = match kind {
-                NavigationKind::Definition => analysis
+                NavigationKind::Definition => self
+                    .analysis
                     .goto_definition(site.target, site.context.file, site.offset)
                     .context("while attempting to run goto-definition query")?,
-                NavigationKind::TypeDefinition => analysis
+                NavigationKind::TypeDefinition => self
+                    .analysis
                     .goto_type_definition(site.target, site.context.file, site.offset)
                     .context("while attempting to run goto-type-definition query")?,
-                NavigationKind::Implementation => analysis
+                NavigationKind::Implementation => self
+                    .analysis
                     .goto_implementation(site.target, site.context.file, site.offset)
                     .context("while attempting to run goto-implementation query")?,
             };
@@ -407,13 +449,11 @@ impl PreparedQuery {
         // declaration targets, then asks the project snapshot which targets should be searched from
         // that origin package. Keep that composition here so the benchmark tracks real request
         // behavior.
-        let analysis = snapshot
-            .full_analysis()
-            .context("while attempting to create full analysis")?;
         let mut references = Vec::<ReferenceLocation>::new();
 
         for site in &self.sites {
-            let declaration_targets = analysis
+            let declaration_targets = self
+                .analysis
                 .goto_definition(site.target, site.context.file, site.offset)
                 .context("while attempting to resolve reference declaration targets")?
                 .into_iter()
@@ -422,7 +462,8 @@ impl PreparedQuery {
             let search_targets =
                 snapshot.reference_search_targets(site.context.package, &declaration_targets);
 
-            for reference in analysis
+            for reference in self
+                .analysis
                 .references(
                     site.target,
                     site.context.file,
@@ -439,16 +480,13 @@ impl PreparedQuery {
     }
 
     fn run_document_highlight(&self) -> anyhow::Result<usize> {
-        let snapshot = self.fixture.project.snapshot();
         // Document highlight is not a separate analysis primitive. It is the file-scoped reference
         // query used by the LSP worker before converting reference spans into LSP highlights.
-        let analysis = snapshot
-            .analysis_for_targets(&self.analysis_targets)
-            .context("while attempting to create target-scoped analysis")?;
         let mut highlights = Vec::<ReferenceLocation>::new();
 
         for site in &self.sites {
-            for reference in analysis
+            for reference in self
+                .analysis
                 .references(
                     site.target,
                     site.context.file,
@@ -471,14 +509,11 @@ impl PreparedQuery {
     }
 
     fn run_completion(&self) -> anyhow::Result<usize> {
-        let snapshot = self.fixture.project.snapshot();
-        let analysis = snapshot
-            .analysis_for_targets(&self.analysis_targets)
-            .context("while attempting to create target-scoped analysis")?;
         let mut completions = Vec::new();
 
         for site in &self.sites {
-            for completion in analysis
+            for completion in self
+                .analysis
                 .completions_at_dot(site.target, site.context.file, site.offset)
                 .context("while attempting to run completion query")?
             {
@@ -492,14 +527,11 @@ impl PreparedQuery {
     }
 
     fn run_document_symbols(&self) -> anyhow::Result<usize> {
-        let snapshot = self.fixture.project.snapshot();
-        let analysis = snapshot
-            .analysis_for_targets(&self.analysis_targets)
-            .context("while attempting to create target-scoped analysis")?;
         let mut count = 0;
 
         for site in &self.sites {
-            count += analysis
+            count += self
+                .analysis
                 .document_symbols(site.target, site.context.file)
                 .context("while attempting to run document-symbols query")?
                 .len();
@@ -509,17 +541,14 @@ impl PreparedQuery {
     }
 
     fn run_inlay_hints(&self) -> anyhow::Result<usize> {
-        let snapshot = self.fixture.project.snapshot();
-        let analysis = snapshot
-            .analysis_for_targets(&self.analysis_targets)
-            .context("while attempting to create target-scoped analysis")?;
         let mut hints = Vec::<TypeHint>::new();
 
         for site in &self.sites {
             // Use the analysis API's whole-file mode. LSP range conversion is transport glue; the
             // expensive part we care about here is collecting and rendering inferred binding types
             // from the frozen analysis snapshot.
-            for hint in analysis
+            for hint in self
+                .analysis
                 .type_hints(site.target, site.context.file, None)
                 .context("while attempting to run inlay-hints query")?
             {
@@ -533,12 +562,8 @@ impl PreparedQuery {
     }
 
     fn run_workspace_symbols(&self, query: &str) -> anyhow::Result<usize> {
-        let snapshot = self.fixture.project.snapshot();
-        let analysis = snapshot
-            .full_analysis()
-            .context("while attempting to create full analysis")?;
-
-        Ok(analysis
+        Ok(self
+            .analysis
             .workspace_symbols(query)
             .context("while attempting to run workspace-symbols query")?
             .len())

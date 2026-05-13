@@ -37,6 +37,9 @@ permissions:
   contents: read
   pull-requests: write
 
+env:
+  GUNGRAUN_RUNNER_VERSION: "0.18.2"
+
 jobs:
   memory-profile:
     name: memory-profile
@@ -95,11 +98,9 @@ jobs:
           path: .ci/memory/base
           key: memory-profile-${{ github.sha }}
 
-  benchmark:
-    name: benchmark
+  build-benchmark:
+    name: build-benchmark
     runs-on: ubuntu-latest
-    env:
-      GUNGRAUN_RUNNER_VERSION: "0.18.2"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -114,12 +115,14 @@ jobs:
           tool: gungraun-runner@${{ env.GUNGRAUN_RUNNER_VERSION }}
           fallback: none
 
-      - name: Restore base Gungraun baseline
+      - name: Restore base build benchmark baseline
         if: github.event_name == 'pull_request'
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: target/gungraun
-          key: gungraun-${{ github.event.pull_request.base.sha }}
+          key: gungraun-build-${{ github.event.pull_request.base.sha }}
+          restore-keys: |
+            gungraun-${{ github.event.pull_request.base.sha }}
 
       - name: Run build benchmark
         uses: ./.github/actions/run-gungraun-benchmark
@@ -131,6 +134,47 @@ jobs:
           section-title: Benchmark results
           fixture: test_targets/moderate_workspace
 
+      - name: Upload benchmark section
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: benchmark-comment
+          path: .ci/benchmark/comment.md
+
+      - name: Save main-branch build benchmark baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        continue-on-error: true
+        with:
+          path: target/gungraun
+          key: gungraun-build-${{ github.sha }}
+
+  query-benchmark:
+    name: query-benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
+        with:
+          packages: valgrind
+          version: valgrind-cache-v1
+
+      - name: Install Gungraun runner
+        uses: taiki-e/install-action@3235f8901fd37ffed0052b276cec25a362fb82e9 # v2
+        with:
+          tool: gungraun-runner@${{ env.GUNGRAUN_RUNNER_VERSION }}
+          fallback: none
+
+      - name: Restore base query benchmark baseline
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: target/gungraun
+          key: gungraun-query-${{ github.event.pull_request.base.sha }}
+          restore-keys: |
+            gungraun-${{ github.event.pull_request.base.sha }}
+
       - name: Run query benchmark
         uses: ./.github/actions/run-gungraun-benchmark
         with:
@@ -140,14 +184,7 @@ jobs:
           comment-output: .ci/query-benchmark/comment.md
           section-title: Query benchmark results
           fixture: test_targets/bench_fixtures/small_app
-          residency: all-offloadable
-
-      - name: Upload benchmark section
-        if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: benchmark-comment
-          path: .ci/benchmark/comment.md
+          residency: all-offloadable, warm analysis view
 
       - name: Upload query benchmark section
         if: github.event_name == 'pull_request'
@@ -156,20 +193,21 @@ jobs:
           name: query-benchmark-comment
           path: .ci/query-benchmark/comment.md
 
-      - name: Save main-branch Gungraun baseline
+      - name: Save main-branch query benchmark baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         continue-on-error: true
         with:
           path: target/gungraun
-          key: gungraun-${{ github.sha }}
+          key: gungraun-query-${{ github.sha }}
 
   performance-comment:
     name: performance-comment
     if: github.event_name == 'pull_request'
     needs:
       - memory-profile
-      - benchmark
+      - build-benchmark
+      - query-benchmark
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
