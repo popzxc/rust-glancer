@@ -115,14 +115,14 @@ impl PackageCacheCodec {
             );
         }
 
-        if let PackageCacheBodyIrState::Built(body_ir) = &artifact.payload.body_ir {
-            if body_ir.package().targets().len() != target_count {
-                anyhow::bail!(
-                    "package cache artifact has {} body IR targets but header has {} targets",
-                    body_ir.package().targets().len(),
-                    target_count,
-                );
-            }
+        if let PackageCacheBodyIrState::Built(body_ir) = &artifact.payload.body_ir
+            && body_ir.package().targets().len() != target_count
+        {
+            anyhow::bail!(
+                "package cache artifact has {} body IR targets but header has {} targets",
+                body_ir.package().targets().len(),
+                target_count,
+            );
         }
 
         Ok(())

@@ -62,12 +62,11 @@ impl DocumentOwner {
         }
 
         // Do we need to spawn a new engine?
-        if let Some(workspace_root) = Self::locate_workspace_root(path)? {
-            if let Some(owner) =
+        if let Some(workspace_root) = Self::locate_workspace_root(path)?
+            && let Some(owner) =
                 Self::for_cargo_workspace(inner, path, workspace_root, cache_policy)
-            {
-                return Ok(Some(owner));
-            }
+        {
+            return Ok(Some(owner));
         }
 
         // Cargo could not associate the file with a routable workspace, so keep the request

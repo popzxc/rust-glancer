@@ -232,10 +232,10 @@ pub(crate) fn resolve_path_to_modules_with_env(
 
     let mut modules = Vec::new();
     for resolved_def in resolved_defs {
-        if let DefId::Module(module_ref) = resolved_def {
-            if !modules.contains(&module_ref) {
-                modules.push(module_ref);
-            }
+        if let DefId::Module(module_ref) = resolved_def
+            && !modules.contains(&module_ref)
+        {
+            modules.push(module_ref);
         }
     }
 

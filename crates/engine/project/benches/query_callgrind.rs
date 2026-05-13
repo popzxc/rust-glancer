@@ -9,15 +9,11 @@ std::cfg_select! {
 
         use self::shared::query::{BenchQuery, PreparedQuery};
 
-        fn setup_query(query: BenchQuery) -> PreparedQuery {
-            PreparedQuery::new(query)
-        }
-
         // Gungraun's library-benchmark setup hook runs before Callgrind measures the function
         // body. That keeps project construction, cache loading, path lookup, and marker resolution
         // out of the instruction counts while still measuring the same PreparedQuery runner as the
         // Divan benchmark.
-        #[library_benchmark(setup = setup_query)]
+        #[library_benchmark(setup = PreparedQuery::new)]
         #[bench::small_app_hover_workspace_summary(BenchQuery::HoverWorkspaceSummary)]
         #[bench::small_app_goto_workspace_constructor(BenchQuery::GotoWorkspaceConstructor)]
         #[bench::small_app_goto_workspace_type(BenchQuery::GotoWorkspaceType)]

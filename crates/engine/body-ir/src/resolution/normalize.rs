@@ -46,10 +46,10 @@ impl<'db, 'body> BodyTyNormalizer<'db, 'body> {
             let Ok(Some(name)) = self.semantic_ir.type_def_name(nominal.def) else {
                 continue;
             };
-            if matches!(name, "Result" | "Option") {
-                if let Some(output) = first_type_arg(&nominal.args) {
-                    push_unique(&mut outputs, output);
-                }
+            if matches!(name, "Result" | "Option")
+                && let Some(output) = first_type_arg(&nominal.args)
+            {
+                push_unique(&mut outputs, output);
             }
         }
 
@@ -57,10 +57,10 @@ impl<'db, 'body> BodyTyNormalizer<'db, 'body> {
             let Some(item) = self.body.local_item(local.item.item) else {
                 continue;
             };
-            if matches!(item.name.as_str(), "Result" | "Option") {
-                if let Some(output) = first_type_arg(&local.args) {
-                    push_unique(&mut outputs, output);
-                }
+            if matches!(item.name.as_str(), "Result" | "Option")
+                && let Some(output) = first_type_arg(&local.args)
+            {
+                push_unique(&mut outputs, output);
             }
         }
 

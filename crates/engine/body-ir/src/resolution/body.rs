@@ -213,11 +213,11 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         path: &Path,
     ) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
         let scope = self.body.exprs[expr].scope;
-        if let Some(name) = path.single_name() {
-            if let Some(binding) = self.resolve_local_name(scope, name, expr) {
-                let ty = self.body.bindings[binding].ty.clone();
-                return Ok((BodyResolution::Local(binding), ty));
-            }
+        if let Some(name) = path.single_name()
+            && let Some(binding) = self.resolve_local_name(scope, name, expr)
+        {
+            let ty = self.body.bindings[binding].ty.clone();
+            return Ok((BodyResolution::Local(binding), ty));
         }
 
         self.resolve_nonlocal_path_expr(scope, path)
@@ -713,12 +713,11 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             | BodyTypePathResolution::Unknown => {}
         }
 
-        if let Some((prefix, last_segment)) = split_associated_path(path) {
-            if let Some((resolution, ty)) =
+        if let Some((prefix, last_segment)) = split_associated_path(path)
+            && let Some((resolution, ty)) =
                 self.resolve_associated_path(scope, &prefix, last_segment)?
-            {
-                return Ok((resolution, ty));
-            }
+        {
+            return Ok((resolution, ty));
         }
 
         let result = self.def_map.resolve_path(self.body.owner_module, path)?;

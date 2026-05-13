@@ -50,13 +50,13 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
     ) -> Result<BodyTypePathResolution, PackageStoreError> {
         // Body-local type names shadow module items inside their lexical scope. Qualified paths
         // skip this branch because local items cannot be named through module paths.
-        if let Some(name) = path.single_name() {
-            if let Some(item) = self.resolve_local_type_item(scope, name) {
-                return Ok(BodyTypePathResolution::BodyLocal(BodyItemRef {
-                    body: self.body_ref,
-                    item,
-                }));
-            }
+        if let Some(name) = path.single_name()
+            && let Some(item) = self.resolve_local_type_item(scope, name)
+        {
+            return Ok(BodyTypePathResolution::BodyLocal(BodyItemRef {
+                body: self.body_ref,
+                item,
+            }));
         }
 
         self.resolve_in_context(
