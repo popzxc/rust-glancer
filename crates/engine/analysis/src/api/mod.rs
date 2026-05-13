@@ -137,13 +137,8 @@ impl<'a> Analysis<'a> {
         include_declaration: bool,
         search_scope: ReferenceSearchScope<'_>,
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
-        query::references::ReferenceResolver::new(self).references(
-            target,
-            file_id,
-            offset,
-            include_declaration,
-            search_scope,
-        )
+        query::references::ReferenceResolver::new(self, search_scope, include_declaration)
+            .references(target, file_id, offset)
     }
 
     /// Returns field and method completion candidates for a receiver before a dot.

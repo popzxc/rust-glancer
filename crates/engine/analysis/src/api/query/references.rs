@@ -23,11 +23,23 @@ use crate::{
     model::{ReferenceLocation, ReferenceSearchScope, SymbolAt},
 };
 
-pub(crate) struct ReferenceResolver<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct ReferenceResolver<'a, 'db, 'scope> {
+    analysis: &'a Analysis<'db>,
+    search_scope: ReferenceSearchScope<'scope>,
+    include_declaration: bool,
+}
 
-impl<'a, 'db> ReferenceResolver<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
+    pub(crate) fn new(
+        analysis: &'a Analysis<'db>,
+        search_scope: ReferenceSearchScope<'scope>,
+        include_declaration: bool,
+    ) -> Self {
+        Self {
+            analysis,
+            search_scope,
+            include_declaration,
+        }
     }
 
     /// Finds references for the symbol under `offset` by scanning the requested use-site surface.
@@ -40,10 +52,8 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-        include_declaration: bool,
-        search_scope: ReferenceSearchScope<'_>,
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
-        let Some(symbol) = self.0.symbol_at_for_query(target, file_id, offset)? else {
+        let Some(symbol) = self.analysis.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(Vec::new());
         };
         let subjects = self.subjects_for_symbol(symbol.clone())?;
@@ -52,15 +62,11 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         }
 
         let mut locations = Vec::new();
-        if include_declaration {
+        if self.include_declaration {
             self.push_selected_declarations(symbol, &mut locations)?;
         }
 
-        for candidate in self.reference_candidates(search_scope)? {
-            if candidate.is_declaration && !include_declaration {
-                continue;
-            }
-
+        for candidate in self.reference_candidates()? {
             let candidate_subjects = self.subjects_for_symbol(candidate.symbol)?;
             if candidate_subjects
                 .iter()
@@ -92,7 +98,7 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         symbol: SymbolAt,
         locations: &mut Vec<ReferenceLocation>,
     ) -> anyhow::Result<()> {
-        for target in SymbolResolver::new(self.0).resolve_symbol(symbol)? {
+        for target in SymbolResolver::new(self.analysis).resolve_symbol(symbol)? {
             let Some(span) = target.span else {
                 continue;
             };
@@ -106,7 +112,7 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
     }
 
     fn subjects_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<ReferenceSubject>> {
-        let entities = EntityResolver::new(self.0).entities_for_symbol(symbol)?;
+        let entities = EntityResolver::new(self.analysis).entities_for_symbol(symbol)?;
         let mut subjects = Vec::new();
         for entity in entities {
             let subject = ReferenceSubject::from_entity(entity);
@@ -117,14 +123,11 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         Ok(subjects)
     }
 
-    fn reference_candidates(
-        &self,
-        search_scope: ReferenceSearchScope<'_>,
-    ) -> anyhow::Result<Vec<ReferenceCandidate>> {
+    fn reference_candidates(&self) -> anyhow::Result<Vec<ReferenceCandidate>> {
         let mut candidates = Vec::new();
         let mut visited = Vec::new();
 
-        match search_scope {
+        match self.search_scope {
             ReferenceSearchScope::Targets(targets) => {
                 for target in targets {
                     let scan = ReferenceScanTarget {
@@ -163,34 +166,28 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         Ok(())
     }
 
-    fn push_candidate(
-        scan: ReferenceScanTarget,
-        candidates: &mut Vec<ReferenceCandidate>,
-        candidate: ReferenceCandidate,
-    ) {
-        if scan.accepts_file(candidate.file_id) {
-            candidates.push(candidate);
-        }
-    }
-
     fn push_def_map_candidates(
         &self,
         scan: ReferenceScanTarget,
         candidates: &mut Vec<ReferenceCandidate>,
     ) -> anyhow::Result<()> {
         for candidate in self
-            .0
+            .analysis
             .def_map
             .source_candidates(scan.target, scan.file_id)?
         {
             let candidate = match candidate {
-                DefMapCursorCandidate::Def { def, file_id, span } => ReferenceCandidate {
-                    symbol: SymbolAt::Def { def, span },
-                    target: scan.target,
-                    file_id,
-                    span,
-                    is_declaration: true,
-                },
+                DefMapCursorCandidate::Def { def, file_id, span } => {
+                    if !self.include_declaration {
+                        continue;
+                    }
+                    ReferenceCandidate {
+                        symbol: SymbolAt::Def { def, span },
+                        target: scan.target,
+                        file_id,
+                        span,
+                    }
+                }
                 DefMapCursorCandidate::UsePath {
                     module,
                     path,
@@ -201,10 +198,9 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                     target: scan.target,
                     file_id,
                     span,
-                    is_declaration: false,
                 },
             };
-            Self::push_candidate(scan, candidates, candidate);
+            candidates.push(candidate);
         }
 
         Ok(())
@@ -216,14 +212,14 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         candidates: &mut Vec<ReferenceCandidate>,
     ) -> anyhow::Result<()> {
         for candidate in self
-            .0
+            .analysis
             .semantic_ir
             .signature_source_candidates(scan.target, scan.file_id)?
         {
             let Some(candidate) = self.semantic_reference_candidate(scan.target, candidate)? else {
                 continue;
             };
-            Self::push_candidate(scan, candidates, candidate);
+            candidates.push(candidate);
         }
         Ok(())
     }
@@ -235,7 +231,10 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
     ) -> anyhow::Result<Option<ReferenceCandidate>> {
         let candidate = match candidate {
             SemanticCursorCandidate::Field { field, span } => {
-                let Some(data) = self.0.semantic_ir.field_data(field)? else {
+                if !self.include_declaration {
+                    return Ok(None);
+                }
+                let Some(data) = self.analysis.semantic_ir.field_data(field)? else {
                     return Ok(None);
                 };
                 ReferenceCandidate {
@@ -243,11 +242,13 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                     target,
                     file_id: data.file_id,
                     span,
-                    is_declaration: true,
                 }
             }
             SemanticCursorCandidate::Function { function, span } => {
-                let Some(data) = self.0.semantic_ir.function_data(function)? else {
+                if !self.include_declaration {
+                    return Ok(None);
+                }
+                let Some(data) = self.analysis.semantic_ir.function_data(function)? else {
                     return Ok(None);
                 };
                 ReferenceCandidate {
@@ -255,11 +256,13 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                     target,
                     file_id: data.source.file_id,
                     span,
-                    is_declaration: true,
                 }
             }
             SemanticCursorCandidate::EnumVariant { variant, span } => {
-                let Some(data) = self.0.semantic_ir.enum_variant_data(variant)? else {
+                if !self.include_declaration {
+                    return Ok(None);
+                }
+                let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant)? else {
                     return Ok(None);
                 };
                 ReferenceCandidate {
@@ -267,7 +270,6 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                     target,
                     file_id: data.file_id,
                     span,
-                    is_declaration: true,
                 }
             }
             SemanticCursorCandidate::TypePath {
@@ -284,7 +286,6 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                 target,
                 file_id,
                 span,
-                is_declaration: false,
             },
         };
 
@@ -297,14 +298,14 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         candidates: &mut Vec<ReferenceCandidate>,
     ) -> anyhow::Result<()> {
         for candidate in self
-            .0
+            .analysis
             .body_ir
             .source_candidates(scan.target, scan.file_id)?
         {
             let Some(candidate) = self.body_reference_candidate(scan.target, candidate)? else {
                 continue;
             };
-            Self::push_candidate(scan, candidates, candidate);
+            candidates.push(candidate);
         }
         Ok(())
     }
@@ -318,7 +319,10 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         let candidate = match candidate {
             BodyCursorCandidate::Body { .. } => return Ok(None),
             BodyCursorCandidate::Binding { body, binding, .. } => {
-                let Some(body_data) = self.0.body_ir.body_data(body)? else {
+                if !self.include_declaration {
+                    return Ok(None);
+                }
+                let Some(body_data) = self.analysis.body_ir.body_data(body)? else {
                     return Ok(None);
                 };
                 let Some(data) = body_data.binding(binding) else {
@@ -329,11 +333,10 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                     target,
                     file_id: data.source.file_id,
                     span,
-                    is_declaration: true,
                 }
             }
             BodyCursorCandidate::Expr { body, expr, .. } => {
-                let Some(body_data) = self.0.body_ir.body_data(body)? else {
+                let Some(body_data) = self.analysis.body_ir.body_data(body)? else {
                     return Ok(None);
                 };
                 let Some(data) = body_data.expr(expr) else {
@@ -344,11 +347,13 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                     target,
                     file_id: data.source.file_id,
                     span,
-                    is_declaration: false,
                 }
             }
             BodyCursorCandidate::LocalItem { item, .. } => {
-                let Some(body_data) = self.0.body_ir.body_data(item.body)? else {
+                if !self.include_declaration {
+                    return Ok(None);
+                }
+                let Some(body_data) = self.analysis.body_ir.body_data(item.body)? else {
                     return Ok(None);
                 };
                 let Some(data) = body_data.local_item(item.item) else {
@@ -359,11 +364,13 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                     target,
                     file_id: data.name_source.file_id,
                     span,
-                    is_declaration: true,
                 }
             }
             BodyCursorCandidate::LocalField { field, .. } => {
-                let Some(data) = self.0.body_ir.local_field_data(field)? else {
+                if !self.include_declaration {
+                    return Ok(None);
+                }
+                let Some(data) = self.analysis.body_ir.local_field_data(field)? else {
                     return Ok(None);
                 };
                 ReferenceCandidate {
@@ -371,11 +378,13 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                     target,
                     file_id: data.item.source.file_id,
                     span,
-                    is_declaration: true,
                 }
             }
             BodyCursorCandidate::LocalFunction { function, .. } => {
-                let Some(data) = self.0.body_ir.local_function_data(function)? else {
+                if !self.include_declaration {
+                    return Ok(None);
+                }
+                let Some(data) = self.analysis.body_ir.local_function_data(function)? else {
                     return Ok(None);
                 };
                 ReferenceCandidate {
@@ -383,7 +392,6 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                     target,
                     file_id: data.name_source.file_id,
                     span,
-                    is_declaration: true,
                 }
             }
             BodyCursorCandidate::TypePath {
@@ -402,7 +410,6 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                 target,
                 file_id,
                 span,
-                is_declaration: false,
             },
             BodyCursorCandidate::ValuePath {
                 body,
@@ -420,7 +427,6 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                 target,
                 file_id,
                 span,
-                is_declaration: false,
             },
         };
 
@@ -434,20 +440,12 @@ struct ReferenceScanTarget {
     file_id: Option<FileId>,
 }
 
-impl ReferenceScanTarget {
-    fn accepts_file(self, candidate_file_id: FileId) -> bool {
-        self.file_id
-            .is_none_or(|selected_file_id| selected_file_id == candidate_file_id)
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReferenceCandidate {
     symbol: SymbolAt,
     target: TargetRef,
     file_id: FileId,
     span: Span,
-    is_declaration: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
