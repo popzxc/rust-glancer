@@ -1,6 +1,5 @@
 //! Tracks LSP document state that sits above the saved analysis project.
 
-mod dirty_analysis;
 mod snapshot;
 
 #[cfg(test)]
@@ -12,7 +11,6 @@ use std::{
     sync::Arc,
 };
 
-pub(crate) use self::dirty_analysis::{DirtyAnalysisHandle, DirtyDocumentIdentity};
 pub(crate) use self::snapshot::{
     DirtyDocumentSnapshot, DirtyDocumentSnapshotState, TextFingerprint,
 };

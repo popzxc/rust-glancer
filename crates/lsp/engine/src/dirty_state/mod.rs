@@ -1,21 +1,34 @@
+//! Dirty buffers are modeled as a narrow layer over the saved project state.
+//!
+//! `DirtyState` is shared with the worker so queued requests can notice when a newer dirty
+//! document identity exists and skip obsolete work. Current dirty requests use `DirtyOverlayCache`
+//! to build a temporary project overlay with the changed file partially reindexed, keeping the
+//! saved project frozen while hover, inlay hints, and similar features read from the buffer text.
+
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use super::{DirtyDocumentSnapshot, DirtyDocumentSnapshotState, TextFingerprint};
+pub(crate) use self::overlay::DirtyOverlayCache;
+use crate::documents::{DirtyDocumentSnapshot, DirtyDocumentSnapshotState, TextFingerprint};
 
-/// Shared freshness oracle for dirty-buffer analysis requests.
+mod overlay;
+
+#[cfg(test)]
+mod tests;
+
+/// Worker-visible dirty document state for skipping obsolete queued requests.
 ///
-/// The worker queue is FIFO, but document changes arrive outside that queue. This state lets the
-/// worker cheaply reject a queued request that was captured from an older dirty buffer version.
+/// `DocumentStore` owns the live text. This is the small synchronous read model the worker uses
+/// without waiting behind the analysis command queue.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct DirtyAnalysisHandle {
-    state: Arc<Mutex<DirtyAnalysisState>>,
+pub(crate) struct DirtyState {
+    state: Arc<Mutex<DirtyStateInner>>,
 }
 
-impl DirtyAnalysisHandle {
+impl DirtyState {
     pub(crate) fn sync_document(&self, path: &Path, snapshot: &DirtyDocumentSnapshotState) {
         self.state().sync_document(path, snapshot);
     }
@@ -24,19 +37,19 @@ impl DirtyAnalysisHandle {
         self.state().is_current(identity)
     }
 
-    fn state(&self) -> MutexGuard<'_, DirtyAnalysisState> {
+    fn state(&self) -> MutexGuard<'_, DirtyStateInner> {
         self.state
             .lock()
-            .expect("dirty analysis state mutex should not be poisoned")
+            .expect("dirty state mutex should not be poisoned")
     }
 }
 
 #[derive(Debug, Default)]
-struct DirtyAnalysisState {
+struct DirtyStateInner {
     latest_by_path: HashMap<PathBuf, DirtyDocumentIdentity>,
 }
 
-impl DirtyAnalysisState {
+impl DirtyStateInner {
     fn sync_document(&mut self, path: &Path, snapshot: &DirtyDocumentSnapshotState) {
         match snapshot {
             DirtyDocumentSnapshotState::Dirty(snapshot) => {

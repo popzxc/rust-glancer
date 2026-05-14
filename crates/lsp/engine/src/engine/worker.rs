@@ -9,13 +9,12 @@ use rg_analysis::{ReferenceQuery, TypeHint};
 use rg_def_map::TargetRef;
 use rg_lsp_proto::AnalysisConfig;
 use rg_parse::TextSpan;
-use rg_project::{
-    CacheProbeProfile, DirtyFileChange, FileContext, Project, ProjectSnapshot, SavedFileChange,
-};
+use rg_project::{CacheProbeProfile, FileContext, Project, ProjectSnapshot, SavedFileChange};
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
 use crate::{
-    documents::{DirtyAnalysisHandle, DirtyDocumentIdentity, DirtyDocumentSnapshot},
+    dirty_state::{DirtyDocumentIdentity, DirtyOverlayCache, DirtyState},
+    documents::DirtyDocumentSnapshot,
     engine::{
         QueuedEngineCommand,
         command::{EngineCommand, EngineResponse},
@@ -28,15 +27,9 @@ use crate::{
 #[derive(Debug)]
 pub(super) struct EngineWorker {
     project: Option<Project>,
-    dirty_overlay: Option<CachedDirtyOverlay>,
-    dirty_analysis: DirtyAnalysisHandle,
+    dirty_overlay: DirtyOverlayCache,
+    dirty_state: DirtyState,
     memory_control: Arc<dyn MemoryControl>,
-}
-
-#[derive(Debug)]
-struct CachedDirtyOverlay {
-    identity: DirtyDocumentIdentity,
-    project: Project,
 }
 
 #[derive(Debug)]
@@ -67,25 +60,19 @@ impl QueryContext {
         }
     }
 
-    fn stale_dirty_identity(
-        &self,
-        dirty_analysis: &DirtyAnalysisHandle,
-    ) -> Option<&DirtyDocumentIdentity> {
+    fn stale_dirty_identity(&self, dirty_state: &DirtyState) -> Option<&DirtyDocumentIdentity> {
         self.dirty_identity
             .as_ref()
-            .filter(|identity| !dirty_analysis.is_current_identity(identity))
+            .filter(|identity| !dirty_state.is_current_identity(identity))
     }
 }
 
 impl EngineWorker {
-    pub(super) fn new(
-        memory_control: Arc<dyn MemoryControl>,
-        dirty_analysis: DirtyAnalysisHandle,
-    ) -> Self {
+    pub(super) fn new(memory_control: Arc<dyn MemoryControl>, dirty_state: DirtyState) -> Self {
         Self {
             project: None,
-            dirty_overlay: None,
-            dirty_analysis,
+            dirty_overlay: DirtyOverlayCache::new(Arc::clone(&memory_control)),
+            dirty_state,
             memory_control,
         }
     }
@@ -375,7 +362,7 @@ impl EngineWorker {
         Self::log_project_snapshot(snapshot, "initial index");
 
         self.project = Some(project);
-        self.dirty_overlay = None;
+        self.dirty_overlay.clear();
         tracing::info!(
             workspace_root = %workspace_root.display(),
             elapsed_ms = started.elapsed().as_millis(),
@@ -396,7 +383,7 @@ impl EngineWorker {
         project
             .reindex_workspace()
             .context("while attempting to manually reindex workspace")?;
-        self.dirty_overlay = None;
+        self.dirty_overlay.clear();
         Self::log_project_snapshot(project.snapshot(), "manual reindex");
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis(),
@@ -423,7 +410,7 @@ impl EngineWorker {
         let summary = project
             .apply_change(SavedFileChange::new(&path))
             .context("while attempting to apply saved file change")?;
-        self.dirty_overlay = None;
+        self.dirty_overlay.clear();
         tracing::info!(
             path = %path.display(),
             changed_files = summary.changed_files.len(),
@@ -960,9 +947,15 @@ impl EngineWorker {
         query: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         let project = match dirty {
-            Some(dirty) => self.dirty_overlay_project(dirty)?,
+            Some(dirty) => {
+                let base = self
+                    .project
+                    .as_ref()
+                    .context("LSP engine is not initialized")?;
+                self.dirty_overlay.project_for_dirty(base, dirty)?
+            }
             None => {
-                self.dirty_overlay = None;
+                self.dirty_overlay.clear();
                 self.project
                     .as_ref()
                     .context("LSP engine is not initialized")?
@@ -970,72 +963,6 @@ impl EngineWorker {
         };
 
         query(project.snapshot())
-    }
-
-    fn dirty_overlay_project(&mut self, dirty: &DirtyDocumentSnapshot) -> anyhow::Result<&Project> {
-        let identity = DirtyDocumentIdentity::from_snapshot(dirty);
-        let should_rebuild = match &self.dirty_overlay {
-            Some(cached) => cached.identity != identity,
-            None => true,
-        };
-
-        if should_rebuild {
-            let started = Instant::now();
-            let base = self
-                .project
-                .as_ref()
-                .context("LSP engine is not initialized")?;
-            let memory_before = MemoryReporter::log_checkpoint(
-                self.memory_control.as_ref(),
-                "dirty_overlay",
-                "before_rebuild",
-            );
-            let overlay = base
-                .dirty_overlay([DirtyFileChange::new(dirty.path(), dirty.text().to_string())])
-                .with_context(|| {
-                    format!(
-                        "while attempting to build dirty analysis overlay for {}",
-                        dirty.path().display()
-                    )
-                })?;
-            MemoryReporter::log_checkpoint_delta(
-                self.memory_control.as_ref(),
-                "dirty_overlay",
-                "after_rebuild",
-                memory_before,
-            );
-            // Dirty overlay rebuilds can temporarily materialize much more allocator memory than
-            // the retained overlay needs. Purge at this rebuild boundary without making every
-            // read-only query pay the same cost.
-            MemoryReporter::purge_and_report(self.memory_control.as_ref(), "after dirty overlay");
-            let changed_known_file = overlay.is_some();
-            let project = overlay.unwrap_or_else(|| base.clone());
-            tracing::debug!(
-                path = %dirty.path().display(),
-                version = ?dirty.version(),
-                text_len = dirty.text().len(),
-                dirty_overlay_cache_hit = false,
-                dirty_overlay_changed_known_file = changed_known_file,
-                dirty_overlay_build_ms = started.elapsed().as_millis(),
-                "dirty analysis overlay rebuilt"
-            );
-            self.dirty_overlay = Some(CachedDirtyOverlay { identity, project });
-        } else {
-            tracing::debug!(
-                path = %dirty.path().display(),
-                version = ?dirty.version(),
-                text_len = dirty.text().len(),
-                dirty_overlay_cache_hit = true,
-                dirty_overlay_build_ms = 0_u128,
-                "dirty analysis overlay cache hit"
-            );
-        }
-
-        Ok(&self
-            .dirty_overlay
-            .as_ref()
-            .expect("dirty overlay should be cached after successful build")
-            .project)
     }
 
     /// Runs a read-only request, responds immediately, then heals disposable cache failures.
@@ -1050,7 +977,7 @@ impl EngineWorker {
         // If a newer document version is already available, this queued dirty query can only
         // produce obsolete results. This is an internal optimization, not a replacement for LSP
         // request cancellation.
-        if let Some(dirty_identity) = context.stale_dirty_identity(&self.dirty_analysis) {
+        if let Some(dirty_identity) = context.stale_dirty_identity(&self.dirty_state) {
             tracing::debug!(
                 label = context.label,
                 path = %dirty_identity.path().display(),
@@ -1122,7 +1049,7 @@ impl EngineWorker {
 
         match project.recover_after_cache_load_failure() {
             Ok(()) => {
-                self.dirty_overlay = None;
+                self.dirty_overlay.clear();
                 let snapshot = project.snapshot();
                 Self::log_project_snapshot(snapshot, "after package cache recovery");
                 tracing::info!(
@@ -1214,7 +1141,7 @@ mod tests {
             panic!("dirty full-sync document should expose a snapshot");
         };
 
-        let mut worker = EngineWorker::new(Arc::new(()), DirtyAnalysisHandle::default());
+        let mut worker = EngineWorker::new(Arc::new(()), DirtyState::default());
         let (respond_to, response) = oneshot::channel();
         let context = QueryContext::document("hover", Duration::ZERO, Some(&snapshot));
 

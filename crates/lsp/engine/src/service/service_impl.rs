@@ -48,7 +48,7 @@ impl EngineService for Service {
         let mut documents = self.engine.documents.lock().await;
         documents.did_open(path.clone(), version, &text);
         let dirty = documents.dirty_snapshot(&path);
-        self.engine.sync_dirty_analysis_state(&path, &dirty);
+        self.engine.sync_dirty_state(&path, &dirty);
         drop(documents);
 
         tracing::debug!(path = %path.display(), "opened clean document snapshot");
@@ -75,7 +75,7 @@ impl EngineService for Service {
         let change = documents.did_change(path.clone(), version, full_text.as_deref());
         let freshness = documents.freshness(&path);
         let dirty = documents.dirty_snapshot(&path);
-        self.engine.sync_dirty_analysis_state(&path, &dirty);
+        self.engine.sync_dirty_state(&path, &dirty);
         drop(documents);
 
         tracing::debug!(
@@ -116,7 +116,7 @@ impl EngineService for Service {
         documents.did_save(path.clone(), text.as_deref());
         let freshness = documents.freshness(&path);
         let dirty = documents.dirty_snapshot(&path);
-        self.engine.sync_dirty_analysis_state(&path, &dirty);
+        self.engine.sync_dirty_state(&path, &dirty);
         drop(documents);
 
         tracing::debug!(path = %path.display(), "marked document clean before save reindex");
@@ -160,7 +160,7 @@ impl EngineService for Service {
         let freshness = documents.freshness(&path);
         documents.did_close(&path);
         let dirty = documents.dirty_snapshot(&path);
-        self.engine.sync_dirty_analysis_state(&path, &dirty);
+        self.engine.sync_dirty_state(&path, &dirty);
         drop(documents);
 
         tracing::debug!(path = %path.display(), "closed document");

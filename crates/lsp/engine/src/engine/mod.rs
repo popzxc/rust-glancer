@@ -20,7 +20,8 @@ pub(crate) use self::command::EngineCommand;
 use self::debounce::Debouncer;
 use self::{command::EngineResponse, worker::EngineWorker};
 use crate::{
-    documents::{DirtyAnalysisHandle, DirtyDocumentSnapshotState, DocumentStore},
+    dirty_state::DirtyState,
+    documents::{DirtyDocumentSnapshotState, DocumentStore},
     memory::MemoryControl,
     service::ServiceNotificationsSink,
 };
@@ -37,7 +38,7 @@ pub(crate) struct EngineHandle {
     pub(crate) documents: Arc<Mutex<DocumentStore>>,
     inlay_hint_debouncer: Debouncer,
     notifications: ServiceNotificationsSink,
-    dirty_analysis: DirtyAnalysisHandle,
+    dirty_state: DirtyState,
 }
 
 /// Separates time spent waiting behind older commands from time spent executing this command.
@@ -64,12 +65,12 @@ impl EngineHandle {
         documents: Arc<Mutex<DocumentStore>>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel();
-        let dirty_analysis = DirtyAnalysisHandle::default();
+        let dirty_state = DirtyState::default();
         let inlay_hint_debouncer = Debouncer::new(INLAY_HINT_REFRESH_DEBOUNCE);
 
         thread::spawn({
-            let dirty_analysis = dirty_analysis.clone();
-            move || EngineWorker::new(memory_control, dirty_analysis).run(receiver)
+            let dirty_state = dirty_state.clone();
+            move || EngineWorker::new(memory_control, dirty_state).run(receiver)
         });
 
         Self {
@@ -77,7 +78,7 @@ impl EngineHandle {
             documents,
             inlay_hint_debouncer,
             notifications,
-            dirty_analysis,
+            dirty_state,
         }
     }
 
@@ -136,12 +137,8 @@ impl EngineHandle {
         dirty
     }
 
-    pub(crate) fn sync_dirty_analysis_state(
-        &self,
-        path: &Path,
-        dirty: &DirtyDocumentSnapshotState,
-    ) {
-        self.dirty_analysis.sync_document(path, dirty);
+    pub(crate) fn sync_dirty_state(&self, path: &Path, dirty: &DirtyDocumentSnapshotState) {
+        self.dirty_state.sync_document(path, dirty);
     }
 
     pub(crate) async fn mark_dirty_after_failed_save(&self, path: PathBuf, error: anyhow::Error) {
@@ -149,7 +146,7 @@ impl EngineHandle {
         documents.mark_dirty_after_failed_save(path.clone());
         let freshness = documents.freshness(&path);
         let dirty = documents.dirty_snapshot(&path);
-        self.sync_dirty_analysis_state(&path, &dirty);
+        self.sync_dirty_state(&path, &dirty);
         drop(documents);
 
         tracing::trace!(
