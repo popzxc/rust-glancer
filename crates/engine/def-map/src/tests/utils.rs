@@ -580,8 +580,8 @@ impl<'a> TargetDefMapSnapshot<'a> {
 
                 for import_id in &module.unresolved_imports {
                     let import = def_map
-                        .imports
-                        .get(*import_id)
+                        .imports()
+                        .get(import_id.0)
                         .expect("unresolved import id should exist while dumping");
                     dump.push_str(&format!("- {}\n", self.render_unresolved_import(import)));
                 }
@@ -615,7 +615,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
     fn sorted_modules(&self) -> Vec<(String, ModuleId)> {
         let mut modules = self
             .def_map()
-            .modules
+            .modules()
             .iter()
             .enumerate()
             .map(|(idx, _)| {
@@ -776,8 +776,7 @@ impl ResolvedDefOrigin<'_> {
                     .project
                     .resident_def_map(local_def_ref.target)
                     .expect("target def map should exist while dumping")
-                    .local_defs
-                    .get(local_def_ref.local_def)
+                    .local_def(local_def_ref.local_def)
                     .expect("local def id should exist while dumping");
                 let module_path = self.render_module_path(crate::ModuleRef {
                     target: local_def_ref.target,

@@ -18,7 +18,6 @@ rg_memsize::impl_memory_size_leaf!(
 
 rg_memsize::impl_memory_size_children! {
     Package => name, target_names, targets;
-    DefMap => root_module, extern_prelude, prelude, modules, local_defs, local_impls, imports;
     ModuleData => name, name_span, docs, parent, children, local_defs, impls, imports,
         unresolved_imports, scope, origin;
     LocalDefData => module, name, kind, visibility, source, file_id, name_span, span;
@@ -46,6 +45,32 @@ impl MemorySize for DefMapDb {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         recorder.scope("packages", |recorder| {
             self.record_packages_memory_children(recorder);
+        });
+    }
+}
+
+impl MemorySize for DefMap {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        recorder.scope("root_module", |recorder| {
+            self.root_module().record_memory_children(recorder);
+        });
+        recorder.scope("extern_prelude", |recorder| {
+            self.extern_prelude().record_memory_children(recorder);
+        });
+        recorder.scope("prelude", |recorder| {
+            self.prelude().record_memory_children(recorder);
+        });
+        recorder.scope("modules", |recorder| {
+            self.modules_storage().record_memory_children(recorder);
+        });
+        recorder.scope("local_defs", |recorder| {
+            self.local_defs_storage().record_memory_children(recorder);
+        });
+        recorder.scope("local_impls", |recorder| {
+            self.local_impls_storage().record_memory_children(recorder);
+        });
+        recorder.scope("imports", |recorder| {
+            self.imports_storage().record_memory_children(recorder);
         });
     }
 }
