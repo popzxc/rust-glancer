@@ -39,12 +39,11 @@ impl ProjectProxy {
             .saved
             .as_mut()
             .context("LSP engine is not initialized")?;
-        let result = mutation(saved)?;
 
-        // Dirty overlays are derived from a concrete saved-project state. A successful saved
-        // mutation makes the previous overlay obsolete; failed mutations leave both states intact.
+        // Any saved-project mutation attempt may leave the project in a different state even if it
+        // returns an error, so discard overlays derived from the previous saved state up front.
         self.dirty_overlay.clear();
-        Ok(result)
+        mutation(saved)
     }
 
     pub(super) fn saved_snapshot(&self) -> anyhow::Result<ProjectSnapshot<'_>> {
