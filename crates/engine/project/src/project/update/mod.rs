@@ -24,8 +24,12 @@ pub(super) fn apply_change(
     project: &mut Project,
     change: SavedFileChange,
 ) -> anyhow::Result<AnalysisChangeSummary> {
-    let graph_changes =
-        WorkspaceGraphChanges::check(project.state.workspace(), project.state.parse_db(), &change);
+    let graph_changes = WorkspaceGraphChanges::check(
+        project.state.workspace(),
+        project.state.parse_db(),
+        &project.state.cargo_metadata_config,
+        &change,
+    );
 
     match graph_changes {
         WorkspaceGraphChanges::Changed => {
