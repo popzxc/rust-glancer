@@ -9,6 +9,11 @@
 //! `WorkspaceMetadata` is built. That lets this module express graph checks as direct path
 //! comparisons instead of carrying defensive path-normalization fallbacks.
 
+use std::{
+    ffi::OsStr,
+    path::{Component, Path},
+};
+
 use rg_parse::ParseDb;
 use rg_workspace::WorkspaceMetadata;
 
@@ -35,15 +40,11 @@ impl WorkspaceGraphChanges {
             return Self::Changed;
         }
 
-        let Some(path_str) = path.to_str() else {
-            return Self::Unchanged;
-        };
-
         // If any of `Cargo.toml` files changed, rebuild.
         // TODO: Is that needed/sufficient? If new dep is added, it might not be in `Cargo` cache
         // though probably `cargo check` will update `Cargo.lock` and it will trigger the rebuild
         // right after if that's the case. Low priority, to be tested later.
-        if path_str.ends_with("Cargo.toml")
+        if path.file_name() == Some(OsStr::new("Cargo.toml"))
             && (path == workspace_manifest
                 || workspace
                     .workspace_packages()
@@ -52,7 +53,7 @@ impl WorkspaceGraphChanges {
             return Self::Changed;
         }
 
-        if !path_str.ends_with(".rs") || parse.contains_file_path(path) {
+        if path.extension() != Some(OsStr::new("rs")) || parse.contains_file_path(path) {
             return Self::Unchanged;
         }
 
@@ -62,24 +63,20 @@ impl WorkspaceGraphChanges {
         // if the saved path merely looks like it could introduce a target.
         for package in workspace.workspace_packages() {
             let package_root = package.root_dir();
-            if path == package_root.join("src/main.rs") {
+            if path == package_root.join("src").join("main.rs") {
                 return Self::Changed;
             }
 
-            let Some(package_root) = package_root.to_str() else {
-                continue;
-            };
             let autodiscovery_roots = [
-                format!("{package_root}/src/bin/"),
-                format!("{package_root}/examples/"),
-                format!("{package_root}/tests/"),
-                format!("{package_root}/benches/"),
+                package_root.join("src").join("bin"),
+                package_root.join("examples"),
+                package_root.join("tests"),
+                package_root.join("benches"),
             ];
 
             if autodiscovery_roots.iter().any(|root| {
-                path_str
-                    .strip_prefix(root)
-                    .is_some_and(is_auto_discovered_target_file)
+                path.strip_prefix(root)
+                    .is_ok_and(is_auto_discovered_target_file)
             }) {
                 return Self::Changed;
             }
@@ -89,14 +86,17 @@ impl WorkspaceGraphChanges {
     }
 }
 
-fn is_auto_discovered_target_file(path_in_target_dir: &str) -> bool {
-    if path_in_target_dir.ends_with(".rs") && !path_in_target_dir.contains('/') {
-        return true;
-    }
-
-    let Some((target_dir, target_root)) = path_in_target_dir.split_once('/') else {
+fn is_auto_discovered_target_file(path_in_target_dir: &Path) -> bool {
+    let mut components = path_in_target_dir.components();
+    let Some(Component::Normal(target_name)) = components.next() else {
         return false;
     };
 
-    !target_dir.is_empty() && target_root == "main.rs"
+    let Some(target_root) = components.next() else {
+        return Path::new(target_name).extension() == Some(OsStr::new("rs"));
+    };
+
+    components.next().is_none()
+        && !target_name.is_empty()
+        && target_root.as_os_str() == OsStr::new("main.rs")
 }
