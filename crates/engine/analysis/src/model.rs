@@ -4,7 +4,7 @@ use rg_body_ir::{
 };
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, TypePathContext};
+use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, TraitApplicability, TypePathContext};
 
 pub(super) struct SymbolCandidate {
     pub(super) symbol: SymbolAt,
@@ -377,17 +377,71 @@ pub struct CompletionEdit {
 pub enum CompletionTarget {
     Field(ResolvedFieldRef),
     Function(ResolvedFunctionRef),
+    Def(DefId),
 }
 
 /// Completion source category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 pub enum CompletionKind {
+    #[display("const")]
+    Const,
+    #[display("enum")]
+    Enum,
     #[display("field")]
     Field,
+    #[display("fn")]
+    Function,
     #[display("inherent_method")]
     InherentMethod,
+    #[display("macro")]
+    Macro,
+    #[display("module")]
+    Module,
+    #[display("static")]
+    Static,
+    #[display("struct")]
+    Struct,
+    #[display("trait")]
+    Trait,
     #[display("trait_method")]
     TraitMethod,
+    #[display("type_alias")]
+    TypeAlias,
+    #[display("union")]
+    Union,
+}
+
+impl CompletionKind {
+    /// Coarse bucket used as one component of LSP `sortText`.
+    ///
+    /// This is not the enum's full ordering: some variants intentionally share a
+    /// bucket, and completion ordering also includes label, applicability, and
+    /// target identity. Derived `Ord` remains the ordinary total enum order.
+    pub(super) fn sort_text_rank(self) -> u8 {
+        match self {
+            Self::Field => 0,
+            Self::InherentMethod => 1,
+            Self::TraitMethod => 2,
+            Self::Module => 3,
+            Self::Struct | Self::Enum | Self::Trait | Self::TypeAlias | Self::Union => 4,
+            Self::Const | Self::Static => 5,
+            Self::Function | Self::Macro => 6,
+        }
+    }
+
+    pub(super) fn from_local_def_kind(kind: LocalDefKind) -> Self {
+        match kind {
+            LocalDefKind::Const => Self::Const,
+            LocalDefKind::Enum => Self::Enum,
+            LocalDefKind::Function => Self::Function,
+            LocalDefKind::MacroDefinition => Self::Macro,
+            LocalDefKind::Static => Self::Static,
+            LocalDefKind::Struct => Self::Struct,
+            LocalDefKind::Trait => Self::Trait,
+            LocalDefKind::TypeAlias => Self::TypeAlias,
+            LocalDefKind::Union => Self::Union,
+        }
+    }
 }
 
 /// Confidence attached to a completion candidate.
@@ -397,4 +451,27 @@ pub enum CompletionApplicability {
     Known,
     #[display("maybe")]
     Maybe,
+}
+
+impl CompletionApplicability {
+    /// Coarse bucket used as one component of LSP `sortText`.
+    ///
+    /// This is not the completion item's full ordering: applicability is only
+    /// one part of the final sort key. Derived `Ord` remains the ordinary total
+    /// enum order.
+    pub(super) fn sort_text_rank(self) -> u8 {
+        match self {
+            Self::Known => 0,
+            Self::Maybe => 1,
+        }
+    }
+}
+
+impl From<TraitApplicability> for CompletionApplicability {
+    fn from(applicability: TraitApplicability) -> Self {
+        match applicability {
+            TraitApplicability::Yes => Self::Known,
+            TraitApplicability::Maybe | TraitApplicability::No => Self::Maybe,
+        }
+    }
 }

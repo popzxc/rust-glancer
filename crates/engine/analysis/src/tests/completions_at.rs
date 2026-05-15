@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{AnalysisQuery, check_analysis_queries, check_analysis_queries_with_sysroot};
 
 #[test]
 fn completes_inherent_and_trait_methods_at_dot() {
@@ -85,6 +85,305 @@ pub fn use_it(user: User) {
             - inherent_method id
             - inherent_method touch
             - trait_method trait_name
+        "#]],
+    );
+}
+
+#[test]
+fn completes_qualified_module_paths_in_body_contexts() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub mod api_nested {}
+    mod private_nested {}
+
+    pub struct ApiUser;
+    pub enum ApiState {}
+    pub trait ApiNamed {}
+    pub type ApiAlias = ApiUser;
+
+    pub const VERSION: u8 = 1;
+    pub static FLAG: bool = true;
+    pub fn build_user() -> ApiUser {
+        ApiUser
+    }
+}
+
+pub fn use_it() {
+    let _: crate::api::Ap$type_path$;
+    let _ = crate::api::bu$value_path$();
+}
+"#,
+        &[
+            AnalysisQuery::complete("type path completions", "type_path"),
+            AnalysisQuery::complete("value path completions", "value_path"),
+        ],
+        // Value-position paths include type-namespace entries too because modules and nominal
+        // types can be intermediate prefixes. Prefix filtering is left to the LSP client.
+        expect![[r#"
+            type path completions
+            - type_alias ApiAlias
+            - trait ApiNamed
+            - enum ApiState
+            - struct ApiUser
+            - module api_nested
+
+            value path completions
+            - type_alias ApiAlias
+            - trait ApiNamed
+            - enum ApiState
+            - struct ApiUser
+            - static FLAG
+            - const VERSION
+            - module api_nested
+            - fn build_user
+        "#]],
+    );
+}
+
+#[test]
+fn completes_bare_qualified_paths_in_value_contexts() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_bare_value_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub fn build_user() {}
+}
+
+pub fn make_root() {}
+
+pub fn use_it() {
+    let _foo = crate::$0
+}
+"#,
+        &[AnalysisQuery::complete("bare value path completions", "0")],
+        expect![[r#"
+            bare value path completions
+            - module api
+            - fn make_root
+            - fn use_it
+        "#]],
+    );
+}
+
+#[test]
+fn completes_bare_qualified_paths_in_type_contexts_without_semicolon() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_bare_type_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub struct User;
+}
+
+pub struct RootType;
+
+pub fn use_it() {
+    let _foo: crate::$0
+}
+"#,
+        &[AnalysisQuery::complete("bare type path completions", "0")],
+        expect![[r#"
+            bare type path completions
+            - struct RootType
+            - module api
+        "#]],
+    );
+}
+
+#[test]
+fn completes_qualified_paths_in_use_items() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_use_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+use crate::api::Ap$use_path$;
+
+pub mod api {
+    pub mod api_nested {}
+    mod private_nested {}
+
+    pub struct ApiUser;
+    pub enum ApiState {}
+    pub trait ApiNamed {}
+    pub type ApiAlias = ApiUser;
+
+    pub const VERSION: u8 = 1;
+    pub static FLAG: bool = true;
+    pub fn build_user() -> ApiUser {
+        ApiUser
+    }
+}
+"#,
+        &[AnalysisQuery::complete("use path completions", "use_path")],
+        expect![[r#"
+            use path completions
+            - type_alias ApiAlias
+            - trait ApiNamed
+            - enum ApiState
+            - struct ApiUser
+            - static FLAG
+            - const VERSION
+            - module api_nested
+            - fn build_user
+        "#]],
+    );
+}
+
+#[test]
+fn completes_qualified_paths_at_bare_use_path_coloncolon() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_bare_use_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+use crate::api_notify::$0;
+
+pub mod api_notify {
+    pub struct Notification;
+}
+"#,
+        &[AnalysisQuery::complete("bare use path completions", "0")],
+        expect![[r#"
+            bare use path completions
+            - struct Notification
+        "#]],
+    );
+}
+
+#[test]
+fn completes_qualified_paths_at_incomplete_bare_use_path_coloncolon() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_incomplete_bare_use_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api_notify {
+    pub struct Notification;
+}
+
+use crate::api_notify::$0
+"#,
+        &[AnalysisQuery::complete(
+            "incomplete bare use path completions",
+            "0",
+        )],
+        expect![[r#"
+            incomplete bare use path completions
+            - struct Notification
+        "#]],
+    );
+}
+
+#[test]
+fn completes_sysroot_paths_at_incomplete_bare_use_path_coloncolon() {
+    check_analysis_queries_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_sysroot_bare_use_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+use std::env;
+use std::ffi::OsString;
+
+use std::collections::$0
+
+#[derive(Debug)]
+enum CliInvocation {
+    Capture(Vec<String>),
+}
+
+const DEFAULT_BASE_BRANCH: &str = "main";
+
+pub fn run() {}
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub mod collections {
+    pub struct HashMap;
+    pub struct HashSet;
+}
+
+//- /sysroot/library/std/src/lib.rs
+pub use alloc::collections;
+"#,
+        &[
+            AnalysisQuery::complete("incomplete sysroot use path completions", "0")
+                .in_lib("analysis_sysroot_bare_use_path_completions"),
+        ],
+        expect![[r#"
+            incomplete sysroot use path completions
+            - struct HashMap
+            - struct HashSet
+        "#]],
+    );
+}
+
+#[test]
+fn completes_qualified_paths_with_replacement_range() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_path_completion_metadata"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub struct User;
+}
+
+pub fn use_it() {
+    let _: crate::api::Us$0;
+}
+"#,
+        &[AnalysisQuery::complete_verbose(
+            "path metadata completions",
+            "0",
+        )],
+        expect![[r#"
+            path metadata completions
+            - struct User
+              detail: struct User
+              sort: User|04|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) }))
+              replace: 79..81
         "#]],
     );
 }

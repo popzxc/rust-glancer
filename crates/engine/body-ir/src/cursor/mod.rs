@@ -15,7 +15,9 @@ use crate::{
     ScopeId,
 };
 
-use self::scan::{BodyCursorScanner, BodySourceScanner, DotCompletionSiteScanner};
+use self::scan::{
+    BodyCursorScanner, BodySourceScanner, DotCompletionSiteScanner, PathCompletionSiteScanner,
+};
 
 /// Source site selected for a dot-completion query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +28,25 @@ pub struct DotCompletionSite {
     ///
     /// For a bare dot, this is an empty span at the completion offset.
     pub member_prefix_span: Span,
+}
+
+/// Namespace expected by a path-completion site inside a function body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathCompletionNamespace {
+    Types,
+    Values,
+}
+
+/// Source site selected for a qualified-path completion query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathCompletionSite {
+    pub body: BodyRef,
+    pub scope: ScopeId,
+    /// Path before the segment being completed.
+    pub qualifier: Path,
+    /// Segment prefix already typed after `::`.
+    pub member_prefix_span: Span,
+    pub namespace: PathCompletionNamespace,
 }
 
 /// One body source node that can participate in cursor queries.
@@ -121,6 +142,16 @@ impl BodyIrReadTxn<'_> {
         offset: u32,
     ) -> Result<Option<DotCompletionSite>, PackageStoreError> {
         DotCompletionSiteScanner::new(self, target, file_id, offset).site_at_dot()
+    }
+
+    /// Returns the source site for a qualified-path completion query inside a body.
+    pub fn path_completion_site(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> Result<Option<PathCompletionSite>, PackageStoreError> {
+        PathCompletionSiteScanner::new(self, target, file_id, offset).site_at_path()
     }
 
     /// Returns the resolved type for the receiver expression in a dot-completion site.

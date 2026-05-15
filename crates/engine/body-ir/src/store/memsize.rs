@@ -39,7 +39,7 @@ rg_memsize::impl_memory_size_children! {
     ScopeData => parent, local_items, local_impls, bindings;
     ExprData => source, scope, visible_bindings, kind, resolution, ty;
     MatchArmData => pat, scope, expr;
-    BodyPath => path, segment_spans;
+    BodyPath => source_span, path, segment_spans;
     BodyLocalNominalTy => item, args;
     BodyNominalTy => def, args;
     BodyItemData => source, name_source, scope, kind, name, docs, generics, fields;

@@ -24,8 +24,17 @@ pub(crate) fn completion_item(item: CompletionItem, line_index: &LineIndex) -> L
 
 fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
     match kind {
+        CompletionKind::Const => CompletionItemKind::CONSTANT,
+        CompletionKind::Enum => CompletionItemKind::ENUM,
         CompletionKind::Field => CompletionItemKind::FIELD,
+        CompletionKind::Function => CompletionItemKind::FUNCTION,
         CompletionKind::InherentMethod | CompletionKind::TraitMethod => CompletionItemKind::METHOD,
+        CompletionKind::Macro => CompletionItemKind::FUNCTION,
+        CompletionKind::Module => CompletionItemKind::MODULE,
+        CompletionKind::Static => CompletionItemKind::VARIABLE,
+        CompletionKind::Struct | CompletionKind::Union => CompletionItemKind::STRUCT,
+        CompletionKind::Trait => CompletionItemKind::INTERFACE,
+        CompletionKind::TypeAlias => CompletionItemKind::CLASS,
     }
 }
 

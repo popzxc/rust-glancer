@@ -762,6 +762,7 @@ impl<'a> FunctionBodyLowering<'a> {
                         .unwrap_or(source.span);
                     PatKind::Path {
                         path: Some(BodyPath::new(
+                            name_span,
                             Path {
                                 absolute: false,
                                 segments: vec![PathSegment::Name(self.interner.intern(&name_text))],
@@ -1256,6 +1257,7 @@ fn is_capitalized_bare_pat(name: &str, pat: &ast::IdentPat, subpat: Option<PatId
 }
 
 fn body_path_from_ast(path: ast::Path, interner: &mut NameInterner) -> BodyPath {
+    let source_span = Span::from_text_range(path.syntax().text_range());
     let absolute = path
         .first_segment()
         .is_some_and(|segment| segment.coloncolon_token().is_some());
@@ -1263,7 +1265,7 @@ fn body_path_from_ast(path: ast::Path, interner: &mut NameInterner) -> BodyPath 
     let mut segment_spans = Vec::new();
     collect_path_segments(&path, interner, &mut segments, &mut segment_spans);
 
-    BodyPath::new(Path { absolute, segments }, segment_spans)
+    BodyPath::new(source_span, Path { absolute, segments }, segment_spans)
 }
 
 fn collect_path_segments(

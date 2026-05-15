@@ -1,12 +1,9 @@
-//! Completion assembly for source positions.
+//! Dot-completion assembly for member access sites.
 
 use rg_body_ir::{
-    BodyIrReadTxn, BodyLocalNominalTy, BodyNominalTy, DotCompletionSite, ResolvedFieldRef,
-    ResolvedFunctionRef,
+    BodyLocalNominalTy, BodyNominalTy, DotCompletionSite, ResolvedFieldRef, ResolvedFunctionRef,
 };
-use rg_def_map::TargetRef;
-use rg_parse::FileId;
-use rg_semantic_ir::{Documentation, TraitApplicability};
+use rg_semantic_ir::Documentation;
 
 use crate::{
     Analysis,
@@ -16,31 +13,17 @@ use crate::{
     },
 };
 
-pub(crate) struct CompletionResolver<'a, 'db>(&'a Analysis<'db>);
+use super::{CompletionMetadata, completion_sort_text};
 
-impl<'a, 'db> CompletionResolver<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+pub(super) struct DotCompletionResolver<'a, 'db>(&'a Analysis<'db>);
+
+impl<'a, 'db> DotCompletionResolver<'a, 'db> {
+    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
-    pub(crate) fn completions_at(
-        &self,
-        target: TargetRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Vec<CompletionItem>> {
-        let Some(context) = CompletionContext::at(&self.0.body_ir, target, file_id, offset)? else {
-            return Ok(Vec::new());
-        };
-
-        match context {
-            CompletionContext::DotCompletionSite(site) => {
-                self.dot_completion_site_completions(site)
-            }
-        }
-    }
-
-    fn dot_completion_site_completions(
+    /// Collects member completions for a dot site like `user.na$0`.
+    pub(super) fn completions(
         &self,
         site: DotCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
@@ -63,6 +46,8 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         Ok(completions)
     }
 
+    /// Adds field and method candidates for a resolved receiver type, such as
+    /// `User` in `user.$0`.
     fn push_type_completions(
         &self,
         ty: &BodyNominalTy,
@@ -114,14 +99,16 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         Ok(())
     }
 
+    /// Adds member candidates for a body-local receiver type, such as a struct
+    /// declared inside the same function as `local.$0`.
     fn push_local_type_completions(
         &self,
         ty: &BodyLocalNominalTy,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        // Body-local structs are visible only through Body IR, and currently only support
-        // inherent methods from body-local impls.
+        // Body-local structs are visible only through Body IR, so their member
+        // data comes from body-local lowering rather than Semantic IR.
         for field in self.0.body_ir.fields_for_local_type(ty.item)? {
             self.push_field_completion(ResolvedFieldRef::BodyLocal(field), edit, completions)?;
         }
@@ -171,7 +158,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
             applicability: CompletionApplicability::Known,
             detail: metadata.detail,
             documentation: metadata.documentation,
-            sort_text: self.completion_sort_text(
+            sort_text: completion_sort_text(
                 &metadata.label,
                 CompletionKind::Field,
                 CompletionApplicability::Known,
@@ -198,7 +185,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
                 Ok(Some(CompletionMetadata {
                     label,
                     detail: renderer.field_signature(data),
-                    documentation: docs_text(data.field.docs.as_ref()),
+                    documentation: data.field.docs.as_ref().map(Documentation::text),
                 }))
             }
             ResolvedFieldRef::BodyLocal(field) => {
@@ -211,7 +198,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
                 Ok(Some(CompletionMetadata {
                     label,
                     detail: renderer.local_field_signature(data),
-                    documentation: docs_text(data.field.docs.as_ref()),
+                    documentation: data.field.docs.as_ref().map(Documentation::text),
                 }))
             }
         }
@@ -242,7 +229,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
             applicability,
             detail: metadata.detail,
             documentation: metadata.documentation,
-            sort_text: self.completion_sort_text(
+            sort_text: completion_sort_text(
                 &metadata.label,
                 kind,
                 applicability,
@@ -269,7 +256,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
                 Ok(Some(CompletionMetadata {
                     label: data.name.to_string(),
                     detail: Some(renderer.function_signature(data)),
-                    documentation: docs_text(data.docs.as_ref()),
+                    documentation: data.docs.as_ref().map(Documentation::text),
                 }))
             }
             ResolvedFunctionRef::BodyLocal(function) => {
@@ -282,74 +269,9 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
                 Ok(Some(CompletionMetadata {
                     label: data.name.to_string(),
                     detail: Some(renderer.local_function_signature(data)),
-                    documentation: docs_text(data.docs.as_ref()),
+                    documentation: data.docs.as_ref().map(Documentation::text),
                 }))
             }
-        }
-    }
-
-    fn completion_sort_text(
-        &self,
-        label: &str,
-        kind: CompletionKind,
-        applicability: CompletionApplicability,
-        target: CompletionTarget,
-    ) -> String {
-        format!(
-            "{label}|{:02}|{:02}|{target:?}",
-            Self::completion_kind_rank(kind),
-            Self::completion_applicability_rank(applicability),
-        )
-    }
-
-    fn completion_kind_rank(kind: CompletionKind) -> u8 {
-        match kind {
-            CompletionKind::Field => 0,
-            CompletionKind::InherentMethod => 1,
-            CompletionKind::TraitMethod => 2,
-        }
-    }
-
-    fn completion_applicability_rank(applicability: CompletionApplicability) -> u8 {
-        match applicability {
-            CompletionApplicability::Known => 0,
-            CompletionApplicability::Maybe => 1,
-        }
-    }
-}
-
-struct CompletionMetadata {
-    label: String,
-    detail: Option<String>,
-    documentation: Option<String>,
-}
-
-fn docs_text(docs: Option<&Documentation>) -> Option<String> {
-    docs.map(|docs| docs.as_str().to_string())
-}
-
-enum CompletionContext {
-    DotCompletionSite(DotCompletionSite),
-}
-
-impl CompletionContext {
-    fn at(
-        body_ir: &BodyIrReadTxn<'_>,
-        target: TargetRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Option<Self>> {
-        Ok(body_ir
-            .dot_completion_site(target, file_id, offset)?
-            .map(Self::DotCompletionSite))
-    }
-}
-
-impl From<TraitApplicability> for CompletionApplicability {
-    fn from(applicability: TraitApplicability) -> Self {
-        match applicability {
-            TraitApplicability::Yes => Self::Known,
-            TraitApplicability::Maybe | TraitApplicability::No => Self::Maybe,
         }
     }
 }
