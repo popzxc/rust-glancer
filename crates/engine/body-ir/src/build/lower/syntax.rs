@@ -17,7 +17,8 @@ impl LiteralKind {
     pub(super) fn from_ast(literal: &ast::Literal) -> Self {
         match literal.kind() {
             ast::LiteralKind::Bool(_) => Self::Bool,
-            ast::LiteralKind::Char(_) | ast::LiteralKind::Byte(_) => Self::Char,
+            ast::LiteralKind::Char(_) => Self::Char,
+            ast::LiteralKind::Byte(_) => Self::Int,
             ast::LiteralKind::FloatNumber(_) => Self::Float,
             ast::LiteralKind::IntNumber(_) => Self::Int,
             ast::LiteralKind::String(_)
@@ -147,7 +148,7 @@ mod tests {
         let cases = [
             ("true", LiteralKind::Bool, "bool literal"),
             ("'x'", LiteralKind::Char, "char literal"),
-            ("b'x'", LiteralKind::Char, "byte literal"),
+            ("b'x'", LiteralKind::Int, "byte literal"),
             ("42", LiteralKind::Int, "integer literal"),
             ("1.5", LiteralKind::Float, "decimal float literal"),
             ("1e10", LiteralKind::Float, "exponent float literal"),
