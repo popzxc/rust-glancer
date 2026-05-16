@@ -327,7 +327,7 @@ pub struct Dirty;
 
 pub fn use_it() {
     le$statement$
-    let _value = ma$expression$;
+    let _value = ("https://example.test", ma$expression$);
     let _bare = $bare_expression$;
 }
 "#,

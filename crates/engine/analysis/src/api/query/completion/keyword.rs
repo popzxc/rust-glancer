@@ -156,32 +156,20 @@ impl<'source> KeywordCompletionSite<'source> {
 
     /// Provides a cheap guard against suggesting keywords inside trivia and strings.
     fn inside_comment_or_string(source: &str, cursor: usize) -> bool {
-        let line_start = source[..cursor].rfind('\n').map(|idx| idx + 1).unwrap_or(0);
-        let line_before_cursor = &source[line_start..cursor];
-        if line_before_cursor.contains("//") {
-            return true;
+        let mut state = TextScanState::Code;
+        let mut chars = source[..cursor].char_indices().peekable();
+        while let Some((_, ch)) = chars.next() {
+            if state.advance(ch, chars.peek().map(|(_, next)| *next)) {
+                chars.next();
+            }
         }
 
-        let block_comment_open = source[..cursor].rfind("/*");
-        let block_comment_close = source[..cursor].rfind("*/");
-        if block_comment_open > block_comment_close {
-            return true;
-        }
-
-        line_before_cursor
-            .chars()
-            .fold((false, false), |(inside, escaped), ch| {
-                if escaped {
-                    (inside, false)
-                } else if ch == '\\' {
-                    (inside, inside)
-                } else if ch == '"' {
-                    (!inside, false)
-                } else {
-                    (inside, false)
-                }
-            })
-            .0
+        matches!(
+            state,
+            TextScanState::LineComment
+                | TextScanState::BlockComment { .. }
+                | TextScanState::String { .. }
+        )
     }
 
     fn looks_like_use_path(source: &str, prefix_start: usize) -> bool {
@@ -334,8 +322,8 @@ impl<'a> BraceScanner<'a> {
 enum TextScanState {
     Code,
     LineComment,
-    BlockComment,
-    String,
+    BlockComment { depth: usize },
+    String { escaped: bool },
 }
 
 impl TextScanState {
@@ -347,22 +335,38 @@ impl TextScanState {
                 true
             }
             (Self::Code, '/', Some('*')) => {
-                *self = Self::BlockComment;
+                *self = Self::BlockComment { depth: 1 };
                 true
             }
             (Self::Code, '"', _) => {
-                *self = Self::String;
+                *self = Self::String { escaped: false };
                 false
             }
             (Self::LineComment, '\n', _) => {
                 *self = Self::Code;
                 false
             }
-            (Self::BlockComment, '*', Some('/')) => {
-                *self = Self::Code;
+            (Self::BlockComment { depth }, '/', Some('*')) => {
+                *self = Self::BlockComment { depth: depth + 1 };
                 true
             }
-            (Self::String, '"', _) => {
+            (Self::BlockComment { depth }, '*', Some('/')) => {
+                if depth == 1 {
+                    *self = Self::Code;
+                } else {
+                    *self = Self::BlockComment { depth: depth - 1 };
+                }
+                true
+            }
+            (Self::String { escaped: true }, _, _) => {
+                *self = Self::String { escaped: false };
+                false
+            }
+            (Self::String { escaped: false }, '\\', _) => {
+                *self = Self::String { escaped: true };
+                false
+            }
+            (Self::String { escaped: false }, '"', _) => {
                 *self = Self::Code;
                 false
             }
