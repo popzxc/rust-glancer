@@ -17,6 +17,7 @@ mod function;
 mod keyword;
 mod path;
 mod record;
+mod syntax;
 mod unqualified;
 
 use rg_body_ir::UnqualifiedCompletionNamespace;
@@ -31,7 +32,7 @@ use crate::{
 use self::{
     context::CompletionContext, dot::DotCompletionResolver, keyword::KeywordCompletionResolver,
     path::PathCompletionResolver, record::RecordFieldCompletionResolver,
-    unqualified::UnqualifiedCompletionResolver,
+    syntax::CompletionSyntaxContextCache, unqualified::UnqualifiedCompletionResolver,
 };
 
 /// Coordinates completion-site detection with semantic candidate rendering.
@@ -56,11 +57,13 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<CompletionItem>> {
+        let mut syntax_context = CompletionSyntaxContextCache::new(self.0, offset);
+
         // Keyword fragments can be useful even when the cursor does not lower
         // into a semantic completion site. For example, `f$0` at item level is
         // just incomplete text, not a Body IR or DefMap path.
         let Some(context) = CompletionContext::at(self.0, target, file_id, offset)? else {
-            return KeywordCompletionResolver::new(self.0).completions_at(target, file_id, offset);
+            return KeywordCompletionResolver::new().completions(syntax_context.get());
         };
 
         match context {
@@ -78,8 +81,8 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
                     UnqualifiedCompletionResolver::new(self.0).body_completions(site)?;
                 if matches!(site.namespace, UnqualifiedCompletionNamespace::Values) {
                     completions.extend(
-                        KeywordCompletionResolver::new(self.0)
-                            .overlay_completions_at(target, file_id, offset)?,
+                        KeywordCompletionResolver::new()
+                            .overlay_completions(syntax_context.get())?,
                     );
                     completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
                 }
