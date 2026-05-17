@@ -3,6 +3,7 @@
 use std::{
     fmt,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::Context as _;
@@ -185,10 +186,12 @@ impl ParseDb {
         let canonical_file_path = file_path
             .canonicalize()
             .with_context(|| format!("while attempting to canonicalize {}", file_path.display()))?;
+        let source = Arc::<str>::from(source);
         let mut changed_files = Vec::new();
 
         for (package_slot, package) in self.packages.iter_mut().enumerate() {
-            let Some(file_id) = package.reparse_file_from_source(&canonical_file_path, source)
+            let Some(file_id) =
+                package.reparse_file_from_source(&canonical_file_path, Arc::clone(&source))
             else {
                 continue;
             };

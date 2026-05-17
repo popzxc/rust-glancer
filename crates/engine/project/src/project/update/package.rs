@@ -74,6 +74,12 @@ fn try_rebuild_packages(
     let item_tree =
         ItemTreeDb::build_packages(&mut state.parse, &package_indices, &mut state.names)
             .context("while attempting to rebuild affected item-tree packages")?;
+
+    // Rebuilds follow the same lifetime rule as fresh indexing: item-tree owns the lowered
+    // declarations, and body lowering reparses only the files it needs.
+    state.parse.evict_syntax_trees();
+    state.parse.shrink_to_fit();
+
     let def_map = state
         .def_map
         .package_rebuilder(
@@ -122,8 +128,6 @@ fn try_rebuild_packages(
     // that did not survive into retained DBs are no longer treated as live.
     drop(item_tree);
 
-    state.parse.evict_syntax_trees();
-    state.parse.shrink_to_fit();
     state.def_map = def_map;
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;

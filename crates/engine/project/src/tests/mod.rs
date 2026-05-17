@@ -32,7 +32,7 @@ pub struct User;
 
     assert_eq!(
         profile.checkpoints().len(),
-        10,
+        11,
         "timing profile should report the same build checkpoints as memory profiling"
     );
     assert!(
@@ -88,6 +88,7 @@ pub struct User;
             "after parse",
             "after cache probe",
             "after item-tree",
+            "after item-tree syntax eviction",
             "after cache source fingerprints",
             "after def-map",
             "after semantic-ir",

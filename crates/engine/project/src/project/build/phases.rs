@@ -79,6 +79,20 @@ pub(super) fn build(
         process_memory,
     );
 
+    // Later phases consume file ids, paths, line indexes, and lowered item trees. Body IR reparses
+    // syntax file-by-file, so the global parse database can drop full trees before more phase
+    // databases start overlapping in memory.
+    parse.evict_syntax_trees();
+    parse.shrink_to_fit();
+    let process_memory = profiler.sample_process_memory();
+    let parse_bytes = profiler.measure(&parse);
+    profiler.record(
+        "after item-tree syntax eviction",
+        parse_bytes,
+        profiler.sum_retained(&[names_bytes, parse_bytes, build_plan_bytes, item_tree_bytes]),
+        process_memory,
+    );
+
     let package_source_fingerprints = cache_plan
         .source_fingerprints(workspace.workspace_root(), &parse)
         .context("while attempting to compute package cache source fingerprints")?;
