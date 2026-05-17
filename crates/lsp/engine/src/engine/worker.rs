@@ -358,6 +358,10 @@ impl EngineWorker {
                 .and_then(|profile| profile.cache_probe()),
         );
         self.project.replace_saved(project_build.into_project());
+        // Full indexing materializes large temporary phase data that is dropped before the saved
+        // project is installed. Purge after that boundary so idle editor memory reflects the
+        // retained analysis graph instead of allocator pages left dirty by startup indexing.
+        MemoryReporter::purge_and_report(self.memory_control.as_ref(), "after initial index");
         Self::log_project_snapshot(self.project.saved_snapshot()?, "initial index");
         tracing::info!(
             workspace_root = %workspace_root.display(),
@@ -377,6 +381,8 @@ impl EngineWorker {
                 .reindex_workspace()
                 .context("while attempting to manually reindex workspace")
         })?;
+        // Manual reindexing has the same temporary-memory profile as startup indexing.
+        MemoryReporter::purge_and_report(self.memory_control.as_ref(), "after manual reindex");
         Self::log_project_snapshot(self.project.saved_snapshot()?, "manual reindex");
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis(),
