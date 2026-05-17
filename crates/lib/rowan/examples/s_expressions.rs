@@ -338,10 +338,11 @@ impl Atom {
         Some(op)
     }
     fn text(&self) -> String {
-        match self.0.green().children().next() {
-            Some(rowan::NodeOrToken::Token(token)) => token.text().to_string(),
-            _ => unreachable!(),
-        }
+        self.0
+            .first_token()
+            .expect("atoms always contain one token")
+            .text()
+            .to_string()
     }
 }
 

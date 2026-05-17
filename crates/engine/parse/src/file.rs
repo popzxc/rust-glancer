@@ -38,12 +38,12 @@ pub(crate) struct ParsedFileData {
     pub(crate) source: ParsedSource,
     /// Line-start index used to convert byte offsets into line/column coordinates.
     pub(crate) line_index: LineIndexState,
-    /// Green-backed Rust parse result produced by `rg_syntax`.
+    /// Rust parse result produced by `rg_syntax`.
     ///
     /// This is retained only while AST-consuming phases are lowering. Query-time state keeps
     /// paths and line indexes, but can evict parse trees to keep memory bounded.
     ///
-    /// `rg_syntax::SourceFile` is a traversal cursor over this immutable green tree. Keeping the
+    /// `rg_syntax::SourceFile` is a traversal cursor over an immutable parse tree. Keeping the
     /// parse result lets each AST-consuming phase create a fresh local cursor instead of sharing
     /// cursor internals across package or thread boundaries.
     pub(crate) syntax: Option<SyntaxParse<SourceFile>>,
@@ -132,7 +132,7 @@ impl<'a> ParsedFile<'a> {
 
     /// Returns a local syntax cursor over the retained parse tree.
     ///
-    /// This does not reparse source text. It creates a fresh typed root over the immutable green
+    /// This does not reparse source text. It creates a fresh typed root over the immutable parse
     /// tree so callers can traverse AST without sharing `rg_syntax` cursor state.
     pub fn syntax(&self) -> Option<SourceFile> {
         self.data.syntax.as_ref().map(|syntax| syntax.tree())

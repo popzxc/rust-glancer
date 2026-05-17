@@ -350,10 +350,9 @@ impl GreenNode {
 
     /// Copies a green subtree into a new bump arena.
     ///
-    /// Public APIs such as `SyntaxNode::clone_subtree` and
-    /// `GreenNodeData::to_owned` promise an independent tree. Reconstructing a
-    /// handle to the existing data would keep the whole source arena alive,
-    /// even when the user only wants a tiny subtree.
+    /// `GreenNodeData::to_owned` promises an independent tree. Reconstructing
+    /// a handle to the existing data would keep the whole source arena alive,
+    /// even when the caller only wants a tiny subtree.
     pub(crate) fn new_subtree(node: &GreenNodeData) -> GreenNode {
         let arena = GreenArena::new();
         GreenNode::clone_into(&arena, node)

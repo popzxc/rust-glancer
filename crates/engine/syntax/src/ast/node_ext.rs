@@ -3,11 +3,10 @@
 //!
 //! These methods should only do simple, shallow tasks related to the syntax of the node itself.
 
-use std::{borrow::Cow, fmt, iter::successors};
+use std::{fmt, iter::successors};
 
 use itertools::Itertools;
 use parser::SyntaxKind;
-use rowan::{GreenNodeData, GreenTokenData};
 use smallvec::{SmallVec, smallvec};
 
 use crate::{
@@ -16,7 +15,6 @@ use crate::{
         self, AstNode, AstToken, HasAttrs, HasGenericArgs, HasGenericParams, HasName,
         HasTypeBounds, SyntaxNode, support,
     },
-    ted,
 };
 
 use super::{GenericParam, RangeItem, RangeOp};
@@ -31,39 +29,11 @@ impl ast::Name {
     pub fn text(&self) -> TokenText<'_> {
         text_of_first_token(self.syntax())
     }
-    pub fn text_non_mutable(&self) -> &str {
-        fn first_token(green_ref: &GreenNodeData) -> &GreenTokenData {
-            green_ref
-                .children()
-                .next()
-                .and_then(NodeOrToken::into_token)
-                .unwrap()
-        }
-
-        match self.syntax().green() {
-            Cow::Borrowed(green_ref) => first_token(green_ref).text(),
-            Cow::Owned(_) => unreachable!(),
-        }
-    }
 }
 
 impl ast::NameRef {
     pub fn text(&self) -> TokenText<'_> {
         text_of_first_token(self.syntax())
-    }
-    pub fn text_non_mutable(&self) -> &str {
-        fn first_token(green_ref: &GreenNodeData) -> &GreenTokenData {
-            green_ref
-                .children()
-                .next()
-                .and_then(NodeOrToken::into_token)
-                .unwrap()
-        }
-
-        match self.syntax().green() {
-            Cow::Borrowed(green_ref) => first_token(green_ref).text(),
-            Cow::Owned(_) => unreachable!(),
-        }
     }
 
     pub fn as_tuple_field(&self) -> Option<usize> {
@@ -78,18 +48,11 @@ impl ast::NameRef {
 }
 
 fn text_of_first_token(node: &SyntaxNode) -> TokenText<'_> {
-    fn first_token(green_ref: &GreenNodeData) -> &GreenTokenData {
-        green_ref
-            .children()
-            .next()
-            .and_then(NodeOrToken::into_token)
-            .unwrap()
-    }
-
-    match node.green() {
-        Cow::Borrowed(green_ref) => TokenText::borrowed(first_token(green_ref).text()),
-        Cow::Owned(green) => TokenText::owned(first_token(&green).to_owned()),
-    }
+    TokenText::owned(
+        node.first_token()
+            .expect("name-like syntax should contain a token")
+            .text(),
+    )
 }
 
 fn into_comma(it: NodeOrToken<SyntaxNode, SyntaxToken>) -> Option<SyntaxToken> {
@@ -487,49 +450,6 @@ impl ast::UseTreeList {
         self.syntax()
             .children_with_tokens()
             .filter_map(|it| it.into_token().filter(|it| it.kind() == T![,]))
-    }
-
-    /// Remove the unnecessary braces in current `UseTreeList`
-    pub fn remove_unnecessary_braces(mut self) {
-        // Returns true iff there is a single subtree and it is not the self keyword. The braces in
-        // `use x::{self};` are necessary and so we should not remove them.
-        let has_single_subtree_that_is_not_self = |u: &ast::UseTreeList| {
-            if let Some((single_subtree,)) = u.use_trees().collect_tuple() {
-                // We have a single subtree, check whether it is self.
-
-                let is_self = single_subtree.path().as_ref().is_some_and(|path| {
-                    path.segment().and_then(|seg| seg.self_token()).is_some()
-                        && path.qualifier().is_none()
-                });
-
-                !is_self
-            } else {
-                // Not a single subtree
-                false
-            }
-        };
-
-        let remove_brace_in_use_tree_list = |u: &ast::UseTreeList| {
-            if has_single_subtree_that_is_not_self(u) {
-                if let Some(a) = u.l_curly_token() {
-                    ted::remove(a)
-                }
-                if let Some(a) = u.r_curly_token() {
-                    ted::remove(a)
-                }
-                u.comma().for_each(ted::remove);
-            }
-        };
-
-        // take `use crate::{{{{A}}}}` for example
-        // the below remove the innermost {}, got `use crate::{{{A}}}`
-        remove_brace_in_use_tree_list(&self);
-
-        // the below remove other unnecessary {}, got `use crate::A`
-        while let Some(parent_use_tree_list) = self.parent_use_tree().parent_use_tree_list() {
-            remove_brace_in_use_tree_list(&parent_use_tree_list);
-            self = parent_use_tree_list;
-        }
     }
 }
 

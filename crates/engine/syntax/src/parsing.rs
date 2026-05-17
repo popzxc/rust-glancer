@@ -1,13 +1,9 @@
-//! Lexing, bridging to parser (which does the actual parsing) and
-//! incremental reparsing.
+//! Lexing and bridging to parser, which does the actual parsing.
 
-mod reparsing;
-
-use rowan::TextRange;
-
-use crate::{SyntaxError, SyntaxTreeBuilder, syntax_node::GreenNode};
-
-pub(crate) use crate::parsing::reparsing::incremental_reparse;
+use crate::{
+    SyntaxError, TextRange,
+    syntax_node::{GreenNode, SyntaxTreeBuilder},
+};
 
 pub(crate) fn parse_text(text: &str, edition: parser::Edition) -> (GreenNode, Vec<SyntaxError>) {
     let _p = tracing::info_span!("parse_text").entered();

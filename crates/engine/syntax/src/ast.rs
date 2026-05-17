@@ -1,14 +1,10 @@
 //! Abstract Syntax Tree, layered on top of untyped `SyntaxNode`s
 
-pub mod edit;
-pub mod edit_in_place;
 mod expr_ext;
 mod generated;
-pub mod make;
 mod node_ext;
 mod operators;
 pub mod prec;
-pub mod syntax_factory;
 mod token_ext;
 mod traits;
 
@@ -62,18 +58,6 @@ pub trait AstNode {
         Self: Sized;
 
     fn syntax(&self) -> &SyntaxNode;
-    fn clone_for_update(&self) -> Self
-    where
-        Self: Sized,
-    {
-        Self::cast(self.syntax().clone_for_update()).unwrap()
-    }
-    fn clone_subtree(&self) -> Self
-    where
-        Self: Sized,
-    {
-        Self::cast(self.syntax().clone_subtree()).unwrap()
-    }
 }
 
 /// Like `AstNode`, but wraps tokens rather than interior nodes.

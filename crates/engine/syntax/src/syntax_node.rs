@@ -1,16 +1,13 @@
-//! This module defines Concrete Syntax Tree (CST), used by rust-analyzer.
+//! Concrete syntax tree cursors and the parser-only tree builder.
 //!
-//! The CST includes comments and whitespace, provides a single node type,
-//! `SyntaxNode`, and a basic traversal API (parent, children, siblings).
-//!
-//! The *real* implementation is in the (language-agnostic) `rowan` crate, this
-//! module just wraps its API.
+//! Public callers receive immutable nodes and tokens. The builder stays crate-private so the only
+//! supported way to obtain syntax is by parsing source text.
 
 use rowan::{GreenNodeBuilder, Language};
 
-use crate::{Parse, SyntaxError, SyntaxKind, TextSize};
+use crate::{SyntaxError, SyntaxKind, TextSize};
 
-pub(crate) use rowan::{GreenNode, GreenToken, NodeOrToken};
+pub(crate) use rowan::GreenNode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RustLanguage {}
@@ -34,7 +31,7 @@ pub type SyntaxElementChildren = rowan::SyntaxElementChildren<RustLanguage>;
 pub type PreorderWithTokens = rowan::api::PreorderWithTokens<RustLanguage>;
 
 #[derive(Default)]
-pub struct SyntaxTreeBuilder {
+pub(crate) struct SyntaxTreeBuilder {
     errors: Vec<SyntaxError>,
     inner: GreenNodeBuilder<'static>,
 }
@@ -45,32 +42,21 @@ impl SyntaxTreeBuilder {
         (green, self.errors)
     }
 
-    pub fn finish(self) -> Parse<SyntaxNode> {
-        let (green, errors) = self.finish_raw();
-        // Disable block validation, see https://github.com/rust-lang/rust-analyzer/pull/10357
-        #[allow(clippy::overly_complex_bool_expr)]
-        if cfg!(debug_assertions) && false {
-            let node = SyntaxNode::new_root(green.clone());
-            crate::validation::validate_block_structure(&node);
-        }
-        Parse::new(green, errors)
-    }
-
-    pub fn token(&mut self, kind: SyntaxKind, text: &str) {
+    pub(crate) fn token(&mut self, kind: SyntaxKind, text: &str) {
         let kind = RustLanguage::kind_to_raw(kind);
         self.inner.token(kind, text);
     }
 
-    pub fn start_node(&mut self, kind: SyntaxKind) {
+    pub(crate) fn start_node(&mut self, kind: SyntaxKind) {
         let kind = RustLanguage::kind_to_raw(kind);
         self.inner.start_node(kind);
     }
 
-    pub fn finish_node(&mut self) {
+    pub(crate) fn finish_node(&mut self) {
         self.inner.finish_node();
     }
 
-    pub fn error(&mut self, error: String, text_pos: TextSize) {
+    pub(crate) fn error(&mut self, error: String, text_pos: TextSize) {
         self.errors
             .push(SyntaxError::new_at_offset(error, text_pos));
     }

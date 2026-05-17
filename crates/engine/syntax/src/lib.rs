@@ -1,23 +1,9 @@
-//! Syntax Tree library used throughout the rust-analyzer.
+//! Immutable Rust syntax trees and typed AST accessors.
 //!
-//! Properties:
-//!   - easy and fast incremental re-parsing
-//!   - graceful handling of errors
-//!   - full-fidelity representation (*any* text can be precisely represented as
-//!     a syntax tree)
-//!
-//! For more information, see the [RFC]. Current implementation is inspired by
-//! the [Swift] one.
-//!
-//! The most interesting modules here are `syntax_node` (which defines concrete
-//! syntax tree) and `ast` (which defines abstract syntax tree on top of the
-//! CST). The actual parser live in a separate `parser` crate, though the
-//! lexer lives in this crate.
-//!
-//! See `api_walkthrough` test in this file for a quick API tour!
-//!
-//! [RFC]: <https://github.com/rust-lang/rfcs/pull/2256>
-//! [Swift]: <https://github.com/apple/swift/blob/13d593df6f359d0cb2fc81cfaac273297c539455/lib/Syntax/README.md>
+//! rust-glancer parses full source files, traverses their concrete syntax while lowering, and then
+//! drops the syntax trees before steady-state queries. The supported API is therefore intentionally
+//! read-only and non-incremental: parsing, validation diagnostics, source ranges, token text, and
+//! typed AST traversal.
 
 #![cfg_attr(feature = "in-rust-tree", feature(rustc_private))]
 #![allow(
@@ -32,7 +18,6 @@
 extern crate rustc_driver as _;
 
 mod parsing;
-mod ptr;
 mod syntax_error;
 mod syntax_node;
 #[cfg(test)]
@@ -45,28 +30,27 @@ pub mod ast;
 #[doc(hidden)]
 pub mod fuzz;
 pub mod hacks;
-pub mod syntax_editor;
-pub mod ted;
 pub mod utils;
 
-use std::{marker::PhantomData, ops::Range};
+use std::marker::PhantomData;
 
 use stdx::format_to;
 use triomphe::Arc;
 
+use crate::syntax_node::GreenNode;
+
 pub use crate::{
     ast::{AstNode, AstToken},
-    ptr::{AstPtr, SyntaxNodePtr},
     syntax_error::SyntaxError,
     syntax_node::{
         PreorderWithTokens, RustLanguage, SyntaxElement, SyntaxElementChildren, SyntaxNode,
-        SyntaxNodeChildren, SyntaxToken, SyntaxTreeBuilder,
+        SyntaxNodeChildren, SyntaxToken,
     },
     token_text::TokenText,
 };
 pub use parser::{Edition, SyntaxKind, T};
 pub use rowan::{
-    Direction, GreenNode, NodeOrToken, SyntaxText, TextRange, TextSize, TokenAtOffset, WalkEvent,
+    Direction, NodeOrToken, SyntaxText, TextRange, TextSize, TokenAtOffset, WalkEvent,
     api::Preorder,
 };
 pub use rustc_literal_escaper as unescape;
@@ -174,42 +158,6 @@ impl Parse<SourceFile> {
             format_to!(buf, "error {:?}: {}\n", err.range(), err);
         }
         buf
-    }
-
-    pub fn reparse(&self, delete: TextRange, insert: &str, edition: Edition) -> Parse<SourceFile> {
-        self.incremental_reparse(delete, insert, edition)
-            .unwrap_or_else(|| self.full_reparse(delete, insert, edition))
-    }
-
-    fn incremental_reparse(
-        &self,
-        delete: TextRange,
-        insert: &str,
-        edition: Edition,
-    ) -> Option<Parse<SourceFile>> {
-        // FIXME: validation errors are not handled here
-        parsing::incremental_reparse(
-            self.tree().syntax(),
-            delete,
-            insert,
-            self.errors.as_deref().unwrap_or_default().iter().cloned(),
-            edition,
-        )
-        .map(|(green_node, errors, _reparsed_range)| Parse {
-            green: Some(green_node),
-            errors: if errors.is_empty() {
-                None
-            } else {
-                Some(errors.into())
-            },
-            _ty: PhantomData,
-        })
-    }
-
-    fn full_reparse(&self, delete: TextRange, insert: &str, edition: Edition) -> Parse<SourceFile> {
-        let mut text = self.tree().syntax().text().to_string();
-        text.replace_range(Range::<usize>::from(delete), insert);
-        SourceFile::parse(&text, edition)
     }
 }
 

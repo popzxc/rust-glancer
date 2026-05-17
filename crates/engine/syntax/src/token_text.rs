@@ -1,15 +1,14 @@
-//! Yet another version of owned string, backed by a syntax tree token.
+//! Small token text wrapper used by AST helpers.
 
 use std::{cmp::Ordering, fmt, ops};
 
-use rowan::GreenToken;
 use smol_str::SmolStr;
 
 pub struct TokenText<'a>(pub(crate) Repr<'a>);
 
 pub(crate) enum Repr<'a> {
     Borrowed(&'a str),
-    Owned(GreenToken),
+    Owned(SmolStr),
 }
 
 impl<'a> TokenText<'a> {
@@ -17,14 +16,14 @@ impl<'a> TokenText<'a> {
         TokenText(Repr::Borrowed(text))
     }
 
-    pub(crate) fn owned(green: GreenToken) -> Self {
-        TokenText(Repr::Owned(green))
+    pub(crate) fn owned(text: impl AsRef<str>) -> Self {
+        TokenText(Repr::Owned(SmolStr::new(text.as_ref())))
     }
 
     pub fn as_str(&self) -> &str {
         match &self.0 {
             &Repr::Borrowed(it) => it,
-            Repr::Owned(green) => green.text(),
+            Repr::Owned(text) => text.as_str(),
         }
     }
 }
