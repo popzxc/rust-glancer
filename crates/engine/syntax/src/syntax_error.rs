@@ -25,6 +25,10 @@ impl SyntaxError {
         self.1 = range;
         self
     }
+
+    pub(crate) fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>() + self.0.capacity()
+    }
 }
 
 impl fmt::Display for SyntaxError {

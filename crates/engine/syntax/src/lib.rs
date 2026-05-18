@@ -33,26 +33,21 @@ pub mod hacks;
 pub mod utils;
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use stdx::format_to;
-use triomphe::Arc;
-
-use crate::syntax_node::GreenNode;
 
 pub use crate::{
     ast::{AstNode, AstToken},
     syntax_error::SyntaxError,
     syntax_node::{
-        PreorderWithTokens, RustLanguage, SyntaxElement, SyntaxElementChildren, SyntaxNode,
-        SyntaxNodeChildren, SyntaxToken,
+        Direction, NodeOrToken, Preorder, PreorderWithTokens, RustLanguage, SyntaxElement,
+        SyntaxElementChildren, SyntaxNode, SyntaxNodeChildren, SyntaxText, SyntaxToken,
+        SyntaxTreeMemoryUsage, TextRange, TextSize, TokenAtOffset, WalkEvent,
     },
     token_text::TokenText,
 };
 pub use parser::{Edition, SyntaxKind, T};
-pub use rowan::{
-    Direction, NodeOrToken, SyntaxText, TextRange, TextSize, TokenAtOffset, WalkEvent,
-    api::Preorder,
-};
 pub use rustc_literal_escaper as unescape;
 pub use smol_str::{SmolStr, SmolStrBuilder, ToSmolStr, format_smolstr};
 
@@ -63,44 +58,33 @@ pub use smol_str::{SmolStr, SmolStrBuilder, ToSmolStr, format_smolstr};
 /// files.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Parse<T> {
-    green: Option<GreenNode>,
-    errors: Option<Arc<[SyntaxError]>>,
+    tree: Arc<syntax_node::SyntaxTree>,
     _ty: PhantomData<fn() -> T>,
 }
 
 impl<T> Clone for Parse<T> {
     fn clone(&self) -> Parse<T> {
         Parse {
-            green: self.green.clone(),
-            errors: self.errors.clone(),
+            tree: self.tree.clone(),
             _ty: PhantomData,
         }
     }
 }
 
 impl<T> Parse<T> {
-    fn new(green: GreenNode, errors: Vec<SyntaxError>) -> Parse<T> {
+    fn new(tree: Arc<syntax_node::SyntaxTree>) -> Parse<T> {
         Parse {
-            green: Some(green),
-            errors: if errors.is_empty() {
-                None
-            } else {
-                Some(errors.into())
-            },
+            tree,
             _ty: PhantomData,
         }
     }
 
     pub fn syntax_node(&self) -> SyntaxNode {
-        SyntaxNode::new_root(self.green.as_ref().unwrap().clone())
+        SyntaxNode::new_root(self.tree.clone())
     }
 
     pub fn errors(&self) -> Vec<SyntaxError> {
-        let mut errors = if let Some(e) = self.errors.as_deref() {
-            e.to_vec()
-        } else {
-            vec![]
-        };
+        let mut errors = self.syntax_node().parse_errors().to_vec();
         validation::validate(&self.syntax_node(), &mut errors);
         errors
     }
@@ -108,12 +92,9 @@ impl<T> Parse<T> {
 
 impl<T: AstNode> Parse<T> {
     /// Converts this parse result into a parse result for an untyped syntax tree.
-    pub fn to_syntax(mut self) -> Parse<SyntaxNode> {
-        let green = self.green.take();
-        let errors = self.errors.take();
+    pub fn to_syntax(self) -> Parse<SyntaxNode> {
         Parse {
-            green,
-            errors,
+            tree: self.tree,
             _ty: PhantomData,
         }
     }
@@ -138,11 +119,10 @@ impl<T: AstNode> Parse<T> {
 }
 
 impl Parse<SyntaxNode> {
-    pub fn cast<N: AstNode>(mut self) -> Option<Parse<N>> {
+    pub fn cast<N: AstNode>(self) -> Option<Parse<N>> {
         if N::cast(self.syntax_node()).is_some() {
             Some(Parse {
-                green: self.green.take(),
-                errors: self.errors.take(),
+                tree: self.tree,
                 _ty: PhantomData,
             })
         } else {
@@ -172,48 +152,15 @@ impl ast::Expr {
     /// ```
     pub fn parse(text: &str, edition: Edition) -> Parse<ast::Expr> {
         let _p = tracing::info_span!("Expr::parse").entered();
-        let (green, errors) = parsing::parse_text_at(text, parser::TopEntryPoint::Expr, edition);
-        let root = SyntaxNode::new_root(green.clone());
+        let tree = parsing::parse_text_at(text, parser::TopEntryPoint::Expr, edition);
+        let root = SyntaxNode::new_root(tree.clone());
 
         assert!(
             ast::Expr::can_cast(root.kind()) || root.kind() == SyntaxKind::ERROR,
             "{:?} isn't an expression",
             root.kind()
         );
-        Parse::new(green, errors)
-    }
-}
-
-#[cfg(not(no_salsa_async_drops))]
-impl<T> Drop for Parse<T> {
-    fn drop(&mut self) {
-        let Some(green) = self.green.take() else {
-            return;
-        };
-        static PARSE_DROP_THREAD: std::sync::OnceLock<std::sync::mpsc::Sender<GreenNode>> =
-            std::sync::OnceLock::new();
-        PARSE_DROP_THREAD
-            .get_or_init(|| {
-                let (sender, receiver) = std::sync::mpsc::channel::<GreenNode>();
-                std::thread::Builder::new()
-                    .name("ParseNodeDropper".to_owned())
-                    .spawn(move || {
-                        loop {
-                            // block on a receive
-                            _ = receiver.recv();
-                            // then drain the entire channel
-                            while receiver.try_recv().is_ok() {}
-                            // and sleep for a bit
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                        }
-                        // why do this over just a `receiver.iter().for_each(drop)`? To reduce contention on the channel lock.
-                        // otherwise this thread will constantly wake up and sleep again.
-                    })
-                    .unwrap();
-                sender
-            })
-            .send(green)
-            .unwrap();
+        Parse::new(tree)
     }
 }
 
@@ -223,11 +170,11 @@ pub use crate::ast::SourceFile;
 impl SourceFile {
     pub fn parse(text: &str, edition: Edition) -> Parse<SourceFile> {
         let _p = tracing::info_span!("SourceFile::parse").entered();
-        let (green, errors) = parsing::parse_text(text, edition);
-        let root = SyntaxNode::new_root(green.clone());
+        let tree = parsing::parse_text(text, edition);
+        let root = SyntaxNode::new_root(tree.clone());
 
         assert_eq!(root.kind(), SyntaxKind::SOURCE_FILE);
-        Parse::new(green, errors)
+        Parse::new(tree)
     }
 }
 
