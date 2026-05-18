@@ -4,13 +4,15 @@
 //! level lifecycle: deciding which resident packages need durable artifacts, writing them, and then
 //! dropping phase data so the project returns to its selected memory profile.
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_def_map::PackageSlot;
 
 use crate::{
-    PackageResidency,
-    cache::{PackageCacheArtifact, PackageCachePayload},
+    PackageResidency, ProjectMemoryPurgePoint,
+    cache::{PackageCacheArtifact, PackageCachePayload, PreparedPackageCacheWriter},
 };
 
 use super::{state::ProjectState, update};
@@ -71,9 +73,11 @@ impl<'a> ResidencyApplication<'a> {
             .context("while attempting to invalidate package cache namespace")?;
         update::rebuild_resident_from_source(project)
             .context("while attempting to rebuild resident analysis project from source")?;
+        let memory_hooks = Arc::clone(&project.memory_hooks);
         Self::fresh(project)
             .apply()
             .context("while attempting to reapply package cache residency")?;
+        memory_hooks.purge(ProjectMemoryPurgePoint::AfterProjectBuild);
 
         Ok(())
     }
@@ -156,9 +160,14 @@ impl<'a> ResidencyApplication<'a> {
 
     /// Writes durable cache artifacts for packages whose resident payloads are about to be dropped.
     fn write_package_artifacts(&self, packages: &[PackageSlot]) -> anyhow::Result<()> {
+        if packages.is_empty() {
+            return Ok(());
+        }
+
+        let writer = self.project.cache_store.prepare_artifact_writes()?;
         if packages.len() <= 1 {
             for package in packages {
-                Self::write_package_artifact(self.project, *package)?;
+                Self::write_package_artifact(self.project, &writer, *package)?;
             }
             return Ok(());
         }
@@ -170,9 +179,9 @@ impl<'a> ResidencyApplication<'a> {
         // mutation. Write every durable artifact first; only then can callers safely drop residents.
         thread_pool
             .install(|| {
-                packages
-                    .par_iter()
-                    .try_for_each(|package| Self::write_package_artifact(project, *package))
+                packages.par_iter().try_for_each(|package| {
+                    Self::write_package_artifact(project, &writer, *package)
+                })
             })
             .context("while attempting to write package cache artifacts")
     }
@@ -194,17 +203,18 @@ impl<'a> ResidencyApplication<'a> {
     }
 
     /// Writes one package artifact from currently resident phase payloads.
-    fn write_package_artifact(project: &ProjectState, package: PackageSlot) -> anyhow::Result<()> {
+    fn write_package_artifact(
+        project: &ProjectState,
+        writer: &PreparedPackageCacheWriter<'_>,
+        package: PackageSlot,
+    ) -> anyhow::Result<()> {
         let artifact = Self::artifact_from_project(project, package)?;
-        project
-            .cache_store
-            .write_artifact(&artifact)
-            .with_context(|| {
-                format!(
-                    "while attempting to write package cache artifact for package {}",
-                    package.0,
-                )
-            })
+        writer.write_artifact(&artifact).with_context(|| {
+            format!(
+                "while attempting to write package cache artifact for package {}",
+                package.0,
+            )
+        })
     }
 
     /// Offloads one package from every artifact-backed phase database.

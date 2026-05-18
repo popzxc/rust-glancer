@@ -1,5 +1,7 @@
 //! Rebuilds selected packages inside an existing project snapshot.
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 
 use rg_body_ir::BodyIrFile;
@@ -7,6 +9,7 @@ use rg_def_map::PackageSlot;
 use rg_item_tree::ItemTreeDb;
 
 use crate::{
+    ProjectMemoryPurgePoint,
     profile::BuildProfiler,
     project::{
         StartupCacheLoad, build, loading::PackageReadLoaders, offloading::ResidencyApplication,
@@ -24,7 +27,12 @@ pub(super) fn rebuild_packages(
 
     let plan = PackageRebuildPlan::saved(packages);
     match try_rebuild_packages(state, plan) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            state
+                .memory_hooks
+                .purge(ProjectMemoryPurgePoint::AfterPackageRebuild);
+            Ok(())
+        }
         Err(error) if ProjectState::is_recoverable_cache_load_failure(&error) => {
             ResidencyApplication::failure_recovery(state).with_context(|| {
                 format!(
@@ -48,7 +56,11 @@ pub(super) fn rebuild_dirty_overlay_packages(
     try_rebuild_packages(
         state,
         PackageRebuildPlan::dirty_overlay(packages, body_files),
-    )
+    )?;
+    state
+        .memory_hooks
+        .purge(ProjectMemoryPurgePoint::AfterDirtyOverlayBuild);
+    Ok(())
 }
 
 fn try_rebuild_packages(
@@ -74,6 +86,15 @@ fn try_rebuild_packages(
     let item_tree =
         ItemTreeDb::build_packages(&mut state.parse, &package_indices, &mut state.names)
             .context("while attempting to rebuild affected item-tree packages")?;
+
+    // Rebuilds follow the same lifetime rule as fresh indexing: item-tree owns the lowered
+    // declarations, and body lowering reparses only the files it needs.
+    state.parse.evict_syntax_trees();
+    state.parse.shrink_to_fit();
+    state
+        .memory_hooks
+        .purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
+
     let def_map = state
         .def_map
         .package_rebuilder(
@@ -122,8 +143,6 @@ fn try_rebuild_packages(
     // that did not survive into retained DBs are no longer treated as live.
     drop(item_tree);
 
-    state.parse.evict_syntax_trees();
-    state.parse.shrink_to_fit();
     state.def_map = def_map;
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;
@@ -191,6 +210,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
     let body_ir_policy = state.body_ir_policy;
     let package_residency_policy = state.package_residency_policy;
     let cache_store = state.cache_store.clone();
+    let memory_hooks = Arc::clone(&state.memory_hooks);
     let mut profiler = BuildProfiler::disabled();
     let mut rebuilt = build::build_resident_state(
         workspace,
@@ -198,6 +218,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
         body_ir_policy,
         package_residency_policy,
         StartupCacheLoad::Disabled,
+        memory_hooks,
         &mut profiler,
     )
     .context("while attempting to rebuild resident analysis project")?;

@@ -5,7 +5,10 @@ use rg_memsize::{MemoryRecorder, MemorySize};
 use crate::{
     Package, PackageFileRef, PackageParseSnapshot, ParseDb, Position, Span, Target, TargetId,
     TextSpan,
-    file::{FileDb, FileId, LineIndexState, ParsedFileData, ParsedFilePath, ParsedFileSnapshot},
+    file::{
+        FileDb, FileId, LineIndexState, ParsedFileData, ParsedFilePath, ParsedFileSnapshot,
+        ParsedSource,
+    },
     line_index::{
         LineCharRange, LineIndex, LineIndexSnapshot, LineIndexStorage, LineInfo, LineUtf16Metrics,
     },
@@ -19,7 +22,7 @@ rg_memsize::impl_memory_size_children! {
     PackageFileRef => package, file;
     Package => id, package_name, edition, is_workspace_member, origin, files, targets;
     FileDb => edition, parsed_files, file_ids_by_path;
-    ParsedFileData => path, line_index, syntax;
+    ParsedFileData => path, source, line_index, syntax;
     ParsedFileSnapshot => path, line_index;
     PackageParseSnapshot => files, target_root_files;
     Target => id, name, kind, src_path, root_file;
@@ -37,6 +40,18 @@ rg_memsize::impl_memory_size_children! {
 impl MemorySize for ParsedFilePath {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         self.0.record_memory_children(recorder);
+    }
+}
+
+impl MemorySize for ParsedSource {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::SavedFile => {}
+            Self::InMemory(source) => recorder.scope("in_memory", |recorder| {
+                recorder.record_heap::<str>(source.len());
+                recorder.record_approximate::<std::sync::Arc<str>>(mem::size_of::<usize>());
+            }),
+        }
     }
 }
 

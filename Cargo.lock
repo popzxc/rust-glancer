@@ -840,15 +840,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "m_lexer"
-version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7e51ebf91162d585a5bae05e4779efc4a276171cb880d61dd6fab11c98467a7"
-dependencies = [
- "regex",
-]
-
-[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1241,18 +1232,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "regex"
-version = "1.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e10754a14b9137dd7b1e3e5b0493cc9171fdd105e0ab477f51b72e7f3ac0e276"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
 name = "regex-automata"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1496,16 +1475,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rg_rowan"
-version = "0.15.18"
-dependencies = [
- "bumpalo",
- "m_lexer",
- "serde",
- "text-size",
-]
-
-[[package]]
 name = "rg_semantic_ir"
 version = "0.1.0"
 dependencies = [
@@ -1532,7 +1501,6 @@ dependencies = [
  "itertools",
  "rayon",
  "rg_parser",
- "rg_rowan",
  "rustc-hash",
  "rustc-literal-escaper",
  "rustc_apfloat",
@@ -1540,8 +1508,8 @@ dependencies = [
  "smol_str",
  "stdx",
  "test-utils",
+ "text-size",
  "tracing",
- "triomphe",
 ]
 
 [[package]]
@@ -1760,12 +1728,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "stable_deref_trait"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
-
-[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1894,9 +1856,6 @@ name = "text-size"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f18aa187839b2bdb1ad2fa35ead8c4c2976b64e4363c386d45ac0f7ee85c9233"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "thiserror"
@@ -2126,16 +2085,6 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
-]
-
-[[package]]
-name = "triomphe"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd69c5aa8f924c7519d6372789a74eac5b94fb0f8fcf0d4a97eb0bfc3e785f39"
-dependencies = [
- "serde",
- "stable_deref_trait",
 ]
 
 [[package]]

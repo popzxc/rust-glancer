@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::Context as _;
 use rg_arena::Arena;
@@ -61,7 +61,7 @@ impl Package {
     pub(crate) fn reparse_file_from_source(
         &mut self,
         file_path: &Path,
-        source: &str,
+        source: Arc<str>,
     ) -> Option<FileId> {
         self.files.reparse_file_from_source(file_path, source)
     }

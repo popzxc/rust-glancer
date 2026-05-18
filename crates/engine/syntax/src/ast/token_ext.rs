@@ -635,60 +635,34 @@ impl IsString for AnyString {
 mod tests {
     use rustc_apfloat::ieee::Quad as f128;
 
-    use crate::ast::{self, FloatNumber, IntNumber, make};
+    use crate::{
+        AstNode as _, Edition, SourceFile,
+        ast::{self, FloatNumber, IntNumber},
+    };
 
     fn check_float_suffix<'a>(lit: &str, expected: impl Into<Option<&'a str>>) {
-        assert_eq!(
-            FloatNumber {
-                syntax: make::tokens::literal(lit)
-            }
-            .suffix(),
-            expected.into()
-        );
+        assert_eq!(float_number(lit).suffix(), expected.into());
     }
 
     fn check_int_suffix<'a>(lit: &str, expected: impl Into<Option<&'a str>>) {
-        assert_eq!(
-            IntNumber {
-                syntax: make::tokens::literal(lit)
-            }
-            .suffix(),
-            expected.into()
-        );
+        assert_eq!(int_number(lit).suffix(), expected.into());
     }
 
     // FIXME(#17451) Use `expected: f128` once `f128` is stabilised.
     fn check_float_value(lit: &str, expected: &str) {
         let expected = Some(expected.parse::<f128>().unwrap());
         assert_eq!(
-            FloatNumber {
-                syntax: make::tokens::literal(lit)
-            }
-            .value_string()
-            .parse::<f128>()
-            .ok(),
+            float_number(lit).value_string().parse::<f128>().ok(),
             expected
         );
         assert_eq!(
-            IntNumber {
-                syntax: make::tokens::literal(lit)
-            }
-            .value_string()
-            .parse::<f128>()
-            .ok(),
+            int_number(lit).value_string().parse::<f128>().ok(),
             expected
         );
     }
 
     fn check_int_value(lit: &str, expected: impl Into<Option<u128>>) {
-        assert_eq!(
-            IntNumber {
-                syntax: make::tokens::literal(lit)
-            }
-            .value()
-            .ok(),
-            expected.into()
-        );
+        assert_eq!(int_number(lit).value().ok(), expected.into());
     }
 
     #[test]
@@ -716,15 +690,11 @@ mod tests {
     }
 
     fn check_string_value<'a>(lit: &str, expected: impl Into<Option<&'a str>>) {
-        assert_eq!(
-            ast::String {
-                syntax: make::tokens::literal(&format!("\"{lit}\""))
-            }
-            .value()
-            .as_deref()
-            .ok(),
-            expected.into()
-        );
+        let lit = format!("\"{lit}\"");
+        let string = ast::String {
+            syntax: literal_token(&lit),
+        };
+        assert_eq!(string.value().as_deref().ok(), expected.into());
     }
 
     #[test]
@@ -744,13 +714,12 @@ bcde", "abcde",
         lit: &str,
         expected: impl Into<Option<&'a [u8; N]>>,
     ) {
+        let lit = format!("b\"{lit}\"");
+        let byte_string = ast::ByteString {
+            syntax: literal_token(&lit),
+        };
         assert_eq!(
-            ast::ByteString {
-                syntax: make::tokens::literal(&format!("b\"{lit}\""))
-            }
-            .value()
-            .as_deref()
-            .ok(),
+            byte_string.value().as_deref().ok(),
             expected.into().map(|value| &value[..])
         );
     }
@@ -775,9 +744,41 @@ bcde", b"abcde",
             "1.346654495869504934536",
         );
         check_float_value("1.234567891011121_f64", "1.234567891011121");
-        check_float_value("1__0.__0__f32", "10.0");
-        check_float_value("3._0_f16", "3.0");
+        // Keep this test on lexer-visible literal tokens. Inputs that split into
+        // multiple tokens belong to parser recovery tests, not token helpers.
         check_int_value("0b__1_0_", 2);
         check_int_value("1_1_1_1_1_1", 111111);
+    }
+
+    fn int_number(lit: &str) -> IntNumber {
+        IntNumber {
+            syntax: literal_token(lit),
+        }
+    }
+
+    fn float_number(lit: &str) -> FloatNumber {
+        FloatNumber {
+            syntax: literal_token(lit),
+        }
+    }
+
+    fn literal_token(lit: &str) -> crate::SyntaxToken {
+        let source = format!("fn main() {{ let _ = {lit}; }}");
+        let file = SourceFile::parse(&source, Edition::CURRENT).tree();
+
+        file.syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .find(|token| token.text() == lit)
+            .unwrap_or_else(|| {
+                let tokens = file
+                    .syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .map(|token| format!("{:?} {:?}", token.kind(), token.text()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                panic!("literal fixture should contain token {lit:?}; got {tokens}");
+            })
     }
 }

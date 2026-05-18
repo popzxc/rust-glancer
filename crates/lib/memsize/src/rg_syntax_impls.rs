@@ -1,10 +1,6 @@
-use std::mem;
-
 use rg_syntax::AstNode as _;
 
 use crate::{MemoryRecorder, MemorySize};
-
-const GREEN_CHILD_BYTES: usize = mem::size_of::<usize>() * 2;
 
 crate::impl_memory_size_leaf!(
     rg_syntax::Edition,
@@ -23,8 +19,6 @@ impl MemorySize for rg_syntax::ast::SourceFile {
 
 impl<T> MemorySize for rg_syntax::Parse<T> {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        // `Parse` owns the immutable green tree; `syntax_node()` only creates a temporary cursor
-        // so we can reuse the same approximate tree accounting as `SourceFile`.
         recorder.scope("syntax", |recorder| {
             self.syntax_node().record_memory_children(recorder);
         });
@@ -33,82 +27,53 @@ impl<T> MemorySize for rg_syntax::Parse<T> {
 
 impl MemorySize for rg_syntax::SyntaxNode {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        let stats = SyntaxTreeStats::from_node(self);
-        stats.record(recorder);
+        self.tree_memory_usage().record(recorder);
     }
 }
 
 impl MemorySize for rg_syntax::SyntaxToken {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        // The token text is owned by the green tree; the public API exposes length but not the
-        // actual allocation layout, so this remains tagged as approximate.
-        recorder.record_approximate::<rg_syntax::SyntaxToken>(self.text().len());
+        self.tree_memory_usage().record(recorder);
     }
 }
 
-/// Aggregates syntax-tree accounting to keep reports readable for large files.
-struct SyntaxTreeStats {
-    nodes: usize,
-    child_edges: usize,
-    tokens: usize,
-    token_bytes: usize,
+trait RecordSyntaxTreeMemory {
+    fn record(&self, recorder: &mut MemoryRecorder);
 }
 
-impl SyntaxTreeStats {
-    fn from_node(node: &rg_syntax::SyntaxNode) -> Self {
-        let mut stats = Self {
-            nodes: 0,
-            child_edges: 0,
-            tokens: 0,
-            token_bytes: 0,
-        };
-
-        for event in node.preorder_with_tokens() {
-            let rg_syntax::WalkEvent::Enter(element) = event else {
-                continue;
-            };
-
-            match element {
-                rg_syntax::NodeOrToken::Node(node) => {
-                    stats.nodes += 1;
-                    stats.child_edges = stats
-                        .child_edges
-                        .saturating_add(node.children_with_tokens().count());
-                }
-                rg_syntax::NodeOrToken::Token(token) => {
-                    stats.tokens += 1;
-                    stats.token_bytes = stats.token_bytes.saturating_add(token.text().len());
-                }
-            }
-        }
-
-        stats
-    }
-
+impl RecordSyntaxTreeMemory for rg_syntax::SyntaxTreeMemoryUsage {
     fn record(&self, recorder: &mut MemoryRecorder) {
-        recorder.scope("green_tree", |recorder| {
-            // rowan keeps the exact green-node/token layout private. We keep the original
-            // wrapper-sized node/token estimates and add the important piece they miss: green
-            // child entries stored inline with each green node allocation.
+        recorder.scope("tree", |recorder| {
+            recorder.scope("source", |recorder| {
+                recorder.record_heap::<str>(self.source_bytes);
+            });
             recorder.scope("nodes", |recorder| {
-                recorder.record_approximate::<rg_syntax::SyntaxNode>(
-                    self.nodes
-                        .saturating_mul(mem::size_of::<rg_syntax::SyntaxNode>()),
-                );
                 recorder.record_type_name(
-                    crate::MemoryRecordKind::Approximate,
-                    "rowan::GreenChild",
-                    self.child_edges.saturating_mul(GREEN_CHILD_BYTES),
+                    crate::MemoryRecordKind::Heap,
+                    "rg_syntax::NodeData",
+                    self.node_table_bytes,
                 );
             });
             recorder.scope("tokens", |recorder| {
-                recorder.record_approximate::<rg_syntax::SyntaxToken>(
-                    self.tokens
-                        .saturating_mul(mem::size_of::<rg_syntax::SyntaxToken>()),
+                recorder.record_type_name(
+                    crate::MemoryRecordKind::Heap,
+                    "rg_syntax::TokenData",
+                    self.token_table_bytes,
                 );
             });
-            recorder.scope("token_text", |recorder| {
-                recorder.record_approximate::<str>(self.token_bytes);
+            recorder.scope("children", |recorder| {
+                recorder.record_type_name(
+                    crate::MemoryRecordKind::Heap,
+                    "rg_syntax::ElementId",
+                    self.child_table_bytes,
+                );
+            });
+            recorder.scope("errors", |recorder| {
+                recorder.record_type_name(
+                    crate::MemoryRecordKind::Heap,
+                    "rg_syntax::SyntaxError",
+                    self.error_bytes,
+                );
             });
         });
     }
@@ -135,9 +100,10 @@ mod tests {
         file.record_memory_size(&mut recorder);
         let totals = recorder.totals_by_path();
 
-        assert!(totals.contains_key("source_file.syntax.green_tree.nodes"));
-        assert!(totals.contains_key("source_file.syntax.green_tree.tokens"));
-        assert!(totals.contains_key("source_file.syntax.green_tree.token_text"));
+        assert!(totals.contains_key("source_file.syntax.tree.source"));
+        assert!(totals.contains_key("source_file.syntax.tree.nodes"));
+        assert!(totals.contains_key("source_file.syntax.tree.tokens"));
+        assert!(totals.contains_key("source_file.syntax.tree.children"));
     }
 
     #[test]

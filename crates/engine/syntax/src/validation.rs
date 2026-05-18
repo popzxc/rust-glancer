@@ -5,13 +5,12 @@
 mod block;
 
 use itertools::Itertools;
-use rowan::Direction;
 use rustc_literal_escaper::{
     EscapeError, unescape_byte, unescape_byte_str, unescape_c_str, unescape_char, unescape_str,
 };
 
 use crate::{
-    AstNode, SyntaxError,
+    AstNode, Direction, SyntaxError,
     SyntaxKind::{CONST, FN, INT_NUMBER, TYPE_ALIAS},
     SyntaxNode, SyntaxToken, T, TextSize, algo,
     ast::{self, HasAttrs, HasVisibility, IsString, RangeItem},

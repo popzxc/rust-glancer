@@ -3,7 +3,9 @@ use std::{io::Write as _, path::PathBuf, time::Instant};
 use anyhow::Context as _;
 use clap::ValueEnum;
 use rg_lsp_engine::MemoryControl as _;
-use rg_project::{BuildProcessMemory, PackageResidencyPolicy, Project, StartupCacheLoad};
+use rg_project::{
+    BuildProcessMemory, BuildProfileStage, PackageResidencyPolicy, Project, StartupCacheLoad,
+};
 use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 
 mod fmt;
@@ -40,7 +42,52 @@ pub(crate) enum OutputFormat {
     Json,
 }
 
+/// Build stage used for detailed retained-memory reporting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum CliMemoryStage {
+    #[value(alias = "parse")]
+    Parse,
+    #[value(alias = "cacheprobe")]
+    CacheProbe,
+    #[value(alias = "itemtree")]
+    ItemTree,
+    #[value(alias = "itemtree-syntax-eviction")]
+    ItemTreeSyntaxEviction,
+    #[value(alias = "cache-source-fingerprint")]
+    CacheSourceFingerprints,
+    #[value(alias = "defmap")]
+    DefMap,
+    #[value(alias = "semanticir")]
+    SemanticIr,
+    #[value(alias = "itemtree-drop")]
+    ItemTreeDrop,
+    #[value(alias = "bodyir")]
+    BodyIr,
+    #[value(alias = "parse-syntax-evict")]
+    ParseSyntaxEviction,
+    Final,
+}
+
+impl CliMemoryStage {
+    fn build_stage(self) -> Option<BuildProfileStage> {
+        match self {
+            Self::Parse => Some(BuildProfileStage::Parse),
+            Self::CacheProbe => Some(BuildProfileStage::CacheProbe),
+            Self::ItemTree => Some(BuildProfileStage::ItemTree),
+            Self::ItemTreeSyntaxEviction => Some(BuildProfileStage::ItemTreeSyntaxEviction),
+            Self::CacheSourceFingerprints => Some(BuildProfileStage::CacheSourceFingerprints),
+            Self::DefMap => Some(BuildProfileStage::DefMap),
+            Self::SemanticIr => Some(BuildProfileStage::SemanticIr),
+            Self::ItemTreeDrop => Some(BuildProfileStage::ItemTreeDrop),
+            Self::BodyIr => Some(BuildProfileStage::BodyIr),
+            Self::ParseSyntaxEviction => Some(BuildProfileStage::ParseSyntaxEviction),
+            Self::Final => None,
+        }
+    }
+}
+
 /// Runs project analysis for the Cargo manifest at `path` and prints a small build summary.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn analyze(
     path: PathBuf,
     profile: bool,
@@ -49,6 +96,7 @@ pub(crate) fn analyze(
     package_residency_policy: PackageResidencyPolicy,
     target: Option<String>,
     output_format: OutputFormat,
+    memory_stage: CliMemoryStage,
 ) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("folder {} does not exist", path.display());
@@ -85,9 +133,11 @@ pub(crate) fn analyze(
         .cargo_metadata_config(cargo_metadata_config)
         .package_residency_policy(package_residency_policy)
         .startup_cache_load(startup_cache_load)
-        .profile_build_timing(profile || include_memory);
+        .profile_build_timing(profile || include_memory)
+        .stage_memory_target(include_memory.then(|| memory_stage.build_stage()).flatten());
     let builder = if include_memory {
         builder
+            .memory_hooks(crate::memory::project_memory_hooks())
             .measure_retained_memory(true)
             .process_memory_sampler(move || {
                 memory_control
@@ -126,6 +176,7 @@ pub(crate) fn analyze(
         build_profile.as_ref(),
         allocator,
         include_memory,
+        memory_stage,
     );
 
     let output = match output_format {

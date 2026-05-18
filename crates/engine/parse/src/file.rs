@@ -1,8 +1,9 @@
 use anyhow::Context as _;
 use std::{
+    borrow::Cow,
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
 use rg_arena::Arena;
@@ -33,14 +34,16 @@ impl rg_arena::ArenaId for FileId {
 pub(crate) struct ParsedFileData {
     /// Canonical filesystem path for this source file.
     pub(crate) path: PathBuf,
+    /// Source backing used when syntax has to be rebuilt after eviction.
+    pub(crate) source: ParsedSource,
     /// Line-start index used to convert byte offsets into line/column coordinates.
     pub(crate) line_index: LineIndexState,
-    /// Green-backed Rust parse result produced by `rg_syntax`.
+    /// Rust parse result produced by `rg_syntax`.
     ///
     /// This is retained only while AST-consuming phases are lowering. Query-time state keeps
     /// paths and line indexes, but can evict parse trees to keep memory bounded.
     ///
-    /// `rg_syntax::SourceFile` is a traversal cursor over this immutable green tree. Keeping the
+    /// `rg_syntax::SourceFile` is a traversal cursor over an immutable parse tree. Keeping the
     /// parse result lets each AST-consuming phase create a fresh local cursor instead of sharing
     /// cursor internals across package or thread boundaries.
     pub(crate) syntax: Option<SyntaxParse<SourceFile>>,
@@ -54,7 +57,15 @@ pub(crate) struct ParsedFileData {
 #[derive(Debug, Clone, Copy)]
 pub struct ParsedFile<'a> {
     file_id: FileId,
+    edition: RustEdition,
     data: &'a ParsedFileData,
+}
+
+/// Source backing for a parsed file whose syntax tree may be evicted.
+#[derive(Debug, Clone)]
+pub(crate) enum ParsedSource {
+    SavedFile,
+    InMemory(Arc<str>),
 }
 
 /// Serializable file metadata retained after syntax trees are evicted.
@@ -96,8 +107,12 @@ impl ParsedFilePath {
 }
 
 impl<'a> ParsedFile<'a> {
-    fn new(file_id: FileId, data: &'a ParsedFileData) -> Self {
-        Self { file_id, data }
+    fn new(file_id: FileId, edition: RustEdition, data: &'a ParsedFileData) -> Self {
+        Self {
+            file_id,
+            edition,
+            data,
+        }
     }
 
     /// Returns the stable package-local id for this parsed source file.
@@ -117,15 +132,21 @@ impl<'a> ParsedFile<'a> {
 
     /// Returns a local syntax cursor over the retained parse tree.
     ///
-    /// This does not reparse source text. It creates a fresh typed root over the immutable green
+    /// This does not reparse source text. It creates a fresh typed root over the immutable parse
     /// tree so callers can traverse AST without sharing `rg_syntax` cursor state.
     pub fn syntax(&self) -> Option<SourceFile> {
         self.data.syntax.as_ref().map(|syntax| syntax.tree())
     }
 
-    /// Returns source text for a byte span by reading it from the saved source file.
+    /// Returns a freshly parsed syntax tree without storing it in the parse database.
+    pub fn parse_syntax(&self) -> anyhow::Result<SyntaxParse<SourceFile>> {
+        let source = self.data.source.read(&self.data.path)?;
+        Ok(FileDb::parse_syntax(&source, self.edition))
+    }
+
+    /// Returns source text for a byte span from the same snapshot that backs this parsed file.
     pub fn text_for_span(&self, span: Span) -> Option<String> {
-        let file_text = std::fs::read_to_string(&self.data.path).ok()?;
+        let file_text = self.data.source.read(&self.data.path).ok()?;
         let start = usize::try_from(span.text.start).ok()?;
         let end = usize::try_from(span.text.end).ok()?;
 
@@ -170,6 +191,7 @@ impl FileDb {
             canonical_file_path.clone(),
             &source,
             self.edition,
+            ParsedSource::SavedFile,
         ));
         self.file_ids_by_path.insert(canonical_file_path, file_id);
 
@@ -186,8 +208,12 @@ impl FileDb {
         };
 
         let source = Self::read_source(file_path)?;
-        self.parsed_files[file_id] =
-            Self::parse_source(file_path.to_path_buf(), &source, self.edition);
+        self.parsed_files[file_id] = Self::parse_source(
+            file_path.to_path_buf(),
+            &source,
+            self.edition,
+            ParsedSource::SavedFile,
+        );
         Ok(Some(file_id))
     }
 
@@ -195,11 +221,17 @@ impl FileDb {
     pub(super) fn reparse_file_from_source(
         &mut self,
         file_path: &Path,
-        source: &str,
+        source: Arc<str>,
     ) -> Option<FileId> {
         let file_id = self.file_ids_by_path.get(file_path).copied()?;
-        self.parsed_files[file_id] =
-            Self::parse_source(file_path.to_path_buf(), source, self.edition);
+        let source_text = source.as_ref();
+        let source_backing = ParsedSource::InMemory(Arc::clone(&source));
+        self.parsed_files[file_id] = Self::parse_source(
+            file_path.to_path_buf(),
+            source_text,
+            self.edition,
+            source_backing,
+        );
         Some(file_id)
     }
 
@@ -212,9 +244,11 @@ impl FileDb {
             return Ok(());
         }
 
-        let source = Self::read_source(&parsed_file.path)?;
+        let source = parsed_file.source.read(&parsed_file.path)?;
         let path = parsed_file.path.clone();
-        self.parsed_files[file_id] = Self::parse_source(path, &source, self.edition);
+        let source_backing = parsed_file.source.clone();
+        self.parsed_files[file_id] =
+            Self::parse_source(path, &source, self.edition, source_backing);
         Ok(())
     }
 
@@ -243,7 +277,9 @@ impl FileDb {
 
     pub(super) fn offload_line_indexes(&mut self) {
         for parsed_file in self.parsed_files.iter_mut() {
-            parsed_file.line_index.offload();
+            if matches!(parsed_file.source, ParsedSource::SavedFile) {
+                parsed_file.line_index.offload();
+            }
         }
     }
 
@@ -251,14 +287,14 @@ impl FileDb {
     pub(super) fn parsed_file(&self, file_id: FileId) -> Option<ParsedFile<'_>> {
         self.parsed_files
             .get(file_id)
-            .map(|data| ParsedFile::new(file_id, data))
+            .map(|data| ParsedFile::new(file_id, self.edition, data))
     }
 
     /// Returns all cached parsed files.
     pub(super) fn parsed_files(&self) -> impl Iterator<Item = ParsedFile<'_>> {
         self.parsed_files
             .iter_with_ids()
-            .map(|(file_id, data)| ParsedFile::new(file_id, data))
+            .map(|(file_id, data)| ParsedFile::new(file_id, self.edition, data))
     }
 
     pub(super) fn parse_snapshot(&self) -> anyhow::Result<Vec<ParsedFileSnapshot>> {
@@ -302,20 +338,39 @@ impl FileDb {
             .with_context(|| format!("while attempting to read {}", file_path.display()))
     }
 
-    fn parse_source(path: PathBuf, source: &str, edition: RustEdition) -> ParsedFileData {
+    fn parse_source(
+        path: PathBuf,
+        source: &str,
+        edition: RustEdition,
+        source_backing: ParsedSource,
+    ) -> ParsedFileData {
         let line_index = LineIndex::new(source);
+        let parsed_file = Self::parse_syntax(source, edition);
+
+        ParsedFileData {
+            path,
+            source: source_backing,
+            line_index: LineIndexState::resident(line_index),
+            syntax: Some(parsed_file),
+        }
+    }
+
+    fn parse_syntax(source: &str, edition: RustEdition) -> SyntaxParse<SourceFile> {
         let ra_edition = match edition {
             RustEdition::Edition2015 => Edition::Edition2015,
             RustEdition::Edition2018 => Edition::Edition2018,
             RustEdition::Edition2021 => Edition::Edition2021,
             RustEdition::Edition2024 => Edition::Edition2024,
         };
-        let parsed_file = SourceFile::parse(source, ra_edition);
+        SourceFile::parse(source, ra_edition)
+    }
+}
 
-        ParsedFileData {
-            path,
-            line_index: LineIndexState::resident(line_index),
-            syntax: Some(parsed_file),
+impl ParsedSource {
+    fn read<'a>(&'a self, path: &Path) -> anyhow::Result<Cow<'a, str>> {
+        match self {
+            Self::SavedFile => Ok(Cow::Owned(FileDb::read_source(path)?)),
+            Self::InMemory(source) => Ok(Cow::Borrowed(source.as_ref())),
         }
     }
 }
@@ -331,6 +386,7 @@ impl ParsedFileData {
     fn from_parse_snapshot(snapshot: ParsedFileSnapshot) -> Self {
         Self {
             path: snapshot.path.into_path_buf(),
+            source: ParsedSource::SavedFile,
             line_index: LineIndexState::resident(LineIndex::from_snapshot(snapshot.line_index)),
             syntax: None,
         }

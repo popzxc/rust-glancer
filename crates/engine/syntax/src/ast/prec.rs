@@ -3,7 +3,7 @@
 use stdx::always;
 
 use crate::{
-    AstNode, Direction, SyntaxNode, T,
+    AstNode, Direction, SyntaxNode, T, TextSize,
     algo::skip_trivia_token,
     ast::{self, BinaryOp, Expr, HasArgList, RangeItem},
     match_ast,
@@ -487,7 +487,6 @@ impl Expr {
 
     fn is_ordered_before_parent_in_place_of(&self, parent: &Expr, place_of: &SyntaxNode) -> bool {
         use Expr::*;
-        use rowan::TextSize;
 
         let self_range = self.syntax().text_range();
         let place_of_range = place_of.text_range();
