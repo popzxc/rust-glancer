@@ -474,6 +474,104 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
 }
 
 #[test]
+fn lowers_block_modifiers() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_block_modifier_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(value: u8) {
+    unsafe { value; };
+    const { value; };
+    async { value };
+    async move { value };
+    try { value };
+    try bikeshed Result<u8> { value };
+    gen { yield value; };
+    gen move { yield value; };
+    async gen { yield value; };
+    async gen move { yield value; };
+}
+"#,
+        expect![[r#"
+            package body_block_modifier_fixture
+
+            body_block_modifier_fixture [lib]
+            body b0 fn body_block_modifier_fixture[lib]::crate::use_it @ 1:1-12:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            - s2 parent s1: <none>
+            - s3 parent s1: <none>
+            - s4 parent s1: <none>
+            - s5 parent s1: <none>
+            - s6 parent s1: <none>
+            - s7 parent s1: <none>
+            - s8 parent s1: <none>
+            - s9 parent s1: <none>
+            - s10 parent s1: <none>
+            - s11 parent s1: <none>
+            bindings
+            - v0 param value `value`: u8 => syntax u8 @ 1:15-1:20
+            body
+            expr e24 block s1 => () @ 1:26-12:2
+              stmt s1 expr; @ 2:5-2:23
+                expr e1 block unsafe s2 => () @ 2:5-2:22
+                  stmt s0 expr; @ 2:14-2:20
+                    expr e0 path value -> local v0 => syntax u8 @ 2:14-2:19
+              stmt s3 expr; @ 3:5-3:22
+                expr e3 block const s3 => () @ 3:5-3:21
+                  stmt s2 expr; @ 3:13-3:19
+                    expr e2 path value -> local v0 => syntax u8 @ 3:13-3:18
+              stmt s4 expr; @ 4:5-4:21
+                expr e5 block async s4 => syntax u8 @ 4:5-4:20
+                  tail
+                    expr e4 path value -> local v0 => syntax u8 @ 4:13-4:18
+              stmt s5 expr; @ 5:5-5:26
+                expr e7 block async move s5 => syntax u8 @ 5:5-5:25
+                  tail
+                    expr e6 path value -> local v0 => syntax u8 @ 5:18-5:23
+              stmt s6 expr; @ 6:5-6:19
+                expr e9 block try s6 => syntax u8 @ 6:5-6:18
+                  tail
+                    expr e8 path value -> local v0 => syntax u8 @ 6:11-6:16
+              stmt s7 expr; @ 7:5-7:39
+                expr e11 block try bikeshed Result<u8> s7 => syntax u8 @ 7:5-7:38
+                  tail
+                    expr e10 path value -> local v0 => syntax u8 @ 7:31-7:36
+              stmt s9 expr; @ 8:5-8:26
+                expr e14 block gen s8 => () @ 8:5-8:25
+                  stmt s8 expr; @ 8:11-8:23
+                    expr e13 yield => <unknown> @ 8:11-8:22
+                      value
+                        expr e12 path value -> local v0 => syntax u8 @ 8:17-8:22
+              stmt s11 expr; @ 9:5-9:31
+                expr e17 block gen move s9 => () @ 9:5-9:30
+                  stmt s10 expr; @ 9:16-9:28
+                    expr e16 yield => <unknown> @ 9:16-9:27
+                      value
+                        expr e15 path value -> local v0 => syntax u8 @ 9:22-9:27
+              stmt s13 expr; @ 10:5-10:32
+                expr e20 block async gen s10 => () @ 10:5-10:31
+                  stmt s12 expr; @ 10:17-10:29
+                    expr e19 yield => <unknown> @ 10:17-10:28
+                      value
+                        expr e18 path value -> local v0 => syntax u8 @ 10:23-10:28
+              stmt s15 expr; @ 11:5-11:37
+                expr e23 block async gen move s11 => () @ 11:5-11:36
+                  stmt s14 expr; @ 11:22-11:34
+                    expr e22 yield => <unknown> @ 11:22-11:33
+                      value
+                        expr e21 path value -> local v0 => syntax u8 @ 11:28-11:33
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_associated_functions_and_enum_variant_calls() {
     check_project_body_ir(
         r#"

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::Span;
 use rg_text::Name;
@@ -49,11 +51,84 @@ pub struct RecordExprSpread {
     pub expr: Option<ExprId>,
 }
 
+/// Block-level execution modifier written before the statement list.
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub enum ExprBlockKind {
+    /// `{ ... }`.
+    Plain,
+    /// `unsafe { ... }`.
+    Unsafe,
+    /// `const { ... }`.
+    Const,
+    /// `async { ... }` or `async move { ... }`.
+    Async { move_capture: bool },
+    /// `try { ... }` or `try bikeshed Type { ... }`.
+    Try {
+        bikeshed: bool,
+        result_ty: Option<TypeRef>,
+    },
+    /// `gen { ... }` or `gen move { ... }`.
+    Gen { move_capture: bool },
+    /// `async gen { ... }` or `async gen move { ... }`.
+    AsyncGen { move_capture: bool },
+}
+
+impl fmt::Display for ExprBlockKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Plain => f.write_str("plain"),
+            Self::Unsafe => f.write_str("unsafe"),
+            Self::Const => f.write_str("const"),
+            Self::Async {
+                move_capture: false,
+            } => f.write_str("async"),
+            Self::Async { move_capture: true } => f.write_str("async move"),
+            Self::Try {
+                bikeshed: false,
+                result_ty: None,
+            } => f.write_str("try"),
+            Self::Try {
+                bikeshed: true,
+                result_ty: None,
+            } => f.write_str("try bikeshed"),
+            Self::Try {
+                bikeshed: false,
+                result_ty: Some(result_ty),
+            } => write!(f, "try {result_ty}"),
+            Self::Try {
+                bikeshed: true,
+                result_ty: Some(result_ty),
+            } => write!(f, "try bikeshed {result_ty}"),
+            Self::Gen {
+                move_capture: false,
+            } => f.write_str("gen"),
+            Self::Gen { move_capture: true } => f.write_str("gen move"),
+            Self::AsyncGen {
+                move_capture: false,
+            } => f.write_str("async gen"),
+            Self::AsyncGen { move_capture: true } => f.write_str("async gen move"),
+        }
+    }
+}
+
+impl ExprBlockKind {
+    fn shrink_to_fit(&mut self) {
+        if let Self::Try {
+            result_ty: Some(result_ty),
+            ..
+        } = self
+        {
+            result_ty.shrink_to_fit();
+        }
+    }
+}
+
 /// Expression forms that the first Body IR pass understands.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum ExprKind {
-    /// `{ ... }` or `'label: { ... }`.
+    /// `{ ... }`, `async { ... }`, or `'label: { ... }`.
     Block {
+        kind: ExprBlockKind,
         label: Option<LabelData>,
         scope: ScopeId,
         statements: Vec<StmtId>,
@@ -449,11 +524,13 @@ impl ExprKind {
     fn shrink_to_fit(&mut self) {
         match self {
             Self::Block {
+                kind,
                 label,
                 statements,
                 tail,
                 ..
             } => {
+                kind.shrink_to_fit();
                 if let Some(label) = label {
                     label.shrink_to_fit();
                 }

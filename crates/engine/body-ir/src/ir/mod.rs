@@ -16,8 +16,8 @@ pub use self::{
         TargetBodiesStatus,
     },
     expr::{
-        ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprData,
-        ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LabelData, LiteralKind,
+        ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind,
+        ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LabelData, LiteralKind,
         MatchArmData, RecordExprField, RecordExprSpread,
     },
     ids::{

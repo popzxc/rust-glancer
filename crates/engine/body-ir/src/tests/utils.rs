@@ -9,9 +9,9 @@ use expect_test::Expect;
 use crate::{
     BindingData, BodyData, BodyFunctionData, BodyGenericArg, BodyImplData, BodyIrBuildPolicy,
     BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy, BodyResolution,
-    BodySource, BodyTy, ClosureCapture, ClosureKind, ClosureParamData, ExprData, ExprKind,
-    LabelData, PatBindingMode, PatData, PatId, PatKind, ResolvedFieldRef, ResolvedFunctionRef,
-    StmtKind, TargetBodiesStatus,
+    BodySource, BodyTy, ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData,
+    ExprKind, LabelData, PatBindingMode, PatData, PatId, PatKind, ResolvedFieldRef,
+    ResolvedFunctionRef, StmtKind, TargetBodiesStatus,
     ir::ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
         BodyItemRef, ExprId, StmtId,
@@ -970,8 +970,19 @@ impl TargetBodyIrSnapshot<'_> {
 
     fn render_expr_head(&self, data: &ExprData) -> String {
         match &data.kind {
-            ExprKind::Block { label, scope, .. } => {
-                format!("block{} s{}", render_label_suffix(label.as_ref()), scope.0)
+            ExprKind::Block {
+                kind, label, scope, ..
+            } => {
+                let modifier = match kind {
+                    ExprBlockKind::Plain => String::new(),
+                    kind => format!(" {kind}"),
+                };
+                format!(
+                    "block{}{} s{}",
+                    render_label_suffix(label.as_ref()),
+                    modifier,
+                    scope.0
+                )
             }
             ExprKind::Path { path } => format!("path {path}"),
             ExprKind::Call { .. } => "call".to_string(),

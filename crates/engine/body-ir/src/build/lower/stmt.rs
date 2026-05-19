@@ -9,8 +9,8 @@ use rg_item_tree::{Documentation, FieldList, FunctionItem, GenericParams, ImplIt
 
 use crate::ir::{
     BindingData, BindingId, BindingKind, BodyFunctionData, BodyFunctionId, BodyFunctionOwner,
-    BodyImplData, BodyImplId, BodyItemData, BodyItemId, BodyItemKind, BodyTy, ExprId, ExprKind,
-    ScopeId, StmtData, StmtId, StmtKind,
+    BodyImplData, BodyImplId, BodyItemData, BodyItemId, BodyItemKind, BodyTy, ExprBlockKind,
+    ExprId, ExprKind, ScopeId, StmtData, StmtId, StmtKind,
 };
 
 use super::function::FunctionBodyLowering;
@@ -76,6 +76,7 @@ impl FunctionBodyLowering<'_> {
         block: ast::BlockExpr,
         parent_scope: ScopeId,
     ) -> ExprId {
+        let kind = self.lower_block_kind(&block);
         let block_scope = self.builder.alloc_scope(Some(parent_scope));
         let mut statements = Vec::new();
         let mut tail = None;
@@ -96,12 +97,51 @@ impl FunctionBodyLowering<'_> {
             block.syntax(),
             block_scope,
             ExprKind::Block {
+                kind,
                 label,
                 scope: block_scope,
                 statements,
                 tail,
             },
         )
+    }
+
+    // Read block modifier tokens directly so `move` stays attached to async/gen blocks.
+    fn lower_block_kind(&mut self, block: &ast::BlockExpr) -> ExprBlockKind {
+        let move_capture = block.move_token().is_some();
+
+        if block.gen_token().is_some() {
+            return if block.async_token().is_some() {
+                ExprBlockKind::AsyncGen { move_capture }
+            } else {
+                ExprBlockKind::Gen { move_capture }
+            };
+        }
+
+        if block.async_token().is_some() {
+            return ExprBlockKind::Async { move_capture };
+        }
+
+        if block.unsafe_token().is_some() {
+            return ExprBlockKind::Unsafe;
+        }
+
+        if let Some(modifier) = block.try_block_modifier() {
+            if modifier.try_token().is_some() {
+                return ExprBlockKind::Try {
+                    bikeshed: modifier.bikeshed_token().is_some(),
+                    result_ty: modifier
+                        .ty()
+                        .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner)),
+                };
+            }
+        }
+
+        if block.const_token().is_some() {
+            return ExprBlockKind::Const;
+        }
+
+        ExprBlockKind::Plain
     }
 
     fn lower_statement(&mut self, statement: ast::Stmt, scope: ScopeId) -> StmtId {

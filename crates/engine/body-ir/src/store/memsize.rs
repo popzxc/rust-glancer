@@ -3,10 +3,11 @@ use crate::{
     BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId, BodyImplData, BodyImplId,
     BodyIrBuildPolicy, BodyIrDb, BodyIrStats, BodyItemData, BodyItemId, BodyItemKind, BodyItemRef,
     BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef, BodyResolution, BodySource, BodyTy,
-    BodyTypePathResolution, ClosureCapture, ClosureKind, ClosureParamData, ExprData, ExprId,
-    ExprKind, LiteralKind, PackageBodies, PatBindingMode, PatData, PatId, PatKind, PatMutability,
-    PatRangeKind, RecordExprField, RecordExprSpread, RecordPatField, ResolvedFieldRef,
-    ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
+    BodyTypePathResolution, ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData,
+    ExprId, ExprKind, LiteralKind, PackageBodies, PatBindingMode, PatData, PatId, PatKind,
+    PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordPatField,
+    ResolvedFieldRef, ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
+    TargetBodiesStatus,
     ir::expr::{ExprWrapperKind, LabelData, MatchArmData},
     ir::ids::StmtId,
     ir::path::{BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind},
@@ -74,6 +75,24 @@ rg_memsize::impl_memory_size_children! {
         statement_count, expression_count;
 }
 
+impl MemorySize for ExprBlockKind {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Try { result_ty, .. } => {
+                recorder.scope("result_ty", |recorder| {
+                    result_ty.record_memory_children(recorder);
+                });
+            }
+            Self::Plain
+            | Self::Unsafe
+            | Self::Const
+            | Self::Async { .. }
+            | Self::Gen { .. }
+            | Self::AsyncGen { .. } => {}
+        }
+    }
+}
+
 impl MemorySize for BodyPathSegmentKind {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
@@ -115,11 +134,13 @@ impl MemorySize for ExprKind {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
             Self::Block {
+                kind,
                 label,
                 scope,
                 statements,
                 tail,
             } => {
+                recorder.scope("kind", |recorder| kind.record_memory_children(recorder));
                 recorder.scope("label", |recorder| label.record_memory_children(recorder));
                 recorder.scope("scope", |recorder| scope.record_memory_children(recorder));
                 recorder.scope("statements", |recorder| {
