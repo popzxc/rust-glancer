@@ -1432,7 +1432,7 @@ dependencies = [
  "itertools",
  "proc-macro2",
  "quote",
- "stdx",
+ "stdx 0.0.0 (git+https://github.com/rust-lang/rust-analyzer?rev=7f916ab1b1f669cec017960c2d91a9a87b4b7bae)",
  "ungrammar",
 ]
 
@@ -1561,7 +1561,7 @@ dependencies = [
  "expect-test",
  "ra-ap-rustc_lexer",
  "rustc-literal-escaper",
- "stdx",
+ "stdx 0.0.0 (git+https://github.com/rust-lang/rust-analyzer?rev=7f916ab1b1f669cec017960c2d91a9a87b4b7bae)",
  "tracing",
  "winnow 0.7.15",
 ]
@@ -1625,7 +1625,7 @@ dependencies = [
  "rustc_apfloat",
  "smallvec",
  "smol_str",
- "stdx",
+ "stdx 0.0.0 (git+https://github.com/rust-lang/rust-analyzer?rev=7f916ab1b1f669cec017960c2d91a9a87b4b7bae)",
  "test-utils",
  "text-size",
  "tracing",
@@ -1865,6 +1865,21 @@ dependencies = [
 [[package]]
 name = "stdx"
 version = "0.0.0"
+source = "git+https://github.com/rust-lang/rust-analyzer?rev=7f916ab1b1f669cec017960c2d91a9a87b4b7bae#7f916ab1b1f669cec017960c2d91a9a87b4b7bae"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-utils",
+ "itertools",
+ "jod-thread",
+ "libc",
+ "miow",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "stdx"
+version = "0.0.0"
 source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca#b8458013c217be4fccefc4e4f194026fa04ab4ca"
 dependencies = [
  "crossbeam-channel",
@@ -1968,7 +1983,7 @@ dependencies = [
  "paths",
  "profile",
  "rustc-hash",
- "stdx",
+ "stdx 0.0.0 (git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca)",
  "text-size",
 ]
 
