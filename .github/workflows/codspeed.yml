@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_CODSPEED_VERSION: "4.6.0"
+      RUST_GLANCER_BENCH_TARGETS: small_app
 
     permissions:
       contents: read
@@ -25,9 +26,6 @@ jobs:
         uses: taiki-e/install-action@3235f8901fd37ffed0052b276cec25a362fb82e9 # v2
         with:
           tool: cargo-codspeed@${{ env.CARGO_CODSPEED_VERSION }}
-
-      - name: Fetch rust-analyzer benchmark fixture
-        run: ./test_targets/bench_fixtures/fetch-rust-analyzer.sh
 
       - name: Build benchmark targets
         run: cargo codspeed build -p rg_project --bench analysis_pipeline
