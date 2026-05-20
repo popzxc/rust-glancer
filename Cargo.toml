@@ -81,7 +81,7 @@ smol_str = "0.3.2"
 stdx = { git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca" }
 tarpc = "0.37"
 tempfile = "3.27.0"
-test-utils = { git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca" }
+test-utils = { git = "https://github.com/rust-lang/rust-analyzer", rev = "7f916ab1b1f669cec017960c2d91a9a87b4b7bae" }
 text-size = "1.1.0"
 thiserror = "2.0.18"
 tokio = "1.52.3"
