@@ -155,7 +155,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         match kind {
             ExprKind::Path { path } => {
                 let (resolution, ty) = match path.as_def_map_path() {
-                    Some(path) => self.resolve_path_expr(expr, path)?,
+                    Some(path) => self.resolve_path_expr(expr, &path)?,
                     None => (BodyResolution::Unknown, BodyTy::Unknown),
                 };
                 let data = &mut self.body.exprs[expr];
@@ -220,12 +220,12 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 data.ty = ty;
             }
             ExprKind::Record { path, .. } => {
-                let (resolution, ty) = path
-                    .as_ref()
-                    .and_then(|path| path.as_def_map_path())
-                    .map(|path| self.resolve_record_expr_path(self.body.exprs[expr].scope, path))
-                    .transpose()?
-                    .unwrap_or((BodyResolution::Unknown, BodyTy::Unknown));
+                let (resolution, ty) = match path.as_ref().and_then(|path| path.as_def_map_path()) {
+                    Some(path) => {
+                        self.resolve_record_expr_path(self.body.exprs[expr].scope, &path)?
+                    }
+                    None => (BodyResolution::Unknown, BodyTy::Unknown),
+                };
                 let data = &mut self.body.exprs[expr];
                 data.resolution = resolution;
                 data.ty = ty;

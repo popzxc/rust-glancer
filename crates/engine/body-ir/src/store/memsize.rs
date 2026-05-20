@@ -63,7 +63,7 @@ rg_memsize::impl_memory_size_children! {
     LabelData => name, span;
     RecordExprField => key, key_span, source_span, value;
     RecordExprSpread => source_span, expr;
-    BodyPath => source_span, absolute, def_map_path, segments;
+    BodyPath => source_span, absolute, segments;
     BodyPathSegment => kind, span, args;
     BodyLocalNominalTy => item, args;
     BodyNominalTy => def, args;

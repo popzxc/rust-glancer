@@ -14,9 +14,6 @@ pub struct BodyPath {
     /// Full source range of the path expression or pattern.
     pub source_span: Span,
     pub(crate) absolute: bool,
-    // Cached projection into the compact DefMap path shape used by existing resolution.
-    // Generic arguments are intentionally erased here; type anchors make the projection absent.
-    pub(crate) def_map_path: Option<Path>,
     pub(crate) segments: Vec<BodyPathSegment>,
 }
 
@@ -63,12 +60,9 @@ pub(crate) enum BodyPathSegmentArgs {
 
 impl BodyPath {
     pub(crate) fn new(source_span: Span, absolute: bool, segments: Vec<BodyPathSegment>) -> Self {
-        let def_map_path = Self::build_def_map_path(absolute, &segments);
-
         Self {
             source_span,
             absolute,
-            def_map_path,
             segments,
         }
     }
@@ -78,8 +72,8 @@ impl BodyPath {
     /// This is `None` for rich syntax that has no honest DefMap-path equivalent, such as
     /// `<T as Trait>::Assoc`. Segment generic arguments are dropped in this projection, so
     /// `Maybe::<User>::Some` still projects to `Maybe::Some`.
-    pub fn as_def_map_path(&self) -> Option<&Path> {
-        self.def_map_path.as_ref()
+    pub fn as_def_map_path(&self) -> Option<Path> {
+        self.prefix_through(self.segments.len().checked_sub(1)?)
     }
 
     pub fn is_absolute(&self) -> bool {
@@ -120,24 +114,10 @@ impl BodyPath {
     }
 
     pub(crate) fn shrink_to_fit(&mut self) {
-        if let Some(path) = &mut self.def_map_path {
-            path.shrink_to_fit();
-        }
         self.segments.shrink_to_fit();
         for segment in &mut self.segments {
             segment.shrink_to_fit();
         }
-    }
-
-    fn build_def_map_path(absolute: bool, segments: &[BodyPathSegment]) -> Option<Path> {
-        // Build the resolver-facing view only when every segment has a lossless DefMap shape.
-        // A missing projection is safer than letting rich syntax resolve as a misleading name.
-        let segments = segments
-            .iter()
-            .map(BodyPathSegment::as_def_map_segment)
-            .collect::<Option<Vec<_>>>()?;
-
-        (!segments.is_empty()).then_some(Path { absolute, segments })
     }
 }
 
