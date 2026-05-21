@@ -308,6 +308,8 @@ fn relative_single_name(path: &ImportPath) -> Option<&Name> {
 pub(super) enum BuiltinMacroDisposition {
     /// The builtin cannot add module-scope definitions, so def-map can safely ignore it.
     IgnoredByDefMap,
+    /// The builtin splices another source file into the caller's item stream.
+    Include,
     /// The builtin can affect item collection or requires dedicated compiler-like handling.
     Unsupported,
 }
@@ -325,9 +327,11 @@ pub(super) fn builtin_macro_disposition(path: &ImportPath) -> Option<BuiltinMacr
         | "global_asm" | "include_bytes" | "include_str" | "line" | "llvm_asm" | "module_path"
         | "option_env" | "stringify" => Some(BuiltinMacroDisposition::IgnoredByDefMap),
 
-        // `include!` can inject Rust items from another file, and `concat_idents!` has
-        // token-shaping behavior that is better handled by a dedicated builtin implementation.
-        "concat_idents" | "include" => Some(BuiltinMacroDisposition::Unsupported),
+        "include" => Some(BuiltinMacroDisposition::Include),
+
+        // `concat_idents!` has token-shaping behavior that is better handled by a dedicated
+        // builtin implementation.
+        "concat_idents" => Some(BuiltinMacroDisposition::Unsupported),
         _ => None,
     }
 }

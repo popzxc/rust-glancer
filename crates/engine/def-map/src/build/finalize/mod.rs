@@ -11,6 +11,7 @@ mod rebuild;
 
 use anyhow::Context as _;
 
+use rg_item_tree::ItemTreeDb;
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
@@ -358,6 +359,7 @@ pub(super) fn finalize_target_states(
     old: Option<&DefMapReadTxn<'_>>,
     workspace: &WorkspaceMetadata,
     packages: &[Package],
+    item_tree: &ItemTreeDb,
     target_states: &mut FinalizeTargetStates,
     interners: &mut PackageNameInterners,
     finalization_stats: Option<&mut DefMapFinalizationStats>,
@@ -369,7 +371,7 @@ pub(super) fn finalize_target_states(
 
     // Once each target knows its prelude, imports and item-position macros can be resolved through
     // the shared fixed-point loop.
-    finalize_scopes(old, target_states, interners, finalization_stats)
+    finalize_scopes(old, item_tree, target_states, interners, finalization_stats)
         .context("while attempting to resolve target scopes")
 }
 
@@ -482,6 +484,7 @@ fn select_preludes(
 /// generated items may have introduced new imports or exported names.
 fn finalize_scopes(
     old: Option<&DefMapReadTxn<'_>>,
+    item_tree: &ItemTreeDb,
     states: &mut FinalizeTargetStates,
     interners: &mut PackageNameInterners,
     finalization_stats: Option<&mut DefMapFinalizationStats>,
@@ -576,6 +579,7 @@ fn finalize_scopes(
                 // module. The same generated declarations are also added to `current_scopes`, which
                 // makes simple chains like `make_macro!(); generated_macro!();` work in one round.
                 apply_expansion_attempts(
+                    item_tree,
                     states,
                     interners,
                     &mut current_scopes,

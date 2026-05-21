@@ -20,6 +20,7 @@ mod attempts;
 mod cache;
 mod expand;
 mod generated;
+mod included;
 mod resolve;
 
 pub(super) use self::{
@@ -178,6 +179,7 @@ pub(super) struct MacroCallSite {
     pub(super) path: Option<String>,
     pub(super) callee: Option<Name>,
     pub(super) args: Option<TopSubtree>,
+    pub(super) include_file: Option<FileId>,
     pub(super) dollar_crate_target: Option<TargetRef>,
     pub(super) file_id: FileId,
     pub(super) span: Span,

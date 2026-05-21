@@ -303,23 +303,30 @@ pub struct MacroCallItem {
     pub path: Option<String>,
     pub callee: Option<Name>,
     pub args: Option<TopSubtree>,
+    pub include_file: Option<FileId>,
 }
 
 impl MacroCallItem {
+    /// Builds an item-position macro call payload.
+    ///
+    /// Literal `include!` resolution happens before this point because it needs package/file
+    /// context, so `include_file` carries the already discovered file identity when available.
     pub fn from_ast(
         item: &ast::MacroCall,
         file_id: FileId,
         edition: RustEdition,
+        include_file: Option<FileId>,
         interner: &mut NameInterner,
     ) -> Self {
         let span_factory = SpanFactory::new(file_id_u32(file_id), macro_edition(edition));
         let mut span_for_range = |range| span_factory.span_for(range);
-        Self::from_ast_with_span(item, interner, &mut span_for_range)
+        Self::from_ast_with_span(item, interner, include_file, &mut span_for_range)
     }
 
     pub fn from_ast_with_span(
         item: &ast::MacroCall,
         interner: &mut NameInterner,
+        include_file: Option<FileId>,
         span_for_range: &mut dyn FnMut(TextRange) -> Span,
     ) -> Self {
         Self {
@@ -332,6 +339,7 @@ impl MacroCallItem {
             args: item
                 .token_tree()
                 .map(|token_tree| syntax_node_to_token_tree_with_span(&token_tree, span_for_range)),
+            include_file,
         }
     }
 

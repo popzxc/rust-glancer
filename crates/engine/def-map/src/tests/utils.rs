@@ -265,6 +265,20 @@ impl<'a> FixtureEntry<'a> {
         self
     }
 
+    /// Asserts that one type binding points at an item lowered from the requested source file.
+    pub(super) fn assert_type_source_file(&self, file_name: &str, reason: &str) -> &Self {
+        assert!(
+            self.scope_entry()
+                .types()
+                .iter()
+                .filter_map(|binding| self.binding_origin(binding))
+                .any(|origin| origin.source_file_name().as_deref() == Some(file_name)),
+            "{reason}: expected {} to have a type binding from `{file_name}`",
+            self.context(),
+        );
+        self
+    }
+
     fn context(&self) -> String {
         format!(
             "root scope entry `{}` in package `{}` target `{}` ({:?})",
@@ -312,6 +326,22 @@ impl FixtureBindingOrigin<'_> {
             .resident_def_map(module_ref.target)?
             .module(module_ref.module)
             .and_then(|module| module.name.as_deref())
+    }
+
+    fn source_file_name(&self) -> Option<String> {
+        let DefId::Local(local_def_ref) = self.def else {
+            return None;
+        };
+        let local_def = self
+            .db
+            .resident_def_map(local_def_ref.target)?
+            .local_def(local_def_ref.local_def)?;
+        self.db
+            .parse_db()
+            .package(local_def_ref.target.package.0)?
+            .file_path(local_def.file_id)?
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
     }
 }
 

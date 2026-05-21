@@ -503,6 +503,125 @@ make_user!();
 }
 
 #[test]
+fn lowers_literal_include_files_for_macro_calls() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "include_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+include!("included.rs");
+
+//- /src/included.rs
+pub struct Included;
+"#,
+        expect![[r#"
+            package include_fixture
+
+            targets
+            - include_fixture [lib] -> lib.rs
+
+            files
+            file included.rs
+            - pub struct Included
+
+            file lib.rs
+            - macro_call [include]
+              - args ("included.rs")
+              - include_file included.rs
+        "#]],
+    );
+}
+
+#[test]
+fn literal_include_probe_ignores_unreadable_targets() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "shadowed_include_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! include {
+    ($path:literal) => {};
+}
+
+include!("foo");
+
+//- /src/foo/mod.rs
+pub struct Foo;
+"#,
+        expect![[r#"
+            package shadowed_include_fixture
+
+            targets
+            - shadowed_include_fixture [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - macro_definition include
+              - body {($ path : literal) => {} ;}
+            - macro_call [include]
+              - args ("foo")
+        "#]],
+    );
+}
+
+#[test]
+fn cyclic_literal_include_files_do_not_recurse_forever() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cyclic_include_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+include!("foo.rs");
+
+//- /src/foo.rs
+pub struct Foo;
+
+include!("bar.rs");
+
+//- /src/bar.rs
+pub struct Bar;
+
+include!("foo.rs");
+"#,
+        expect![[r#"
+            package cyclic_include_fixture
+
+            targets
+            - cyclic_include_fixture [lib] -> lib.rs
+
+            files
+            file bar.rs
+            - pub struct Bar
+            - macro_call [include]
+              - args ("foo.rs")
+
+            file foo.rs
+            - pub struct Foo
+            - macro_call [include]
+              - args ("bar.rs")
+              - include_file bar.rs
+
+            file lib.rs
+            - macro_call [include]
+              - args ("foo.rs")
+              - include_file foo.rs
+        "#]],
+    );
+}
+
+#[test]
 fn dumps_declaration_payloads() {
     utils::check_project_item_tree_with_declarations(
         r#"

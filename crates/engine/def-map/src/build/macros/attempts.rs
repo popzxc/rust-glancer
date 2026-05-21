@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
+use rg_item_tree::ItemTreeDb;
 use rg_macro_expand::{Edition, ExpansionSyntax};
 use rg_parse::{FileId, Span};
 use rg_text::PackageNameInterners;
@@ -29,6 +30,7 @@ use super::{
     cache::{MacroCompileRecord, MacroExpandRecord, MacroExpansionCache, PreparedMacroExpansion},
     expand::MacroExpansionWork,
     generated::{GeneratedCollector, GeneratedOrigin},
+    included::{IncludedCollector, IncludedOrigin},
     resolve::{
         BuiltinMacroDisposition, builtin_macro_disposition, macro_path_from_text,
         resolve_macro_definition,
@@ -139,6 +141,7 @@ pub(crate) fn collect_expansion_attempts(
 
 /// Applies expansion results to target state and returns whether new scope facts were added.
 pub(crate) fn apply_expansion_attempts(
+    item_tree: &ItemTreeDb,
     states: &mut FinalizeTargetStates,
     interners: &mut PackageNameInterners,
     current_scopes: &mut ScopeMatrix,
@@ -160,6 +163,38 @@ pub(crate) fn apply_expansion_attempts(
                 continue;
             }
             MacroExpansionAttemptOutcome::Generated(source) => source,
+            MacroExpansionAttemptOutcome::IncludedFile(file_id) => {
+                let item_tree_package = item_tree.package(attempt.target.package.0).with_context(
+                    || {
+                        format!(
+                            "while attempting to fetch item tree package {} for include expansion",
+                            attempt.target.package.0
+                        )
+                    },
+                )?;
+                let collected = IncludedCollector {
+                    state,
+                    current_scopes,
+                    item_tree: item_tree_package,
+                    origin: IncludedOrigin {
+                        module: attempt.origin.module,
+                        order: attempt.origin.order,
+                    },
+                    result: MacroExpansionApplyResult::default(),
+                }
+                .collect_file(file_id);
+                let directive_state = match collected {
+                    Ok(collected) => {
+                        result.merge(collected);
+                        MacroDirectiveState::Expanded
+                    }
+                    Err(_) => MacroDirectiveState::Failed,
+                };
+                if let Some(directive) = state.macro_directives.get_mut(attempt.call_id) {
+                    directive.state = directive_state;
+                }
+                continue;
+            }
             MacroExpansionAttemptOutcome::PendingExpansion(_) => {
                 unreachable!("macro expansion work should be executed before generated apply");
             }
@@ -270,6 +305,26 @@ impl MacroExpansionAttempt {
         )
     }
 
+    fn include_file(
+        target: TargetRef,
+        call_id: usize,
+        call: &MacroCallSite,
+        path_text: &str,
+    ) -> Self {
+        let Some(include_file) = call.include_file else {
+            return Self::unsupported_builtin(target, call_id, call, path_text);
+        };
+
+        Self::new(
+            target,
+            call_id,
+            call,
+            Some(path_text.to_string()),
+            MacroExpansionAttemptOutcome::IncludedFile(include_file),
+            MacroExpansionAttemptRecord::builtin_expanded(),
+        )
+    }
+
     fn unresolved(
         target: TargetRef,
         call_id: usize,
@@ -377,6 +432,9 @@ impl MacroExpansionAttempt {
                         call,
                         path_text,
                     ));
+                }
+                Some(BuiltinMacroDisposition::Include) => {
+                    return Ok(Self::include_file(state.target, call_id, call, path_text));
                 }
                 Some(BuiltinMacroDisposition::Unsupported) => {
                     return Ok(Self::unsupported_builtin(
@@ -492,6 +550,7 @@ struct MacroExpansionAttemptRecord {
     resolved: bool,
     unresolved: bool,
     skipped: bool,
+    expanded: bool,
     compile: Option<MacroCompileRecord>,
     expand: Option<MacroExpandRecord>,
 }
@@ -520,6 +579,14 @@ impl MacroExpansionAttemptRecord {
         }
     }
 
+    fn builtin_expanded() -> Self {
+        Self {
+            resolved: true,
+            expanded: true,
+            ..Self::default()
+        }
+    }
+
     fn resolved_skipped() -> Self {
         Self {
             resolved: true,
@@ -541,6 +608,9 @@ impl MacroExpansionAttemptRecord {
             }
             if self.skipped {
                 stats.macro_calls_skipped += 1;
+            }
+            if self.expanded {
+                stats.macro_calls_expanded += 1;
             }
 
             if let Some(compile) = self.compile {
@@ -583,6 +653,7 @@ impl MacroExpansionAttemptRecord {
 enum MacroExpansionAttemptOutcome {
     NoSource(MacroDirectiveState),
     Generated(ExpansionSyntax),
+    IncludedFile(FileId),
     PendingExpansion(MacroExpansionWork),
 }
 

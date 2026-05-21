@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_syntax::{
-    AstNode as _,
+    AstNode as _, AstToken as _, SyntaxKind,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
 
@@ -84,7 +84,7 @@ impl<'db> PackageLowering<'db> {
             return Ok(());
         }
 
-        // Recursive module graphs can revisit a file before the first traversal finishes.
+        // Recursive module/include graphs can revisit a file before the first traversal finishes.
         if !self.active_stack.insert(current_file_id) {
             return Ok(());
         }
@@ -261,18 +261,24 @@ impl<'db> PackageLowering<'db> {
                     &item,
                 ))
             }
-            ast::Item::MacroCall(item) => Some(builder.alloc_documented_item(
-                ItemKind::MacroCall(MacroCallItem::from_ast(
+            ast::Item::MacroCall(item) => {
+                let include_file = self
+                    .lower_literal_include_file(builder.current_file_id, &item)
+                    .context("while attempting to lower literal include macro file")?;
+                Some(builder.alloc_documented_item(
+                    ItemKind::MacroCall(MacroCallItem::from_ast(
+                        &item,
+                        builder.current_file_id,
+                        edition,
+                        include_file,
+                        self.interner,
+                    )),
+                    None,
+                    None,
+                    VisibilityLevel::Private,
                     &item,
-                    builder.current_file_id,
-                    edition,
-                    self.interner,
-                )),
-                None,
-                None,
-                VisibilityLevel::Private,
-                &item,
-            )),
+                ))
+            }
             ast::Item::MacroDef(item) => Some(builder.alloc_documented_item(
                 ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_def(
                     &item,
@@ -383,6 +389,45 @@ impl<'db> PackageLowering<'db> {
         };
 
         Ok(item_id)
+    }
+
+    /// Eagerly parses the simple `include!("file.rs")` form so def-map can splice real item-tree
+    /// nodes after macro resolution confirms that the builtin was not shadowed.
+    fn lower_literal_include_file(
+        &mut self,
+        current_file_id: FileId,
+        item: &ast::MacroCall,
+    ) -> anyhow::Result<Option<FileId>> {
+        let Some(include_path) = literal_include_path(item) else {
+            return Ok(None);
+        };
+
+        let current_file = self
+            .parse_package
+            .parsed_file(current_file_id)
+            .with_context(|| {
+                format!("while attempting to fetch parsed file {current_file_id:?}")
+            })?;
+        let Some(include_path) = current_file.resolve_path(&include_path) else {
+            return Ok(None);
+        };
+
+        // This probe is intentionally best-effort. `include` can be a user-defined macro, so an
+        // eager filesystem miss or read error must not make item-tree lowering fail before def-map
+        // has a chance to resolve the call.
+        let Ok(include_file_id) = self.parse_package.parse_file(&include_path) else {
+            return Ok(None);
+        };
+        if self.lower_file(include_file_id).is_err() {
+            return Ok(None);
+        }
+
+        let lowered = self
+            .file_trees
+            .get(include_file_id)
+            .and_then(Option::as_ref)
+            .is_some();
+        Ok(lowered.then_some(include_file_id))
     }
 
     /// Lowers one module declaration into either an inline item list or an out-of-line file link.
@@ -628,4 +673,37 @@ fn normalized_use_name(use_item: &ast::Use) -> Option<String> {
 
     // Normalize all whitespace in an extracted syntax fragment to single spaces.
     Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+fn literal_include_path(item: &ast::MacroCall) -> Option<String> {
+    let path = item.path()?;
+    if path.syntax().text().to_string() != "include" {
+        return None;
+    }
+
+    let token_tree = item.token_tree()?;
+    let tokens = token_tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect::<Vec<_>>();
+    let [open, path, close] = tokens.as_slice() else {
+        return None;
+    };
+    if !matching_delimiters(open.kind(), close.kind()) {
+        return None;
+    }
+
+    ast::String::cast(path.clone())
+        .and_then(|path| path.value().ok().map(|value| value.into_owned()))
+}
+
+fn matching_delimiters(open: SyntaxKind, close: SyntaxKind) -> bool {
+    matches!(
+        (open, close),
+        (SyntaxKind::L_PAREN, SyntaxKind::R_PAREN)
+            | (SyntaxKind::L_CURLY, SyntaxKind::R_CURLY)
+            | (SyntaxKind::L_BRACK, SyntaxKind::R_BRACK)
+    )
 }

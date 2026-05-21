@@ -29,7 +29,7 @@ rg_memsize::impl_memory_size_children! {
     ConstParamData => name, ty, default;
     FunctionItem => generics, params, ret_ty, qualifiers;
     FunctionQualifiers => is_async, is_const, is_unsafe;
-    MacroCallItem => path, callee, args;
+    MacroCallItem => path, callee, args, include_file;
     ParamItem => pat, ty, kind;
     StructItem => generics, fields;
     UnionItem => generics, fields;

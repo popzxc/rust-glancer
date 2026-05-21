@@ -45,6 +45,7 @@ pub(crate) fn build_db(
         None,
         workspace,
         parse.packages(),
+        item_tree,
         &mut target_states,
         interners,
         finalization_stats,

@@ -126,14 +126,21 @@ impl GeneratedCollector<'_> {
             ast::Item::MacroCall(item) => {
                 let fallback = self.origin_tt_span();
                 let mut span_for_range = |range| span_map.span_for_range(range).unwrap_or(fallback);
-                let macro_call =
-                    MacroCallItem::from_ast_with_span(&item, self.interner, &mut span_for_range);
+                // Macro-generated `include!("...")` would need a real file-relative expansion
+                // context to resolve safely. Keep it unsupported until a crate actually needs it.
+                let macro_call = MacroCallItem::from_ast_with_span(
+                    &item,
+                    self.interner,
+                    None,
+                    &mut span_for_range,
+                );
                 self.state.push_macro_call(MacroCallSite {
                     module: module_id,
                     source: self.origin.source,
                     path: macro_call.path,
                     callee: macro_call.callee,
                     args: macro_call.args,
+                    include_file: macro_call.include_file,
                     dollar_crate_target: self.origin.dollar_crate_target,
                     file_id: self.origin.file_id,
                     span: self.origin.span,

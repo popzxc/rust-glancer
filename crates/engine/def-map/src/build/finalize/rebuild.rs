@@ -82,6 +82,7 @@ pub(crate) fn rebuild_packages(
         Some(old_read),
         workspace,
         parse.packages(),
+        item_tree,
         &mut target_states,
         interners,
         finalization_stats,

@@ -309,6 +309,14 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                     writeln!(dump, "{indent}  - args {args}")
                         .expect("string writes should not fail");
                 }
+                if let Some(include_file) = macro_call.include_file {
+                    writeln!(
+                        dump,
+                        "{indent}  - include_file {}",
+                        self.file_label(include_file)
+                    )
+                    .expect("string writes should not fail");
+                }
             }
             ItemKind::MacroDefinition(macro_definition) => match macro_definition {
                 MacroDefinitionItem::MacroRules { attrs, body } => {
